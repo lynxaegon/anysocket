@@ -1,0 +1,34 @@
+{
+  "name": "anysocket",
+  "version": "0.0.1",
+  "description": "AnySocket! WIP",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/lynxaegon/anysocket.git"
+  },
+  "keywords": [
+    "anysocket",
+    "e2e",
+    "network",
+    "socket",
+    "websocket",
+    "ws",
+    "tcp",
+    "http",
+    "udp",
+    "end-to-end",
+    "encrypted",
+    "json",
+    "rpc"
+  ],
+  "author": "Andrei Vaduva",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/lynxaegon/anysocket/issues"
+  },
+  "homepage": "https://github.com/lynxaegon/anysocket#readme"
+}
