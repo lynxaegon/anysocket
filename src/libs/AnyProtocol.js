@@ -13,6 +13,10 @@ const PROTOCOL_MESSAGE_TYPE = {
     FULL: "1",
     PARTIAL: "2"
 };
+const INTERNAL_TYPES = {
+    AUTH: 1,
+    SWITCH_ENCRYPTION: 2
+};
 const MAX_PACKET_SIZE = 4000;
 
 module.exports = class AnyProtocol extends EventEmitter {
@@ -24,6 +28,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.connectionID = this.peer.connectionID;
 
         this._packetQueue = [];
+        this._packetBuffer = "";
         this._queueRunning = false;
         this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.PLAIN;
 
@@ -34,7 +39,9 @@ module.exports = class AnyProtocol extends EventEmitter {
         if(this.peer.isClient()) {
             // init protocol
             this.send(PROTOCOL_TYPE.INTERNAL, {
-                hello: "world"
+                type: "world"
+            }).then(() => {
+                console.log("sent");
             });
         }
     }
@@ -57,8 +64,20 @@ module.exports = class AnyProtocol extends EventEmitter {
 
     onPacket(peer, message) {
         message = this._deserialize(message);
-        console.log(message);
-        this.emit("message", message);
+        console.log("packet", message);
+        this._packetBuffer += this._decrypt(message.data);
+
+        try {
+            if (message.message_type == PROTOCOL_MESSAGE_TYPE.FULL) {
+                const data = this._packetBuffer;
+                this._packetBuffer = null;
+                console.log("recv", data);
+                this.emit("message", JSON.parse(data));
+            }
+        }
+        catch(e) {
+            this.disconnect(e);
+        }
     }
 
     disconnect(reason) {
@@ -78,7 +97,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                     packet[i] = this._serialize(
                         protocol,
                         i == packet.length -1 ? PROTOCOL_MESSAGE_TYPE.FULL : PROTOCOL_MESSAGE_TYPE.PARTIAL,
-                        this._encrypt(packet)
+                        this._encrypt(packet[i])
                     );
                 }
 
@@ -99,6 +118,11 @@ module.exports = class AnyProtocol extends EventEmitter {
             return;
 
         this._queueRunning = true;
+        const continueQueue = (() => {
+            this._queueRunning = false;
+            setImmediate(this._processQueue.bind(this));
+        }).bind(this);
+
         if (this._packetQueue.length > 0) {
             const item = this._packetQueue[0];
             try {
@@ -108,26 +132,22 @@ module.exports = class AnyProtocol extends EventEmitter {
                     this._packetQueue.shift();
                     item.resolve();
 
-                    this._queueRunning = false;
-                    setImmediate(this._processQueue.bind(this));
+                    continueQueue();
                 } else {
                     this.peer.send(packet).then(() => {
-                        this._queueRunning = false;
-                        setImmediate(this._processQueue.bind(this));
+                        continueQueue();
                     }).catch((e) => {
                         this._packetQueue.shift();
                         item.reject(e);
 
-                        this._queueRunning = false;
-                        setImmediate(this._processQueue.bind(this));
+                        continueQueue();
                     });
                 }
             } catch (e) {
                 this._packetQueue.shift();
                 item.reject(e);
 
-                this._queueRunning = false;
-                setImmediate(this._processQueue.bind(this));
+                continueQueue();
             }
         } else {
             this._queueRunning = false;
@@ -137,17 +157,14 @@ module.exports = class AnyProtocol extends EventEmitter {
     _serialize(type, msgType, message) {
         return type.toString() +
             msgType.toString() +
-            this.ENCRYPTION_STATE.toString() +
             message;
     }
 
     _deserialize(message) {
-        console.log(message);
         return {
             protocol_type: message.substr(0,1),
             message_type: message.substr(1,1),
-            encryption: message.substr(2, 1),
-            data: message.substr(3)
+            data: message.substr(2)
         };
     }
 
