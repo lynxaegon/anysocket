@@ -1,38 +1,41 @@
 const EventEmitter = require('events');
 const Utils = require("../../utils");
-const _private = {
-    inited: Symbol("inited"),
-    keys: Symbol("keys"),
-    events: Symbol("events"),
-    authPacket: Symbol("authPacket")
-};
+const AbstractTransport = require("./AbstractTransport");
 
-const generateKeys = () => {
-    return Utils.certificates(4096);
-};
+// const generateKeys = () => {
+//     return Utils.certificates(4096);
+// };
 
-class AbstractPeer {
+class AbstractPeer extends EventEmitter {
     constructor(socket) {
-        this.id = "unknown";
+        super();
+
         this.connectionID = Utils.uuidv4();
         this.connected = true;
         this.socket = socket;
+        this.type = AbstractTransport.TYPE.NONE;
 
-        this[_private.keys] = {public: null, private: null};
-        this[_private.events] = new EventEmitter();
-        this[_private.inited] = false;
-        this[_private.authPacket] = null;
+        // this.keys = {public: null, private: null};
+        this.inited = false;
     }
 
     init() {
-        if(this[_private.inited])
+        if (this.inited)
             return;
 
-        this[_private.inited] =  true;
+        this.inited = true;
 
         this.onConnect();
     }
 
+    isClient() {
+        if(this.type == AbstractTransport.TYPE.NONE)
+            throw new Error("Invalid transport type!!!");
+
+        return this.type == AbstractTransport.TYPE.CLIENT;
+    }
+
+    /*
     auth(message) {
         // disable function
         this.auth = null;
@@ -42,54 +45,45 @@ class AbstractPeer {
             return;
         }
 
-        this.id = message.id;
-        this[_private.authPacket] = message;
-        this[_private.events].emit("authed", this);
+        this.authPacket = message;
     }
 
     getAuthPacket() {
-        return this[_private.authPacket];
+        return this.authPacket;
     }
 
     hasE2EEnabled() {
-        return this[_private.keys].public != null && this[_private.keys].private != null
+        return this.keys.public != null && this.keys.private != null
     }
 
     setPublicKey(key) {
         // disable function
         this.setPublicKey = null;
 
-        this[_private.keys].public = key;
+        this.keys.public = key;
     }
 
     getPublicKey() {
         if(!this.hasE2EEnabled()) {
-            this[_private.keys] = generateKeys();
+            this.keys = generateKeys();
         }
 
-        return this[_private.keys].public;
+        return this.keys.public;
     }
 
     getPrivateKey() {
         if(!this.hasE2EEnabled()) {
-            this[_private.keys] = generateKeys();
+            this.keys = generateKeys();
         }
 
-        return this[_private.keys].private;
+        return this.keys.private;
     }
-
-    on(event, handler) {
-        this[_private.events].on(event, handler);
-    }
-
-    off(event, handler) {
-        this[_private.events].off(event, handler);
-    }
+     */
 
     disconnect(reason) {
-        if(this.connected) {
+        if (this.connected) {
             this.onDisconnect();
-            this[_private.events].emit("disconnected", this, reason);
+            this.emit("disconnected", this, reason);
             this.connected = false;
         }
     }
@@ -106,5 +100,5 @@ class AbstractPeer {
         throw new Error('onDisconnect() must be implemented');
     }
 }
-AbstractPeer._private = _private;
+
 module.exports = AbstractPeer;

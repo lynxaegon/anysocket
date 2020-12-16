@@ -7,14 +7,14 @@ class WS extends AbstractTransport {
         super(anysocket, options);
     }
 
-    [AbstractTransport._private.serverStart]() {
+    serverStart() {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket.Server({
                 port: this.options.server.port,
                 host: this.options.server.host ? this.options.server.host : "0.0.0.0"
             });
             this.ws.on('connection', socket => {
-                this[AbstractTransport._private.addPeer](new Peer(socket));
+                this.addPeer(new Peer(socket));
             });
 
             this.ws.on('error', err => {
@@ -28,7 +28,7 @@ class WS extends AbstractTransport {
         });
     }
 
-    [AbstractTransport._private.serverStop]() {
+    serverStop() {
         return new Promise((resolve, reject) => {
             console.log("stopped");
             this.ws.close();
@@ -37,19 +37,19 @@ class WS extends AbstractTransport {
         });
     }
 
-    [AbstractTransport._private.clientStart]() {
+    clientStart() {
         return new Promise((resolve, reject) => {
-            this.ws = new WebSocket('ws://'+ this.options.client.host +'/');
+            this.ws = new WebSocket('ws://' + this.options.client.host + '/');
 
             this.ws.on('open', socket => {
-                this[AbstractTransport._private.addPeer](new Peer(this.ws));
+                this.addPeer(new Peer(this.ws));
             });
 
             resolve();
         });
     }
 
-    [AbstractTransport._private.clientStop]() {
+    clientStop() {
         return new Promise((resolve, reject) => {
             this.ws.close();
             this.ws = null;
