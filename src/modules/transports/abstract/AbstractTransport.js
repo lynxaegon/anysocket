@@ -48,6 +48,8 @@ class AbstractTransport extends EventEmitter {
                 resolve();
                 return;
             }
+            this.started = false;
+
 
             let fnc = null;
             if (this.type == AbstractTransport.TYPE.SERVER) {
@@ -61,7 +63,6 @@ class AbstractTransport extends EventEmitter {
             }
 
             fnc.bind(this)().then(() => {
-                this.started = false;
                 resolve();
             }).catch((err) => {
                 reject(err);

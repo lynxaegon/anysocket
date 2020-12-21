@@ -39,10 +39,10 @@ class WS extends AbstractTransport {
 
     clientStart() {
         return new Promise((resolve, reject) => {
-            this.ws = new WebSocket('ws://' + this.options.client.host + '/');
+            let ws = new WebSocket('ws://' + this.options.client.host + '/');
 
-            this.ws.on('open', socket => {
-                this.addPeer(new Peer(this.ws));
+            ws.on('open', socket => {
+                this.addPeer(new Peer(ws));
             });
 
             resolve();
@@ -51,8 +51,7 @@ class WS extends AbstractTransport {
 
     clientStop() {
         return new Promise((resolve, reject) => {
-            this.ws.close();
-            this.ws = null;
+            this.stop();
             resolve();
         });
     }

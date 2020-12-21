@@ -35,6 +35,10 @@ client.start().then(() => {
 }).catch(console.error);
 
 
+setTimeout(() => {
+    client.stop();
+}, 5000);
+
 // setInterval(() => {
 //     client.send("test " + client.id).then((packet) => {
 //

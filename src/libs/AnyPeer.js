@@ -34,6 +34,10 @@ module.exports = class AnyPeer extends EventEmitter {
     heartbeat() {
         if(this._heartbeat)
             clearTimeout(this._heartbeat);
+        this._heartbeat = setTimeout(() => {
+            this.heartbeat();
+        }, TIMEOUTS.HEARTBEAT);
+
 
         const startTime = (new Date()).getTime();
         const packet = Packet
@@ -43,9 +47,6 @@ module.exports = class AnyPeer extends EventEmitter {
         this._send(packet, true).then(() => {
             this.lag = (new Date()).getTime() - startTime;
             this.emit("lag", this, this.lag);
-            this._heartbeat = setTimeout(() => {
-                this.heartbeat();
-            }, TIMEOUTS.HEARTBEAT);
         });
     }
 
@@ -112,6 +113,7 @@ module.exports = class AnyPeer extends EventEmitter {
     _send(packet, awaitReply, timeout) {
         return new Promise((resolve, reject) => {
             if(!this[_protocol].isConnected()) {
+                console.log(packet);
                 reject("Cannot send message. Peer is disconnected");
                 return;
             }
