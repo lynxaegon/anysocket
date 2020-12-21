@@ -5,21 +5,29 @@ server.transport(AnySocket.Transport.WS, {
     port: 1234
 });
 
+const log = (...args) => {
+    console.log("SERVER:",...args);
+};
+
 server.on("connected", (peer) => {
-   console.log("connected", peer.id);
+    log("connected", peer.id);
 });
 
 server.on("disconnected", (peer, reason) => {
-    console.log("disconnected", peer.id);
+    log("disconnected", reason);
+});
+
+server.on("e2e", (peer) => {
+    console.log("E2E enabled for: " + peer.id)
 });
 
 let isFirstMessage = true;
-server.on("message", (message) => {
-    console.log("message", message.packet);
+server.on("message", (packet) => {
+    log("message", packet.data);
     if(isFirstMessage) {
         isFirstMessage = false;
-        console.log("sending e2e");
-        message.peer.e2e();
+        log("sending e2e");
+        packet.peer.e2e();
     }
 });
 

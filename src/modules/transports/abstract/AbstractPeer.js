@@ -1,10 +1,10 @@
 const EventEmitter = require('events');
-const Utils = require("../../utils");
+const Utils = require("../../../libs/utils");
 const AbstractTransport = require("./AbstractTransport");
 
-// const generateKeys = () => {
-//     return Utils.certificates(4096);
-// };
+const generateKeys = () => {
+    return Utils.certificates(4096);
+};
 
 class AbstractPeer extends EventEmitter {
     constructor(socket) {
@@ -15,7 +15,7 @@ class AbstractPeer extends EventEmitter {
         this.socket = socket;
         this.type = AbstractTransport.TYPE.NONE;
 
-        // this.keys = {public: null, private: null};
+        this.keys = {public: null, private: null};
         this.inited = false;
     }
 
@@ -33,23 +33,6 @@ class AbstractPeer extends EventEmitter {
             throw new Error("Invalid transport type!!!");
 
         return this.type == AbstractTransport.TYPE.CLIENT;
-    }
-
-    /*
-    auth(message) {
-        // disable function
-        this.auth = null;
-
-        if(!message.id) {
-            this.disconnect("Invalid ID sent in auth process!");
-            return;
-        }
-
-        this.authPacket = message;
-    }
-
-    getAuthPacket() {
-        return this.authPacket;
     }
 
     hasE2EEnabled() {
@@ -78,7 +61,6 @@ class AbstractPeer extends EventEmitter {
 
         return this.keys.private;
     }
-     */
 
     disconnect(reason) {
         if (this.connected) {

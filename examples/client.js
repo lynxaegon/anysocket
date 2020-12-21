@@ -10,7 +10,7 @@ client.on("connected", (peer) => {
 });
 
 client.on("disconnected", (peer, reason) => {
-    console.log("disconnected", peer.id);
+    console.log(reason);
 });
 
 client.on("message", (message) => {
