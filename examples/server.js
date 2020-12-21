@@ -19,6 +19,13 @@ server.on("disconnected", (peer, reason) => {
 
 server.on("e2e", (peer) => {
     console.log("E2E enabled for: " + peer.id)
+    peer.send({
+        type: "test"
+    }, true).then((packet) => {
+        console.log("Replied:", packet.data);
+    }).catch((err) => {
+        console.log("Reply failed:", err);
+    });
 });
 
 let isFirstMessage = true;

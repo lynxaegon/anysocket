@@ -64,9 +64,9 @@ class AbstractPeer extends EventEmitter {
 
     disconnect(reason) {
         if (this.connected) {
+            this.connected = false;
             this.onDisconnect();
             this.emit("disconnected", this, reason);
-            this.connected = false;
         }
     }
 

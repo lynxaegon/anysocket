@@ -1,9 +1,8 @@
 const EventEmitter = require("events");
 
 class AbstractTransport extends EventEmitter {
-    constructor(anysocket, options) {
+    constructor(options) {
         super();
-        this.anysocket = anysocket;
         this.options = options;
 
         this.type = AbstractTransport.TYPE.NONE;

@@ -31,11 +31,15 @@ class AnySocket extends EventEmitter {
         // something smart to filter
     }
 
-    send(message) {
-        for (let p in this[_private.peers]) {
-            p = this[_private.peers][p];
-            p.send(message);
-        }
+    send(message, awaitReply) {
+        awaitReply = awaitReply || false;
+
+        return new Promise((resolve, reject) => {
+            for (let p in this[_private.peers]) {
+                p = this[_private.peers][p];
+                p.send(message, awaitReply).then(resolve).catch(reject);
+            }
+        })
     }
 
     transport(transport, options) {
@@ -53,7 +57,7 @@ class AnySocket extends EventEmitter {
         }
 
         this[_private.transports].push(
-            new transport(this, opts)
+            new transport(opts)
         );
     }
 
@@ -115,6 +119,7 @@ class AnySocket extends EventEmitter {
         anypeer.on("e2e", (peer) => {
             this.emit("e2e", peer);
         });
+        anypeer.heartbeat();
         this.emit("connected", anypeer);
     }
 
@@ -129,6 +134,7 @@ class AnySocket extends EventEmitter {
         if (anypeerID) {
             const anypeer = this[_private.peers][anypeerID];
             delete this[_private.peers][anypeerID];
+            anypeer.disconnect();
             this.emit("disconnected", anypeer, reason);
         }
     }
@@ -156,6 +162,4 @@ AnySocket.Type = {
     SERVER: 2
 };
 AnySocket.Transport = loadModules("../modules/transports");
-AnySocket.XTunnel = require("../../examples/libs/XTunnel");
-AnySocket.XTunnelServer = require("../../examples/libs/XTunnelServer");
 module.exports = AnySocket;

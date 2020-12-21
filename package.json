@@ -33,7 +33,6 @@
   "homepage": "https://github.com/lynxaegon/anysocket#readme",
   "dependencies": {
     "fastq": "^1.10.0",
-    "nanoid": "^3.1.20",
     "ws": "^7.4.1"
   }
 }

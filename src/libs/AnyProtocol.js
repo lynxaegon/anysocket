@@ -6,7 +6,8 @@ const Utils = require("./utils");
 const PACKET_TYPE = {
     AUTH: 1,
     LINK: 2,
-    SWITCH: 3
+    SWITCH: 3,
+    HEARTBEAT: 4
 };
 const PROTOCOL_STATES = {
     ESTABLISHED: 0,
@@ -21,7 +22,7 @@ const PROTOCOL_ENCRYPTION = {
     E2E: "3"
 };
 
-const MAX_PACKET_SIZE = 10;
+const MAX_PACKET_SIZE = 2020;
 module.exports = class AnyProtocol extends EventEmitter {
     constructor(anysocketID, peer) {
         super();
@@ -51,7 +52,14 @@ module.exports = class AnyProtocol extends EventEmitter {
         }
     }
 
+    isConnected() {
+        return this.state != PROTOCOL_STATES.DISCONNECTED;
+    }
+
     send(packet) {
+        if(packet.seq == 0)
+            packet.setSeq(this._getSeq());
+
         return new Promise((resolve, reject) => {
             const rejectFnc = (e) => {
                 this.disconnect(e);
@@ -72,7 +80,6 @@ module.exports = class AnyProtocol extends EventEmitter {
 
     _send(packet, resolve, reject) {
         try {
-            packet.setSeq(this._getSeq());
             packet = packet.serialize(MAX_PACKET_SIZE, this._encrypt.bind(this));
             for(let i = 0; i < packet.length; i++) {
                 const item = {
@@ -142,7 +149,10 @@ module.exports = class AnyProtocol extends EventEmitter {
                 case PROTOCOL_STATES.CONNECTED:
                     if(packet.type == PACKET_TYPE.LINK) {
                         invalidPacket = false;
-                        this.emit("message", this, packet.data);
+                        this.emit("message", this, {
+                            seq: packet.seq,
+                            data: packet.data
+                        });
                     } else if(packet.type == PACKET_TYPE.SWITCH) {
                         invalidPacket = false;
 
@@ -159,12 +169,22 @@ module.exports = class AnyProtocol extends EventEmitter {
                         });
 
                         this.changeState(PROTOCOL_STATES.SWITCHING_PROTOCOL);
+                    } else if(packet.type == PACKET_TYPE.HEARTBEAT) {
+                        invalidPacket = false;
+                        this.emit("internal", this, {
+                            seq: packet.seq,
+                            type: packet.type,
+                            data: packet.data
+                        });
                     }
                     break;
                 case PROTOCOL_STATES.SWITCHING_PROTOCOL:
                     if(packet.type == PACKET_TYPE.LINK) {
                         invalidPacket = false;
-                        this.emit("message", this, packet.data);
+                        this.emit("message", this, {
+                            seq: packet.seq,
+                            data: packet.data
+                        });
                     }
                     else if(packet.type == PACKET_TYPE.SWITCH) {
                         invalidPacket = false;
@@ -172,6 +192,13 @@ module.exports = class AnyProtocol extends EventEmitter {
                         this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.E2E;
                         this.changeState(PROTOCOL_STATES.CONNECTED);
                         this.emit("e2e", this);
+                    } else if(packet.type == PACKET_TYPE.HEARTBEAT) {
+                        invalidPacket = false;
+                        this.emit("internal", this, {
+                            seq: packet.seq,
+                            type: packet.type,
+                            data: packet.data
+                        });
                     }
                     break;
                 case PROTOCOL_STATES.DISCONNECTED:

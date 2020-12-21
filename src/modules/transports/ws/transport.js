@@ -3,8 +3,8 @@ const Peer = require("./peer.js");
 const WebSocket = require("ws");
 
 class WS extends AbstractTransport {
-    constructor(anysocket, options) {
-        super(anysocket, options);
+    constructor(options) {
+        super(options);
     }
 
     serverStart() {

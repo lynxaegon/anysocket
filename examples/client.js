@@ -13,8 +13,14 @@ client.on("disconnected", (peer, reason) => {
     console.log(reason);
 });
 
-client.on("message", (message) => {
-    console.log("message", message.packet);
+client.on("message", (packet) => {
+    console.log("message", packet.data);
+    if(packet.data.type == "test") {
+        packet.reply({
+            type: "test",
+            result: "ok"
+        });
+    }
 });
 
 
@@ -23,6 +29,8 @@ client.start().then(() => {
 }).catch(console.error);
 
 
-setInterval(() => {
-    client.send("test " + client.id);
-}, 1000);
+// setInterval(() => {
+//     client.send("test " + client.id).then((packet) => {
+//
+//     });
+// }, 1000);

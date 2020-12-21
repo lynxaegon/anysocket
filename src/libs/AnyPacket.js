@@ -24,6 +24,14 @@ class AnyPacket {
 
     setSeq(seq) {
         this.seq = seq;
+        return this;
+    }
+
+    setReplyTo(replyTo) {
+        if(replyTo)
+            this.seq = -replyTo;
+
+        return this;
     }
 
     combine(packet) {
@@ -78,6 +86,7 @@ class AnyPacket {
 
 module.exports = {
     data: (data) => {
+        data = data || {};
         return new AnyPacket(data);
     },
     buffer: () => {
