@@ -1,9 +1,17 @@
+// TODO: change API format to this:
+// - AnySocket (general)
+// - AnySocket.server(port) -> start server
+// - AnySocket.stop() -> stops everything
+// - AnySocket.connect("scheme://ip:port") -> client
 const AnySocket = require("../src/index");
 
-const client = new AnySocket(AnySocket.Type.CLIENT);
-client.transport(AnySocket.Transport.WS, {
-    host: "127.0.0.1:1234"
-});
+const client = new AnySocket(AnySocket.Type.CLIENT)
+    .transport(AnySocket.Transport.WS, {
+        host: "127.0.0.1:1234"
+    })
+    .transport(AnySocket.Transport.WS, {
+        host: "127.0.0.1:1234"
+    });
 
 client.on("connected", (peer) => {
     console.log("connected", peer.id);

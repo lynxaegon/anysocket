@@ -25,6 +25,8 @@ class AnySocket extends EventEmitter {
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
         this[_private.transports] = [];
+
+        return this;
     }
 
     filter(options) {
@@ -59,6 +61,8 @@ class AnySocket extends EventEmitter {
         this[_private.transports].push(
             new transport(opts)
         );
+
+        return this;
     }
 
     start() {

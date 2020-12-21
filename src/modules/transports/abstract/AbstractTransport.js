@@ -54,19 +54,21 @@ class AbstractTransport extends EventEmitter {
             let fnc = null;
             if (this.type == AbstractTransport.TYPE.SERVER) {
                 fnc = this.serverStop;
-            } else {
-                fnc = this.clientStop;
             }
 
             for (const peer of this.peers.values()) {
                 peer.disconnect("Local Connection Closed");
             }
 
-            fnc.bind(this)().then(() => {
+            if(!fnc) {
                 resolve();
-            }).catch((err) => {
-                reject(err);
-            });
+            } else {
+                fnc.bind(this)().then(() => {
+                    resolve();
+                }).catch((err) => {
+                    reject(err);
+                });
+            }
         });
     }
 
@@ -99,10 +101,6 @@ class AbstractTransport extends EventEmitter {
 
     clientStart() {
         throw new Error('clientStart() must be implemented');
-    }
-
-    clientStop() {
-        throw new Error('clientStop() must be implemented');
     }
 }
 

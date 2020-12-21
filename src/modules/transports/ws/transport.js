@@ -48,13 +48,6 @@ class WS extends AbstractTransport {
             resolve();
         });
     }
-
-    clientStop() {
-        return new Promise((resolve, reject) => {
-            this.stop();
-            resolve();
-        });
-    }
 }
 
 module.exports = WS;
