@@ -113,13 +113,18 @@ class AnySocket extends EventEmitter {
         console.log("Peer ready");
         const anypeer = new AnyPeer(protocol);
         this[_private.peers][protocol.peerID] = anypeer;
+
         anypeer.on("message", (packet) => {
             this.emit("message", packet);
         });
         anypeer.on("e2e", (peer) => {
             this.emit("e2e", peer);
         });
+        anypeer.on("lag", (peer, lag) => {
+            this.emit("lag", peer, lag);
+        });
         anypeer.heartbeat();
+
         this.emit("connected", anypeer);
     }
 

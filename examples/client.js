@@ -13,8 +13,11 @@ client.on("disconnected", (peer, reason) => {
     console.log(reason);
 });
 
+client.on("lag", (peer, lag) => {
+   console.log("LAG", peer.id, lag);
+});
+
 client.on("message", (packet) => {
-    console.log("message", packet.data);
     if(packet.data.type == "test") {
         packet.reply({
             type: "test",
@@ -23,6 +26,9 @@ client.on("message", (packet) => {
     }
 });
 
+client.on("e2e", (peer) => {
+    console.log("E2E enabled for: " + peer.id)
+});
 
 client.start().then(() => {
     console.log("started client");

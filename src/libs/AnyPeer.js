@@ -1,11 +1,12 @@
 const EventEmitter = require("events");
+const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 
 const TIMEOUTS = {
     REPLY: 30 * 1000,
-    HEARTBEAT: 1 * 1000
+    HEARTBEAT: 5 * 1000
 };
 const isBoolean = function(obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
@@ -19,41 +20,93 @@ module.exports = class AnyPeer extends EventEmitter {
         this[_packets] = {};
 
         this.id = protocol.peerID;
+        this.lag = -1;
         this.connectionID = protocol.connectionID;
         this._heartbeat = false;
         protocol.on("internal", this.onInternalComs.bind(this));
         protocol.on("message", this.onMessage.bind(this));
-        protocol.on("e2e", this.onE2E.bind(this));
+        protocol.on("e2e", () => {
+            this.onE2E();
+            this.heartbeat();
+        });
     }
 
     heartbeat() {
         if(this._heartbeat)
             clearTimeout(this._heartbeat);
 
-        this._heartbeat = setTimeout(() => {
-            const startTime = (new Date()).getTime();
-            const packet = AnyPacket
-                .data()
-                .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
+        const startTime = (new Date()).getTime();
+        const packet = Packet
+            .data()
+            .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
 
-            this._send(packet, true).then(() => {
-                this.lag = (new Date()).getTime() - startTime;
-                console.log("PONG", this.lag);
-                setImmediate(this.heartbeat.bind(this));
-            });
-        }, TIMEOUTS.HEARTBEAT);
+        this._send(packet, true).then(() => {
+            this.lag = (new Date()).getTime() - startTime;
+            this.emit("lag", this, this.lag);
+            this._heartbeat = setTimeout(() => {
+                this.heartbeat();
+            }, TIMEOUTS.HEARTBEAT);
+        });
     }
 
     e2e() {
+        clearTimeout(this._heartbeat);
         this[_protocol].e2e();
     }
 
     send(message, awaitReply, timeout) {
-        const packet = AnyPacket
+        const packet = Packet
             .data(message)
             .setType(this[_protocol].PACKET_TYPE.LINK);
 
         return this._send(packet, awaitReply, timeout);
+    }
+
+    onMessage(peer, message) {
+        if (message.seq < 0) {
+            if (!this._resolveReply(message)) {
+                console.log("Dropped reply " + message.seq + ". Delivered after Timeout");
+            }
+            return;
+        }
+
+        this.emit("message", new AnyPacket(this, message, this.send.bind(this)));
+    }
+
+    onE2E() {
+        this.emit("e2e", this);
+    }
+
+    onInternalComs(peer, message) {
+        if (message.seq < 0) {
+            if (!this._resolveReply(message)) {
+                console.log("Dropped reply " + message.seq + ". Delivered after Timeout");
+            }
+            return;
+        }
+
+        if(message.type == this[_protocol].PACKET_TYPE.HEARTBEAT) {
+            // reply
+            const packet = Packet
+                .data()
+                .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
+            this._send(packet, message.seq);
+        } else {
+            console.error("Dropped internal packet!");
+            console.log(message);
+        }
+    }
+
+    disconnect(reason) {
+        for (let seq in this[_packets]) {
+            clearTimeout(this[_packets][seq].timeout);
+            this[_packets][seq].reject("Peer disconnected!");
+        }
+        this[_packets] = {};
+        clearTimeout(this._heartbeat);
+
+        reason = reason || "Unknown";
+        this[_protocol].disconnect(reason);
     }
 
     _send(packet, awaitReply, timeout) {
@@ -87,73 +140,18 @@ module.exports = class AnyPeer extends EventEmitter {
         });
     }
 
-    onMessage(peer, message) {
-        if (message.seq < 0) {
-            if (!this._resolveReply(message)) {
-                console.log("Dropped reply " + message.seq + ". Delivered after Timeout");
-            }
-            return;
-        }
-
-        this.emit("message", this._makePacket(message));
-    }
-
-    onE2E() {
-        this.emit("e2e", this);
-    }
-
-    onInternalComs(peer, message) {
-        if (message.seq < 0) {
-            if (!this._resolveReply(message)) {
-                console.log("Dropped reply " + message.seq + ". Delivered after Timeout");
-            }
-            return;
-        }
-
-        if(message.type == this[_protocol].PACKET_TYPE.HEARTBEAT) {
-            // reply
-            const packet = AnyPacket
-                .data()
-                .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
-            this._send(packet, message.seq);
-        } else {
-            console.error("Dropped internal packet!");
-            console.log(message);
-        }
-    }
-
-    disconnect(reason) {
-        for (let seq in this[_packets]) {
-            clearTimeout(this[_packets][seq].timeout);
-            this[_packets][seq].reject("Peer disconnected!");
-        }
-        this[_packets] = {};
-        clearTimeout(this._heartbeat);
-
-        reason = reason || "Unknown";
-        this[_protocol].disconnect(reason);
-    }
-
     _resolveReply(message) {
         message.seq *= -1;
         if (this[_packets][message.seq]) {
             const tmp = this[_packets][message.seq];
             delete this[_packets][message.seq];
             clearTimeout(tmp.timeout);
-            tmp.resolve(this._makePacket(message));
+            tmp.resolve(new AnyPacket(this, message, () => {
+                console.error("Cannot reply to a reply packet!");
+            }));
             return true;
         }
 
         return false;
-    }
-
-    _makePacket(message) {
-        return {
-            peer: this,
-            data: message.data,
-            reply: (data) => {
-                this.send(data, message.seq)
-            }
-        }
     }
 };

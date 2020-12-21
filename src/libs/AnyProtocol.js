@@ -1,6 +1,6 @@
 const EventEmitter = require("events");
 const FastQ = require('fastq');
-const AnyPacket = require("./AnyPacket");
+const Packet = require("./Packet");
 const Utils = require("./utils");
 
 const PACKET_TYPE = {
@@ -46,7 +46,7 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         if(this.peer.isClient()) {
             this.changeState(PROTOCOL_STATES.AUTHING);
-            this.send(AnyPacket.data({
+            this.send(Packet.data({
                 id: this.anysocketID
             }).setType(PACKET_TYPE.AUTH));
         }
@@ -66,7 +66,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                 reject(e);
             };
 
-            if(packet.type == PACKET_TYPE.LINK && this.state != PROTOCOL_STATES.CONNECTED) {
+            if([PACKET_TYPE.LINK, PACKET_TYPE.HEARTBEAT].indexOf(packet.type) != -1 && this.state != PROTOCOL_STATES.CONNECTED) {
                 this._linkPacketQueue.push({
                     packet: packet,
                     resolve: resolve,
@@ -101,18 +101,17 @@ module.exports = class AnyProtocol extends EventEmitter {
         if(this.peer.hasE2EEnabled())
             return;
 
-        this.send(AnyPacket.data({
+        this.changeState(PROTOCOL_STATES.SWITCHING_PROTOCOL);
+        this.send(Packet.data({
             type: PROTOCOL_ENCRYPTION.E2E,
             key: this.peer.getPublicKey()
-        }).setType(PACKET_TYPE.SWITCH)).then(() => {
-            this.changeState(PROTOCOL_STATES.SWITCHING_PROTOCOL);
-        });
+        }).setType(PACKET_TYPE.SWITCH));
     }
 
     onPacket(peer, recv) {
         // TODO: to implement forward without parsing, just read the PACKET_TYPE (substr(1,1))
         let invalidPacket = true;
-        this._buffer = this._buffer || AnyPacket.buffer();
+        this._buffer = this._buffer || Packet.buffer();
         const packet = this._buffer;
         if(packet.deserialize(recv, this._decrypt.bind(this))) {
             this._buffer = false;
@@ -126,7 +125,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                         }
                         this.peerID = packet.data.id;
 
-                        this.send(AnyPacket.data({
+                        this.send(Packet.data({
                             id: this.anysocketID
                         }).setType(PACKET_TYPE.AUTH)).then(() => {
                             this.changeState(PROTOCOL_STATES.CONNECTED);
@@ -159,7 +158,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                         let publicKey = this.peer.getPublicKey();
                         this.peer.setPublicKey(packet.data.key);
 
-                        this.send(AnyPacket.data({
+                        this.send(Packet.data({
                             type: PROTOCOL_ENCRYPTION.E2E,
                             key: publicKey
                         }).setType(PACKET_TYPE.SWITCH)).then(() => {
@@ -263,24 +262,34 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _encrypt(packet) {
-        switch (this.ENCRYPTION_STATE) {
-            case PROTOCOL_ENCRYPTION.PLAIN:
-                return packet;
-            case PROTOCOL_ENCRYPTION.AES:
-                return packet;
-            case PROTOCOL_ENCRYPTION.E2E:
-                return Utils.encryptRSA(this.peer.getPublicKey(), packet);
+        try {
+            switch (this.ENCRYPTION_STATE) {
+                case PROTOCOL_ENCRYPTION.PLAIN:
+                    return packet;
+                case PROTOCOL_ENCRYPTION.AES:
+                    return packet;
+                case PROTOCOL_ENCRYPTION.E2E:
+                    return Utils.encryptRSA(this.peer.getPublicKey(), packet);
+            }
+        }
+        catch(e) {
+            this.disconnect(e);
         }
     }
 
     _decrypt(packet) {
-        switch (this.ENCRYPTION_STATE) {
-            case PROTOCOL_ENCRYPTION.PLAIN:
-                return packet;
-            case PROTOCOL_ENCRYPTION.AES:
-                return packet;
-            case PROTOCOL_ENCRYPTION.E2E:
-                return Utils.decryptRSA(this.peer.getPrivateKey(), packet);
+        try {
+            switch (this.ENCRYPTION_STATE) {
+                case PROTOCOL_ENCRYPTION.PLAIN:
+                    return packet;
+                case PROTOCOL_ENCRYPTION.AES:
+                    return packet;
+                case PROTOCOL_ENCRYPTION.E2E:
+                    return Utils.decryptRSA(this.peer.getPrivateKey(), packet);
+            }
+        }
+        catch(e) {
+            this.disconnect(e);
         }
     }
 

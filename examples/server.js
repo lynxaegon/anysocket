@@ -11,14 +11,8 @@ const log = (...args) => {
 
 server.on("connected", (peer) => {
     log("connected", peer.id);
-});
+    peer.e2e();
 
-server.on("disconnected", (peer, reason) => {
-    log("disconnected", reason);
-});
-
-server.on("e2e", (peer) => {
-    console.log("E2E enabled for: " + peer.id)
     peer.send({
         type: "test"
     }, true).then((packet) => {
@@ -28,14 +22,20 @@ server.on("e2e", (peer) => {
     });
 });
 
-let isFirstMessage = true;
+server.on("lag", (peer, lag) => {
+    console.log("LAG", peer.id, lag);
+});
+
+server.on("disconnected", (peer, reason) => {
+    log("disconnected", reason);
+});
+
+server.on("e2e", (peer) => {
+    console.log("E2E enabled for: " + peer.id)
+});
+
 server.on("message", (packet) => {
     log("message", packet.data);
-    if(isFirstMessage) {
-        isFirstMessage = false;
-        log("sending e2e");
-        packet.peer.e2e();
-    }
 });
 
 server.start().then(() => {
