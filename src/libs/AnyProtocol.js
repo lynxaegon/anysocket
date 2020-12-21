@@ -92,6 +92,9 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     e2e() {
+        if(this.peer.hasE2EEnabled())
+            return;
+
         this.send(AnyPacket.data({
             type: PROTOCOL_ENCRYPTION.E2E,
             key: this.peer.getPublicKey()
