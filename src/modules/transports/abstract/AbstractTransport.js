@@ -57,7 +57,6 @@ class AbstractTransport extends EventEmitter {
                 fnc = this.clientStop;
             }
 
-            // TODO: Check if needed, it shouldn't be needed...
             for (const peer of this.peers.values()) {
                 peer.disconnect("Local Connection Closed");
             }

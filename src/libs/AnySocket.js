@@ -13,11 +13,7 @@ const _private = {
 const AnyPeer = require("./AnyPeer");
 const AnyProtocol = require("./AnyProtocol");
 
-// TODO: E2E requires data to be max size of the key. By default, padding adds some extra bytes
-// TODO: - Implement a better state machine for the protocol (maybe with protocol message - SWITCH_STATE)
-// TODO: - Implement partial messages that wait for completion before triggering (with a timeout so we don't have memory leaks)
 // TODO: - Reimplement XTunnel over AnySocket
-// TODO: ----- Fix Protocol QUEUEing system!!!!
 class AnySocket extends EventEmitter {
     constructor(type) {
         super();

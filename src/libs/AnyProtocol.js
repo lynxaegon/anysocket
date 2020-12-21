@@ -22,7 +22,6 @@ const PROTOCOL_ENCRYPTION = {
 };
 
 const MAX_PACKET_SIZE = 10;
-// TODO: implement PACKET REPLY and then think about how to implement THE PROTOCOL. I will be easier with replies
 module.exports = class AnyProtocol extends EventEmitter {
     constructor(anysocketID, peer) {
         super();
