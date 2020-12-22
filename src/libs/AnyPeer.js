@@ -44,7 +44,7 @@ module.exports = class AnyPeer extends EventEmitter {
             .data()
             .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
 
-        this._send(packet, true).then(() => {
+        this._send(packet, true, TIMEOUTS.HEARTBEAT).then(() => {
             this.lag = (new Date()).getTime() - startTime;
             this.emit("lag", this, this.lag);
         }).catch((e) => {
