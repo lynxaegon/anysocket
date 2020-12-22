@@ -95,19 +95,24 @@ More in the `examples` folder.
 
 <a name="api"></a>
 ## Api
-* <a href="#AnySocket"><code><b>AnySocket()</b></code></a>
+* <a href="#AnySocket.constructor"><code><b>AnySocket()</b></code></a>
     * <a href="#AnySocket.id"><code><b>id</b></code></a>
     * <a href="#AnySocket.server"><code><b>server()</b></code></a>
     * <a href="#AnySocket.listen"><code><b>listen()</b></code></a>
     * <a href="#AnySocket.connect"><code><b>connect()</b></code></a>
     * <a href="#AnySocket.stop"><code><b>stop()</b></code></a>
     * <a href="#AnySocket.send"><code><b>send()</b></code></a>
-* <a href="#AnyPacket"><code><b>AnyPacket()</b></code></a>
+    * <a href="#AnySocket.on.connected"><code><b>event: _connected_</b></code></a>
+    * <a href="#AnySocket.on.message"><code><b>event: _message_</b></code></a>
+    * <a href="#AnySocket.on.e2e"><code><b>event: _e2e_</b></code></a>
+    * <a href="#AnySocket.on.heartbeat"><code><b>event: _heartbeat_</b></code></a>
+    * <a href="#AnySocket.on.disconnected"><code><b>event: _disconnected_</b></code></a>
+* <a href="#AnyPacket.constructor"><code><b>AnyPacket()</b></code></a>
     * <a href="#AnyPacket.seq"><code><b>seq</b></code></a>
     * <a href="#AnyPacket.peer"><code><b>peer</b></code></a>
     * <a href="#AnyPacket.msg"><code><b>msg</b></code></a>
     * <a href="#AnyPacket.reply"><code><b>reply()</b></code></a>
-* <a href="#AnyPeer"><code><b>AnyPeer()</b></code></a>
+* <a href="#AnyPeer.constructor"><code><b>AnyPeer()</b></code></a>
     * <a href="#AnyPeer.id"><code><b>id</b></code></a>
     * <a href="#AnyPeer.lag"><code><b>lag</b></code></a>
     * <a href="#AnyPeer.connectionID"><code><b>connectionID</b></code></a>
@@ -115,28 +120,31 @@ More in the `examples` folder.
     * <a href="#AnyPeer.send"><code><b>send()</b></code></a>
     * <a href="#AnyPeer.disconnect"><code><b>disconnect()</b></code></a>
     * <a href="#AnyPeer.heartbeat"><code><b>heartbeat()</b></code></a> - deprecated, will be moved
-
+    * <a href="#AnyPeer.on.message"><code><b>event: _message_</b></code></a>
+    * <a href="#AnyPeer.on.e2e"><code><b>event: _e2e_</b></code></a>
+    * <a href="#AnyPeer.on.heartbeat"><code><b>event: _heartbeat_</b></code></a>
+    * <a href="#AnyPeer.on.disconnected"><code><b>event: _disconnected_</b></code></a>
 ## Documentation
-<a name="AnySocket"></a>
+<a name="AnySocket.constructor"></a>
 ### AnySocket()
 
 Creates a new AnySocket instance
 
 -------------------------------------------------------
-<a name="AnySocket.id"></a>
+<a name="anysocket.id"></a>
 ### AnySocket.id
 
 Unique identifier (UUIDv4) that will be used for all connections originating this instance (client/server)
 
 -------------------------------------------------------
 <a name="AnySocket.server"></a>
-### anysocket.server(scheme, options)
+### AnySocket.server(scheme, options)
 
-Alias for listen
+Alias for <a href="#AnySocket.listen">AnySocket.listen()</a>
 
 -------------------------------------------------------
 <a name="AnySocket.listen"></a>
-### anysocket.listen(scheme, options)
+### AnySocket.listen(scheme, options)
 
 Attaches a new server transport based on the selected **scheme*
 
@@ -159,7 +167,7 @@ Attaches a new server transport based on the selected **scheme*
 
 -------------------------------------------------------
 <a name="AnySocket.connect"></a>
-### anysocket.connect(scheme, ip, port, [options])
+### AnySocket.connect(scheme, ip, port, [options])
 
 Connects to AnySocket Server
 
@@ -181,7 +189,7 @@ _note: you cannot take actions (ex: send) until the `connected` event has been t
 
 -------------------------------------------------------
 <a name="AnySocket.stop"></a>
-### anysocket.stop()
+### AnySocket.stop()
 
 Stops all servers and disconnects all peers
 
@@ -189,7 +197,7 @@ Stops all servers and disconnects all peers
 
 -------------------------------------------------------
 <a name="AnySocket.send"></a>
-### anysocket.send(message, awaitReply)
+### AnySocket.send(message, awaitReply)
 
 Sends a message to all connected peers
 
@@ -202,32 +210,78 @@ Sends a message to all connected peers
 _note: it doesn't resolve if awaitReply is not set_ 
 
 -------------------------------------------------------
-<a name="AnyPacket"></a>
+<a name="AnySocket.on.connected"></a>
+### AnySocket event `connected`
+
+Emitted when the link has been established and it's ready for sending/receiving messages
+
+**Arguments:**
+* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+
+-------------------------------------------------------
+<a name="AnySocket.on.message"></a>
+### AnySocket event `message`
+
+Emitted when a message is received
+
+**Arguments:**
+* `packet`, <a href="#AnyPacket">AnyPacket</a> instance
+
+-------------------------------------------------------
+<a name="AnySocket.on.e2e"></a>
+### AnySocket event `e2e`
+
+Emitted when the link has been end-to-end encrypted and it's ready to be used
+
+**Arguments:**
+* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+
+-------------------------------------------------------
+<a name="AnySocket.on.heartbeat"></a>
+### AnySocket event `heartbeat`
+
+Emitted when a PING/PONG heartbeat has finished
+
+**Arguments:**
+* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+
+-------------------------------------------------------
+<a name="AnySocket.on.disconnected"></a>
+### AnySocket event `disconnected`
+
+Emitted when a peer has disconnected
+
+**Arguments:**
+* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+* `reason`, a string detailing the disconnect reason
+
+-------------------------------------------------------
+<a name="AnyPacket.constructor"></a>
 ### AnyPacket()
 
 Constructor should not be used directly
 
 -------------------------------------------------------
 <a name="AnyPacket.seq"></a>
-### anypacket.seq
+### AnyPacket.seq
 
 An incremental unique identifier per packet per peer (used internally)
 
 -------------------------------------------------------
 <a name="AnyPacket.peer"></a>
-### anypacket.peer
+### AnyPacket.peer
 
-An <a href="#AnyPeer">AnyPeer</a> instance
+An <a href="#AnyPeer.constructor">AnyPeer</a> instance
 
 -------------------------------------------------------
 <a name="AnyPacket.msg"></a>
-### anypacket.msg
+### AnyPacket.msg
 
 An object that contains data sent/received from a peer
 
 -------------------------------------------------------
 <a name="AnyPacket.reply"></a>
-### anypacket.reply(message)
+### AnyPacket.reply(message)
 
 Sends a reply to the current packet
 
@@ -298,7 +352,44 @@ Disconnects the peer
 
 Send a heartbeet to the peer - _used internally_
 
-<a name="features"></a>
+-------------------------------------------------------
+<a name="AnyPeer.on.message"></a>
+### AnyPeer event `message`
+
+Emitted when a message is received
+
+**Arguments:**
+* `packet`, <a href="#AnyPacket">AnyPacket</a> instance
+
+-------------------------------------------------------
+<a name="AnyPeer.on.e2e"></a>
+### AnyPeer event `e2e`
+
+Emitted when the link has been end-to-end encrypted and it's ready to be used
+
+**Arguments:**
+* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+
+-------------------------------------------------------
+<a name="AnyPeer.on.heartbeat"></a>
+### AnyPeer event `heartbeat`
+
+Emitted when a PING/PONG heartbeat has finished
+
+**Arguments:**
+* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+
+-------------------------------------------------------
+<a name="AnyPeer.on.disconnected"></a>
+### AnyPeer event `disconnected`
+
+Emitted when the peer has disconnected
+
+**Arguments:**
+* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+* `reason`, a string detailing the disconnect reason
+
+<a name="future"></a>
 ## Upcoming Features
 * P2P using a proxy server (with support for e2e between clients)
 * Mesh Network

@@ -164,8 +164,8 @@ class AnySocket extends EventEmitter {
         anypeer.on("e2e", (peer) => {
             this.emit("e2e", peer);
         });
-        anypeer.on("lag", (peer, lag) => {
-            this.emit("lag", peer, lag);
+        anypeer.on("heartbeat", (peer) => {
+            this.emit("heartbeat", peer);
         });
 
         this.emit("connected", anypeer);

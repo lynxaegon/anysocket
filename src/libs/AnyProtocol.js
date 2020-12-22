@@ -52,6 +52,9 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.PLAIN;
 
         this.peer.on("message", this.onPacket.bind(this));
+        this.peer.on("disconnected", (peer, reason) => {
+            this.emit("disconnected", peer, reason);
+        });
 
         if(this.peer.isClient()) {
             this.changeState(PROTOCOL_STATES.AUTHING);

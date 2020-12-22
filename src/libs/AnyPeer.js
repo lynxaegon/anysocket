@@ -26,6 +26,9 @@ module.exports = class AnyPeer extends EventEmitter {
             this.onE2E();
             this.heartbeat();
         });
+        protocol.on("disconnected", (peer, reason) => {
+            this.emit("disconnected", peer, reason);
+        });
     }
 
     heartbeat() {
@@ -43,7 +46,7 @@ module.exports = class AnyPeer extends EventEmitter {
 
         this._send(packet, true, this[_protocol].options.heartbeatTimeout).then(() => {
             this.lag = (new Date()).getTime() - startTime;
-            this.emit("lag", this, this.lag);
+            this.emit("heartbeat", this);
         }).catch((e) => {
             debug("Heartbeat Error:", e);
             this.disconnect(e);
@@ -105,7 +108,6 @@ module.exports = class AnyPeer extends EventEmitter {
         this[_packets] = {};
         clearTimeout(this._heartbeat);
 
-        reason = reason || "Unknown";
         this[_protocol].disconnect(reason);
     }
 
