@@ -1,3 +1,4 @@
+const debug = require('debug')('AnyProtocol');
 const EventEmitter = require("events");
 const FastQ = require('fastq');
 const Packet = require("./Packet");
@@ -9,6 +10,13 @@ const PACKET_TYPE = {
     SWITCH: 3,
     HEARTBEAT: 4
 };
+const PACKET_TYPE_REVERSED = {
+    1: "AUTH",
+    2: "LINK",
+    3: "SWITCH",
+    4: "HEARTBEAT",
+};
+
 const PROTOCOL_STATES = {
     ESTABLISHED: 0,
     AUTHING: 1,
@@ -24,13 +32,14 @@ const PROTOCOL_ENCRYPTION = {
 
 const MAX_PACKET_SIZE = 2020;
 module.exports = class AnyProtocol extends EventEmitter {
-    constructor(anysocketID, peer) {
+    constructor(anysocketID, peer, options) {
         super();
 
         this._seq = 0;
 
         this.peerID = null;
         this.peer = peer;
+        this.options = options;
         this.connectionID = this.peer.connectionID;
         this.anysocketID = anysocketID;
 
@@ -79,6 +88,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _send(packet, resolve, reject) {
+        debug(this.peerID,">>>>", PACKET_TYPE_REVERSED[packet.type], packet.seq);
         try {
             packet = packet.serialize(MAX_PACKET_SIZE, this._encrypt.bind(this));
             for(let i = 0; i < packet.length; i++) {
@@ -113,7 +123,9 @@ module.exports = class AnyProtocol extends EventEmitter {
         let invalidPacket = true;
         this._buffer = this._buffer || Packet.buffer();
         const packet = this._buffer;
-        if(packet.deserialize(recv, this._decrypt.bind(this))) {
+        let result = packet.deserialize(recv, this._decrypt.bind(this));
+        debug(this.peerID,"<<<<", PACKET_TYPE_REVERSED[packet.type], packet.seq);
+        if(result) {
             this._buffer = false;
 
             switch (this.state) {
@@ -207,8 +219,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             }
 
             if(invalidPacket) {
-                console.error("Invalid packet received!");
-                console.log(packet);
+                debug("Invalid packet received! RECV:", packet);
             }
         }
     }

@@ -18,10 +18,6 @@ server.on("connected", (peer) => {
     });
 });
 
-server.on("lag", (peer, lag) => {
-    console.log("LAG", peer.id, lag);
-});
-
 server.on("disconnected", (peer, reason) => {
     log("disconnected", reason);
 });

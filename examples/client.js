@@ -10,10 +10,6 @@ function create() {
         console.log(reason);
     });
 
-    client.on("lag", (peer, lag) => {
-        console.log("LAG", peer.id, lag);
-    });
-
     client.on("message", (packet) => {
         if (packet.data.type == "test") {
             packet.reply({

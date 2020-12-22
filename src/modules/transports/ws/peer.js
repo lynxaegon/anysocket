@@ -7,7 +7,6 @@ module.exports = class WSPeer extends AbstractPeer {
         });
 
         this.socket.on("error", (err) => {
-            console.log("err", err);
             this.emit("error", this, err);
         });
 

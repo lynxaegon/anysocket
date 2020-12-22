@@ -13,7 +13,6 @@ class WS extends AbstractTransport {
 
     onListen() {
         return new Promise((resolve, reject) => {
-            console.log("listen", this.options);
             this.ws = new WebSocket.Server({
                 port: this.options.port,
                 host: this.options.ip
@@ -23,7 +22,6 @@ class WS extends AbstractTransport {
             });
 
             this.ws.on('error', err => {
-                console.error("Unhandled WS Error:", err);
                 reject(err);
             });
 
@@ -38,10 +36,13 @@ class WS extends AbstractTransport {
             let ws = new WebSocket('ws://' + this.options.ip + ':' + this.options.port + '/');
 
             ws.on('open', socket => {
+                resolve();
                 this.addPeer(new Peer(ws));
             });
 
-            resolve();
+            ws.on('error', err => {
+               reject(err);
+            });
         });
     }
 

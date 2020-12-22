@@ -1,3 +1,4 @@
+const debug = require('debug')('AnySocket');
 const EventEmitter = require("events");
 const path = require("path");
 const fs = require("fs");
@@ -19,7 +20,7 @@ class AnySocket extends EventEmitter {
         super();
 
         this.id = Utils.uuidv4();
-        console.log("AnySocketID:", this.id);
+        debug("AnySocketID:", this.id);
 
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
@@ -36,9 +37,13 @@ class AnySocket extends EventEmitter {
         awaitReply = awaitReply || false;
 
         return new Promise((resolve, reject) => {
+            const promises = [];
             for (let p in this[_private.peers]) {
                 p = this[_private.peers][p];
-                p.send(message, awaitReply).then(resolve).catch(reject);
+                promises.push(
+                    p.send(message, awaitReply)
+                );
+                Promise.all(promises).then(resolve).catch(reject);
             }
         })
     }
@@ -49,6 +54,10 @@ class AnySocket extends EventEmitter {
 
     listen(scheme, options) {
         // server
+        if(typeof options == 'number'){
+            options = { port: options };
+        }
+
         options.ip = options.ip || "0.0.0.0";
         if(!options.port)
             throw new Error("Invalid port!");
@@ -58,15 +67,19 @@ class AnySocket extends EventEmitter {
         this[_private.transports][transport.id] = transport;
 
         // start transport
-        transport.on("connected", this[_private.onPeerConnected].bind(this));
-        transport.on("disconnected", this[_private.onPeerDisconnected].bind(this));
+        transport.on("connected", (peer) => {
+            this[_private.onPeerConnected](peer, transport.options);
+        });
+        transport.on("disconnected", (peer, reason) => {
+            this[_private.onPeerDisconnected](peer, reason);
+        });
         return transport.listen();
     }
 
     connect(scheme, ip, port, options) {
         options = Object.assign(options || {}, {
             ip: ip,
-            port: port,
+            port: port
         });
 
         // client
@@ -76,17 +89,20 @@ class AnySocket extends EventEmitter {
         // start transport
         transport.on("connected", (peer) => {
             this[_private.transports][transport.id] = transport;
-            this[_private.onPeerConnected](peer);
-            console.log("Transports Added", transport.id, Object.keys(this[_private.transports]).length);
+            this[_private.onPeerConnected](peer, transport.options);
+            debug("Transports Added", transport.id, Object.keys(this[_private.transports]).length);
         });
         transport.on("disconnected", (peer, reason) => {
             this[_private.transports][transport.id].stop();
             delete this[_private.transports][transport.id];
             this[_private.onPeerDisconnected](peer, reason);
-            console.log("Transports left", transport.id, Object.keys(this[_private.transports]).length);
-
+            debug("Transports left", transport.id, Object.keys(this[_private.transports]).length);
         });
         return transport.connect();
+    }
+
+    createP2P(peer1, peer2) {
+
     }
 
     stop() {
@@ -123,21 +139,22 @@ class AnySocket extends EventEmitter {
         throw new Error("Invalid scheme '"+ scheme +"'");
     }
 
-    [_private.onPeerConnected](peer) {
-        console.log("Peer connected");
-        const anyprotocol = new AnyProtocol(this.id, peer);
+    [_private.onPeerConnected](peer, options) {
+        debug("Peer connected");
+        const anyprotocol = new AnyProtocol(this.id, peer, options);
         this[_private.peersConnected][peer.connectionID] = anyprotocol;
         // register for readiness
         anyprotocol.once("ready", (protocol) => {
-            console.log("READY!");
             this[_private.onProtocolReady](protocol);
         });
     }
 
     [_private.onProtocolReady](protocol) {
-        console.log("Peer ready");
+        debug("Peer ready");
         const anypeer = new AnyPeer(protocol);
         this[_private.peers][protocol.peerID] = anypeer;
+
+        anypeer.heartbeat();
 
         anypeer.on("message", (packet) => {
             this.emit("message", packet);
@@ -148,13 +165,12 @@ class AnySocket extends EventEmitter {
         anypeer.on("lag", (peer, lag) => {
             this.emit("lag", peer, lag);
         });
-        anypeer.heartbeat();
 
         this.emit("connected", anypeer);
     }
 
     [_private.onPeerDisconnected](peer, reason) {
-        console.log("Peer disconnected", reason);
+        debug("Peer disconnected", reason);
         let anypeerID = null;
         if (this[_private.peersConnected][peer.connectionID]) {
             anypeerID = this[_private.peersConnected][peer.connectionID].peerID;
@@ -186,10 +202,5 @@ function loadModules(dir) {
     return result;
 }
 
-AnySocket.Type = {
-    NONE: 0,
-    CLIENT: 1,
-    SERVER: 2
-};
 AnySocket.Transport = loadModules("../modules/transports");
 module.exports = AnySocket;

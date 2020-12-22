@@ -1,13 +1,10 @@
+const debug = require('debug')('AnyPeer');
 const EventEmitter = require("events");
 const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 
-const TIMEOUTS = {
-    REPLY: 30 * 1000,
-    HEARTBEAT: 5 * 1000
-};
 const isBoolean = function(obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
 };
@@ -36,7 +33,7 @@ module.exports = class AnyPeer extends EventEmitter {
             clearTimeout(this._heartbeat);
         this._heartbeat = setTimeout(() => {
             this.heartbeat();
-        }, TIMEOUTS.HEARTBEAT);
+        }, this[_protocol].options.heartbeatInterval);
 
 
         const startTime = (new Date()).getTime();
@@ -44,11 +41,11 @@ module.exports = class AnyPeer extends EventEmitter {
             .data()
             .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
 
-        this._send(packet, true, TIMEOUTS.HEARTBEAT).then(() => {
+        this._send(packet, true, this[_protocol].options.heartbeatTimeout).then(() => {
             this.lag = (new Date()).getTime() - startTime;
             this.emit("lag", this, this.lag);
         }).catch((e) => {
-            console.error("Heartbeat Error:", e);
+            debug("Heartbeat Error:", e);
             this.disconnect(e);
         });
     }
@@ -69,7 +66,7 @@ module.exports = class AnyPeer extends EventEmitter {
     onMessage(peer, message) {
         if (message.seq < 0) {
             if (!this._resolveReply(message)) {
-                console.log("Dropped reply " + message.seq + ". Delivered after Timeout");
+                debug("Dropped reply " + message.seq + ". Delivered after Timeout");
             }
             return;
         }
@@ -84,7 +81,7 @@ module.exports = class AnyPeer extends EventEmitter {
     onInternalComs(peer, message) {
         if (message.seq < 0) {
             if (!this._resolveReply(message)) {
-                console.log("Dropped reply " + message.seq + ". Delivered after Timeout");
+                debug("Dropped reply " + message.seq + ". Delivered after Timeout");
             }
             return;
         }
@@ -96,8 +93,7 @@ module.exports = class AnyPeer extends EventEmitter {
                 .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
             this._send(packet, message.seq);
         } else {
-            console.error("Dropped internal packet!");
-            console.log(message);
+            debug("Dropped internal packet!", message);
         }
     }
 
@@ -116,7 +112,6 @@ module.exports = class AnyPeer extends EventEmitter {
     _send(packet, awaitReply, timeout) {
         return new Promise((resolve, reject) => {
             if(!this[_protocol].isConnected()) {
-                console.log(packet);
                 reject("Cannot send message. Peer is disconnected");
                 return;
             }
@@ -136,10 +131,9 @@ module.exports = class AnyPeer extends EventEmitter {
                         if (this[_packets][packet.seq]) {
                             let msg = this[_packets][packet.seq];
                             delete this[_packets][packet.seq];
-                            console.log("Dropped reply " + packet.seq + ". Timeout");
                             msg.reject("Timeout!");
                         }
-                    }, timeout || TIMEOUTS.REPLY)
+                    }, timeout || this[_protocol].options.replyTimeout)
                 };
             }
         });
@@ -152,7 +146,7 @@ module.exports = class AnyPeer extends EventEmitter {
             delete this[_packets][message.seq];
             clearTimeout(tmp.timeout);
             tmp.resolve(new AnyPacket(this, message, () => {
-                console.error("Cannot reply to a reply packet!");
+                debug("Cannot reply to a reply packet!");
             }));
             return true;
         }

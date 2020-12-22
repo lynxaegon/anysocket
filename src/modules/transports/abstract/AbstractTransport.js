@@ -6,7 +6,11 @@ class AbstractTransport extends EventEmitter {
         super();
 
         this.id = Utils.uuidv4();
-        this.options = options;
+        this.options = Object.assign({
+            replyTimeout: 30 * 1000,
+            heartbeatTimeout: 5 * 1000,
+            heartbeatInterval: 5 * 1000
+        }, options);
 
         this.type = type;
         this.peers = new Map();
