@@ -400,6 +400,10 @@ Emitted when the peer has disconnected
 * P2P using a proxy server (with support for e2e between clients)
 * Mesh Network
 * Multiple transports: **wss**, **tcp**, **http**, **udp**, **ipc**
+* Browser support
+* RPC support
+* Client reconnection
+* Custom AUTH method
 
 _* this will require a change in the protocol, as the protocol assumes the packets are sent using a reliable, ordered connection_
 
