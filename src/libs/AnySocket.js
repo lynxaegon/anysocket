@@ -8,23 +8,22 @@ const _private = {
     transports: Symbol("transports"),
     onPeerConnected: Symbol("onPeerConnected"),
     onProtocolReady: Symbol("onPeerReady"),
-    onPeerDisconnected: Symbol("onPeerDisconnected")
+    onPeerDisconnected: Symbol("onPeerDisconnected"),
+    findTransport: Symbol("findTransport")
 };
 const AnyPeer = require("./AnyPeer");
 const AnyProtocol = require("./AnyProtocol");
 
-// TODO: - Reimplement XTunnel over AnySocket
 class AnySocket extends EventEmitter {
-    constructor(type) {
+    constructor() {
         super();
 
         this.id = Utils.uuidv4();
         console.log("AnySocketID:", this.id);
-        this.type = type;
 
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
-        this[_private.transports] = [];
+        this[_private.transports] = {};
 
         return this;
     }
@@ -44,62 +43,84 @@ class AnySocket extends EventEmitter {
         })
     }
 
-    transport(transport, options) {
-        let opts = {};
-        if (this.type == AnySocket.Type.CLIENT) {
-            opts = {
-                client: options
-            };
-        } else if (this.type == AnySocket.Type.SERVER) {
-            opts = {
-                server: options
-            };
-        } else {
-            throw new Error("Invalid AnySocket type '" + this.type + "'");
-        }
-
-        this[_private.transports].push(
-            new transport(opts)
-        );
-
-        return this;
+    server(scheme, options) {
+        return this.listen(scheme, options);
     }
 
-    start() {
-        return new Promise((resolve, reject) => {
-            const promises = [];
-            for (let transport of this[_private.transports]) {
-                transport.on("connected", this[_private.onPeerConnected].bind(this));
-                transport.on("disconnected", this[_private.onPeerDisconnected].bind(this));
+    listen(scheme, options) {
+        // server
+        options.ip = options.ip || "0.0.0.0";
+        if(!options.port)
+            throw new Error("Invalid port!");
 
-                promises.push(
-                    transport.start()
-                );
-            }
+        let transport = this[_private.findTransport](scheme);
+        transport = new transport("server", options);
+        this[_private.transports][transport.id] = transport;
 
-            Promise.all(promises).then(() => {
-                resolve();
-            }).catch(err => {
-                reject(err);
-            });
+        // start transport
+        transport.on("connected", this[_private.onPeerConnected].bind(this));
+        transport.on("disconnected", this[_private.onPeerDisconnected].bind(this));
+        return transport.listen();
+    }
+
+    connect(scheme, ip, port, options) {
+        options = Object.assign(options || {}, {
+            ip: ip,
+            port: port,
         });
+
+        // client
+        let transport = this[_private.findTransport](scheme);
+        transport = new transport("client", options);
+
+        // start transport
+        transport.on("connected", (peer) => {
+            this[_private.transports][transport.id] = transport;
+            this[_private.onPeerConnected](peer);
+            console.log("Transports Added", transport.id, Object.keys(this[_private.transports]).length);
+        });
+        transport.on("disconnected", (peer, reason) => {
+            this[_private.transports][transport.id].stop();
+            delete this[_private.transports][transport.id];
+            this[_private.onPeerDisconnected](peer, reason);
+            console.log("Transports left", transport.id, Object.keys(this[_private.transports]).length);
+
+        });
+        return transport.connect();
     }
 
     stop() {
         return new Promise((resolve, reject) => {
             const promises = [];
-            for (let transport of this[_private.transports]) {
+            for (let id in this[_private.transports]) {
                 promises.push(
-                    transport.stop()
+                    this[_private.transports][id].stop()
                 );
             }
 
             Promise.all(promises).then(() => {
+                this[_private.peersConnected] = {};
+                this[_private.peers] = {};
+                this[_private.transports] = {};
+
                 resolve();
             }).catch(err => {
-                reject(err);
+                throw err;
             });
         });
+    }
+
+    [_private.findTransport](scheme) {
+        for (let name in AnySocket.Transport) {
+            if(!AnySocket.Transport.hasOwnProperty(name))
+                continue;
+
+            if(AnySocket.Transport[name].scheme() == scheme) {
+                return AnySocket.Transport[name];
+            }
+        }
+
+        throw new Error("Invalid scheme '"+ scheme +"'");
     }
 
     [_private.onPeerConnected](peer) {

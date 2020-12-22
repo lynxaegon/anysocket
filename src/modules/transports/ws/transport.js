@@ -3,15 +3,20 @@ const Peer = require("./peer.js");
 const WebSocket = require("ws");
 
 class WS extends AbstractTransport {
-    constructor(options) {
-        super(options);
+    constructor(type, options) {
+        super(type, options);
     }
 
-    serverStart() {
+    static scheme() {
+        return "ws";
+    }
+
+    onListen() {
         return new Promise((resolve, reject) => {
+            console.log("listen", this.options);
             this.ws = new WebSocket.Server({
-                port: this.options.server.port,
-                host: this.options.server.host ? this.options.server.host : "0.0.0.0"
+                port: this.options.port,
+                host: this.options.ip
             });
             this.ws.on('connection', socket => {
                 this.addPeer(new Peer(socket));
@@ -28,18 +33,9 @@ class WS extends AbstractTransport {
         });
     }
 
-    serverStop() {
+    onConnect() {
         return new Promise((resolve, reject) => {
-            console.log("stopped");
-            this.ws.close();
-            this.ws = null;
-            resolve();
-        });
-    }
-
-    clientStart() {
-        return new Promise((resolve, reject) => {
-            let ws = new WebSocket('ws://' + this.options.client.host + '/');
+            let ws = new WebSocket('ws://' + this.options.ip + ':' + this.options.port + '/');
 
             ws.on('open', socket => {
                 this.addPeer(new Peer(ws));
@@ -48,6 +44,15 @@ class WS extends AbstractTransport {
             resolve();
         });
     }
-}
 
+    onStop() {
+        return new Promise((resolve, reject) => {
+            if (this.ws) {
+                this.ws.close();
+                this.ws = null;
+            }
+            resolve();
+        });
+    }
+}
 module.exports = WS;

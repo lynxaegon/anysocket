@@ -1,10 +1,6 @@
 const AnySocket = require("../src/index");
 
-const server = new AnySocket(AnySocket.Type.SERVER);
-server.transport(AnySocket.Transport.WS, {
-    port: 1234
-});
-
+const server = new AnySocket();
 const log = (...args) => {
     console.log("SERVER:",...args);
 };
@@ -38,6 +34,8 @@ server.on("message", (packet) => {
     log("message", packet.data);
 });
 
-server.start().then(() => {
+server.server("ws", {
+    port: 1234
+}).then(() => {
     console.log("started server");
 }).catch(console.error);
