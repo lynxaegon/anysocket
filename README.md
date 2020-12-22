@@ -149,10 +149,10 @@ Alias for <a href="#AnySocket.listen">AnySocket.listen()</a>
 Attaches a new server transport based on the selected **scheme*
 
 **Arguments:**
-* `scheme`, one of the implemented transports
-* `options`, one of the options below
-    * `port`, a number consistingi of the PORT
-    * `json`, 
+* `scheme` - one of the implemented transports
+* `options` - one of the options below
+    * `port` - a number consistingi of the PORT
+    * `json` 
 ```
 {
     ip: "0.0.0.0", // listening ip
@@ -172,10 +172,10 @@ Attaches a new server transport based on the selected **scheme*
 Connects to AnySocket Server
 
 **Arguments:**
-* `scheme`, one of the implemented transports
-* `ip`, server ip
-* `port`, server port
-* `options`, options json
+* `scheme` - one of the implemented transports
+* `ip` - server ip
+* `port` - server port
+* `options` - options json
 ```
 {
     replyTimeout: 30 * 1000, // reply timeout
@@ -202,8 +202,8 @@ Stops all servers and disconnects all peers
 Sends a message to all connected peers
 
 **Arguments:**
-* `message`, a JSON stringifiable object
-* `awaitReply`, set to true if a reply is expected
+* `message` - a JSON stringifiable object
+* `awaitReply` - set to true if a reply is expected
 
 **Returns** a Promise that resolves with a <a href="#AnyPacket">AnyPacket</a> if waiting for a reply or rejects on error
 
@@ -216,7 +216,7 @@ _note: it doesn't resolve if awaitReply is not set_
 Emitted when the link has been established and it's ready for sending/receiving messages
 
 **Arguments:**
-* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
 
 -------------------------------------------------------
 <a name="AnySocket.on.message"></a>
@@ -225,7 +225,7 @@ Emitted when the link has been established and it's ready for sending/receiving 
 Emitted when a message is received
 
 **Arguments:**
-* `packet`, <a href="#AnyPacket">AnyPacket</a> instance
+* `packet` - <a href="#AnyPacket">AnyPacket</a> instance
 
 -------------------------------------------------------
 <a name="AnySocket.on.e2e"></a>
@@ -234,7 +234,7 @@ Emitted when a message is received
 Emitted when the link has been end-to-end encrypted and it's ready to be used
 
 **Arguments:**
-* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
 
 -------------------------------------------------------
 <a name="AnySocket.on.heartbeat"></a>
@@ -243,7 +243,7 @@ Emitted when the link has been end-to-end encrypted and it's ready to be used
 Emitted when a PING/PONG heartbeat has finished
 
 **Arguments:**
-* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
 
 -------------------------------------------------------
 <a name="AnySocket.on.disconnected"></a>
@@ -252,8 +252,8 @@ Emitted when a PING/PONG heartbeat has finished
 Emitted when a peer has disconnected
 
 **Arguments:**
-* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
-* `reason`, a string detailing the disconnect reason
+* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
+* `reason` - a string detailing the disconnect reason
 
 -------------------------------------------------------
 <a name="AnyPacket.constructor"></a>
@@ -286,7 +286,7 @@ An object that contains data sent/received from a peer
 Sends a reply to the current packet
 
 **Arguments:**
-* `message`, a JSON stringifiable object
+* `message` - a JSON stringifiable object
 
 _note: you can only reply to a normal message, you **cannot** reply to a **reply packet**. It fails silently_ 
 
@@ -327,9 +327,9 @@ Enables E2E encryption. The certificate is generated on the spot with a size of 
 Sends a message to the peer
 
 **Arguments:**
-* `message`, a JSON stringifiable object
-* `awaitReply`, set to true if a reply is expected
-* `timeout`, set a custom reply packet timeout (in milliseconds)
+* `message` - a JSON stringifiable object
+* `awaitReply` - set to true if a reply is expected
+* `timeout` - set a custom reply packet timeout (in milliseconds)
 
 **Returns** a Promise that resolves with a <a href="#AnyPacket">AnyPacket</a> if waiting for a reply or rejects on error
 
@@ -344,7 +344,7 @@ _note: you can only reply to a normal message, you **cannot** reply to a **reply
 Disconnects the peer
 
 **Arguments:**
-* `reason`, a string that explains why the peer was disconnected
+* `reason` - a string that explains why the peer was disconnected
 
 -------------------------------------------------------
 <a name="AnyPeer.heartbeat"></a>
@@ -359,7 +359,7 @@ Send a heartbeet to the peer - _used internally_
 Emitted when a message is received
 
 **Arguments:**
-* `packet`, <a href="#AnyPacket">AnyPacket</a> instance
+* `packet` - <a href="#AnyPacket">AnyPacket</a> instance
 
 -------------------------------------------------------
 <a name="AnyPeer.on.e2e"></a>
@@ -368,7 +368,7 @@ Emitted when a message is received
 Emitted when the link has been end-to-end encrypted and it's ready to be used
 
 **Arguments:**
-* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
 
 -------------------------------------------------------
 <a name="AnyPeer.on.heartbeat"></a>
@@ -377,7 +377,7 @@ Emitted when the link has been end-to-end encrypted and it's ready to be used
 Emitted when a PING/PONG heartbeat has finished
 
 **Arguments:**
-* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
+* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
 
 -------------------------------------------------------
 <a name="AnyPeer.on.disconnected"></a>
@@ -386,8 +386,8 @@ Emitted when a PING/PONG heartbeat has finished
 Emitted when the peer has disconnected
 
 **Arguments:**
-* `peer`, <a href="#AnyPeer">AnyPeer</a> instance
-* `reason`, a string detailing the disconnect reason
+* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
+* `reason` - a string detailing the disconnect reason
 
 <a name="future"></a>
 ## Upcoming Features
@@ -395,7 +395,7 @@ Emitted when the peer has disconnected
 * Mesh Network
 * Multiple transports: **wss**, **tcp**, **http**, **udp**, **ipc**
 
-_*: this will require a change in the protocol, as the protocol assumes the packets are sent using a reliable, ordered connection_
+_* this will require a change in the protocol, as the protocol assumes the packets are sent using a reliable, ordered connection_
 
 <a name="license"></a>
 ## License
