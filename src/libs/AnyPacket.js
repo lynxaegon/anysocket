@@ -8,7 +8,7 @@ module.exports = class AnyPacket {
         this[_send] = sendFnc;
     }
 
-    reply(data) {
-        this[_send](data, this.seq);
+    reply(message) {
+        this[_send](message, this.seq);
     }
 };
