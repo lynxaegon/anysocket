@@ -9,14 +9,23 @@ server.on("connected", (peer) => {
     peer.send({hello: "world"}, true)
         .then(packet => {
             console.log("[SERVER][" + peer.id + "] Got Reply:", packet.msg);
-            peer.disconnect("Finished Example");
-            // exit cleanly
-            server.stop();
+
+            // Enable E2E - can be enabled anytime
+            peer.e2e();
         }).catch(err => {
             console.log("[SERVER][" + peer.id + "] Reply failed.", err);
         });
 
     console.log("[SERVER][" + peer.id + "] Sent Hello Message");
+});
+server.on("message", (packet) => {
+    console.log("[SERVER][" + packet.peer.id + "] Got Message", packet.msg);
+    packet.peer.disconnect("Finished Example");
+    // exit cleanly
+    server.stop();
+});
+server.on("e2e", (peer) => {
+    console.log("[SERVER][" + peer.id + "] E2E Enabled");
 });
 server.on("disconnected", (peer, reason) => {
     console.log("[SERVER][" + peer.id + "] Disconnected. Reason:", reason);
@@ -33,6 +42,12 @@ client.on("message", (packet) => {
     console.log("[CLIENT][" + packet.peer.id + "] Sent Reply Message");
     packet.reply({
         world: "hello"
+    });
+});
+client.on("e2e", (peer) => {
+    console.log("[CLIENT][" + peer.id + "] E2E Enabled");
+    peer.send({
+        ok: "this was easy"
     });
 });
 client.on("disconnected", (peer, reason) => {
