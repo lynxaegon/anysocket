@@ -62,7 +62,7 @@ server.on("connected", (peer) => {
     });
 });
 server.on("message", (packet) => {
-    console.log("From:", packet.peer.id, "Message:", packet.data);
+    console.log("From:", packet.peer.id, "Message:", packet.msg);
 });
 server.on("disconnected", (peer, reason) => {
     console.log("Disconnected", peer.id, "Reason:", reason);
@@ -91,7 +91,7 @@ client.on("connected", (peer) => {
     });
 });
 client.on("message", (packet) => {
-    console.log("From:", packet.peer.id, "Message:", packet.data);
+    console.log("From:", packet.peer.id, "Message:", packet.msg);
 });
 client.on("disconnected", (peer, reason) => {
     console.log("Disconnected", peer.id, "Reason:", reason);
