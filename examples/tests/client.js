@@ -1,4 +1,4 @@
-const AnySocket = require("../src/index");
+const AnySocket = require("../../src/index");
 
 function create() {
     const client = new AnySocket();
