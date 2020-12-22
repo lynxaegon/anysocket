@@ -157,7 +157,7 @@ Attaches a new server transport based on the selected **scheme*
 **Arguments:**
 * `scheme` - one of the implemented transports
 * `options` - one of the options below
-    * `port` - a number consistingi of the PORT
+    * `port` - port number
     * `json` 
 ```
 {
