@@ -15,6 +15,8 @@ const _private = {
 const AnyPeer = require("./AnyPeer");
 const AnyProtocol = require("./AnyProtocol");
 
+// TODO: implement P2P using a "fake" transport that will use the forward protocol
+// TODO: In the future, this transport will keep multiple peers via it can send a message (with retries on arrival fail)
 class AnySocket extends EventEmitter {
     constructor() {
         super();
