@@ -41,7 +41,7 @@ class WS extends AbstractTransport {
             });
 
             ws.on('error', err => {
-               reject(err);
+                reject(err);
             });
         });
     }

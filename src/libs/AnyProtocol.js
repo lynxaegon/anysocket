@@ -4,19 +4,6 @@ const FastQ = require('fastq');
 const Packet = require("./Packet");
 const Utils = require("./utils");
 
-const PACKET_TYPE = {
-    AUTH: 1,
-    LINK: 2,
-    SWITCH: 3,
-    HEARTBEAT: 4
-};
-const PACKET_TYPE_REVERSED = {
-    1: "AUTH",
-    2: "LINK",
-    3: "SWITCH",
-    4: "HEARTBEAT",
-};
-
 const PROTOCOL_STATES = {
     ESTABLISHED: 0,
     AUTHING: 1,
@@ -43,7 +30,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.connectionID = this.peer.connectionID;
         this.anysocketID = anysocketID;
 
-        this.PACKET_TYPE = PACKET_TYPE;
+        this.PACKET_TYPE = Packet.TYPE;
         this._packetQueue = FastQ(this, this.processPacketQueue, 1);
         this._linkPacketQueue = FastQ(this, this.processLinkPacketQueue, 1);
         this._buffer = false;
@@ -60,7 +47,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             this.changeState(PROTOCOL_STATES.AUTHING);
             this.send(Packet.data({
                 id: this.anysocketID
-            }).setType(PACKET_TYPE.AUTH));
+            }).setType(Packet.TYPE.AUTH));
         }
     }
 
@@ -78,7 +65,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                 reject(e);
             };
 
-            if([PACKET_TYPE.LINK, PACKET_TYPE.HEARTBEAT].indexOf(packet.type) != -1 && this.state != PROTOCOL_STATES.CONNECTED) {
+            if([Packet.TYPE.INTERNAL, Packet.TYPE.LINK, Packet.TYPE.HEARTBEAT, Packet.TYPE.FORWARD].indexOf(packet.type) != -1 && this.state != PROTOCOL_STATES.CONNECTED) {
                 this._linkPacketQueue.push({
                     packet: packet,
                     resolve: resolve,
@@ -91,7 +78,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _send(packet, resolve, reject) {
-        debug(this.peerID,">>>>", PACKET_TYPE_REVERSED[packet.type], packet.seq);
+        debug(this.peerID,">>>>", Packet.TYPE.toString(packet.type), packet.seq);
         try {
             packet = packet.serialize(MAX_PACKET_SIZE, this._encrypt.bind(this));
             for(let i = 0; i < packet.length; i++) {
@@ -118,22 +105,22 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.send(Packet.data({
             type: PROTOCOL_ENCRYPTION.E2E,
             key: this.peer.getPublicKey()
-        }).setType(PACKET_TYPE.SWITCH));
+        }).setType(Packet.TYPE.SWITCH));
     }
 
     onPacket(peer, recv) {
-        // TODO: to implement forward without parsing, just read the PACKET_TYPE (substr(1,1))
+        // TODO: to implement forward without parsing, just read the Packet.TYPE (substr(1,1))
         let invalidPacket = true;
         this._buffer = this._buffer || Packet.buffer();
         const packet = this._buffer;
         let result = packet.deserialize(recv, this._decrypt.bind(this));
-        debug(this.peerID,"<<<<", PACKET_TYPE_REVERSED[packet.type], packet.seq);
+        debug(this.peerID,"<<<<", Packet.TYPE.toString(packet.type), packet.seq);
         if(result) {
             this._buffer = false;
 
             switch (this.state) {
                 case PROTOCOL_STATES.ESTABLISHED:
-                    if(packet.type == PACKET_TYPE.AUTH) {
+                    if(packet.type == Packet.TYPE.AUTH) {
                         invalidPacket = false;
                         if(!packet.data.id) {
                             return this.disconnect("Invalid Auth Packet!");
@@ -142,14 +129,14 @@ module.exports = class AnyProtocol extends EventEmitter {
 
                         this.send(Packet.data({
                             id: this.anysocketID
-                        }).setType(PACKET_TYPE.AUTH)).then(() => {
+                        }).setType(Packet.TYPE.AUTH)).then(() => {
                             this.changeState(PROTOCOL_STATES.CONNECTED);
                             this.emit("ready", this);
                         });
                     }
                     break;
                 case PROTOCOL_STATES.AUTHING:
-                    if(packet.type == PACKET_TYPE.AUTH) {
+                    if(packet.type == Packet.TYPE.AUTH) {
                         invalidPacket = false;
                         this.changeState(PROTOCOL_STATES.CONNECTED);
                         if(!packet.data.id) {
@@ -161,13 +148,23 @@ module.exports = class AnyProtocol extends EventEmitter {
                     }
                     break;
                 case PROTOCOL_STATES.CONNECTED:
-                    if(packet.type == PACKET_TYPE.LINK) {
+                    if(packet.type == Packet.TYPE.LINK) {
                         invalidPacket = false;
                         this.emit("message", this, {
                             seq: packet.seq,
                             data: packet.data
                         });
-                    } else if(packet.type == PACKET_TYPE.SWITCH) {
+                    } else if(packet.type == Packet.TYPE.FORWARD) {
+                        invalidPacket = false;
+                        // TODO: implement forwarding
+                    } else if(packet.type == Packet.TYPE.INTERNAL) {
+                        invalidPacket = false;
+                        this.emit("internal", this, {
+                            seq: packet.seq,
+                            type: packet.type,
+                            data: packet.data
+                        });
+                    } else if(packet.type == Packet.TYPE.SWITCH) {
                         invalidPacket = false;
 
                         let publicKey = this.peer.getPublicKey();
@@ -176,14 +173,14 @@ module.exports = class AnyProtocol extends EventEmitter {
                         this.send(Packet.data({
                             type: PROTOCOL_ENCRYPTION.E2E,
                             key: publicKey
-                        }).setType(PACKET_TYPE.SWITCH)).then(() => {
+                        }).setType(Packet.TYPE.SWITCH)).then(() => {
                             this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.E2E;
                             this.changeState(PROTOCOL_STATES.CONNECTED);
                             this.emit("e2e", this);
                         });
 
                         this.changeState(PROTOCOL_STATES.SWITCHING_PROTOCOL);
-                    } else if(packet.type == PACKET_TYPE.HEARTBEAT) {
+                    } else if(packet.type == Packet.TYPE.HEARTBEAT) {
                         invalidPacket = false;
                         this.emit("internal", this, {
                             seq: packet.seq,
@@ -193,20 +190,20 @@ module.exports = class AnyProtocol extends EventEmitter {
                     }
                     break;
                 case PROTOCOL_STATES.SWITCHING_PROTOCOL:
-                    if(packet.type == PACKET_TYPE.LINK) {
+                    if(packet.type == Packet.TYPE.LINK) {
                         invalidPacket = false;
                         this.emit("message", this, {
                             seq: packet.seq,
                             data: packet.data
                         });
                     }
-                    else if(packet.type == PACKET_TYPE.SWITCH) {
+                    else if(packet.type == Packet.TYPE.SWITCH) {
                         invalidPacket = false;
                         this.peer.setPublicKey(packet.data.key);
                         this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.E2E;
                         this.changeState(PROTOCOL_STATES.CONNECTED);
                         this.emit("e2e", this);
-                    } else if(packet.type == PACKET_TYPE.HEARTBEAT) {
+                    } else if(packet.type == Packet.TYPE.HEARTBEAT) {
                         invalidPacket = false;
                         this.emit("internal", this, {
                             seq: packet.seq,

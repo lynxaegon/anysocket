@@ -66,6 +66,14 @@ module.exports = class AnyPeer extends EventEmitter {
         return this._send(packet, awaitReply, timeout);
     }
 
+    sendInternal(message, awaitReply, timeout) {
+        const packet = Packet
+            .data(message)
+            .setType(this[_protocol].PACKET_TYPE.INTERNAL);
+
+        return this._send(packet, awaitReply, timeout);
+    }
+
     onMessage(peer, message) {
         if (message.seq < 0) {
             if (!this._resolveReply(message)) {
@@ -89,13 +97,16 @@ module.exports = class AnyPeer extends EventEmitter {
             return;
         }
 
-        if(message.type == this[_protocol].PACKET_TYPE.HEARTBEAT) {
+        if (message.type == this[_protocol].PACKET_TYPE.HEARTBEAT) {
             // reply
             const packet = Packet
                 .data()
                 .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
             this._send(packet, message.seq);
-        } else {
+        } else if (message.type == this[_protocol].PACKET_TYPE.INTERNAL) {
+            this.emit("internal", new AnyPacket(this, message, this.sendInternal.bind(this)));
+        }
+        else {
             debug("Dropped internal packet!", message);
         }
     }

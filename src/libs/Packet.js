@@ -5,6 +5,24 @@ const PACKET_LENGTH = {
     FULL: 1,
     PARTIAL: 2
 };
+const TYPE = {
+    AUTH: 1,
+    INTERNAL: 2,
+    LINK: 3,
+    SWITCH: 4,
+    HEARTBEAT: 5,
+    FORWARD: 6,
+    toString(number) {
+        for(let key in this) {
+            if(typeof this[key] === 'number' && this[key] == number) {
+                return key;
+            }
+        }
+
+        return false;
+    }
+};
+
 const regex = {};
 class Packet {
     constructor(data) {
@@ -91,5 +109,6 @@ module.exports = {
     },
     buffer: () => {
         return new Packet();
-    }
+    },
+    TYPE: TYPE
 };

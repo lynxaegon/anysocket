@@ -1,5 +1,5 @@
 # AnySocket
-An abstract networking layer over multiple transports, agnostic of client/server with support for E2E
+An abstract networking layer over multiple transports, agnostic of client/server with support for E2EE
 
 [![Dependency Status](https://david-dm.org/lynxaegon/anysocket.svg)](https://david-dm.org/lynxaegon/anysocket)
 [![devDependency Status](https://david-dm.org/lynxaegon/anysocket/dev-status.svg)](https://david-dm.org/lynxaegon/anysocket#info=devDependencies)
@@ -26,7 +26,7 @@ _WIP Documentation_
 * Support for request/reply
 * Multiple transports *(implemented: **ws**)
 * All peers have a UUIDv4 associated
-* E2E implemented in the protocol
+* E2EE implemented in the protocol
 * Disconnect detection using a heartbeat
 * Automatic packet splitting, if packet is too large (atm: fixed 4kb packet size)
 * **Not Battle Tested** ...yet
@@ -397,7 +397,7 @@ Emitted when the peer has disconnected
 
 <a name="future"></a>
 ## Upcoming Features
-* P2P using a proxy server (with support for e2e between clients)
+* P2P using a proxy server (with support for e2ee between clients)
 * Mesh Network
 * Multiple transports: **wss**, **tcp**, **http**, **udp**, **ipc**
 * Browser support

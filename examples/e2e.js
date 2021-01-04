@@ -10,7 +10,7 @@ server.on("connected", (peer) => {
         .then(packet => {
             console.log("[SERVER][" + peer.id + "] Got Reply:", packet.msg);
 
-            // Enable E2E - can be enabled anytime
+            // Enable E2EE - can be enabled anytime
             peer.e2e();
         }).catch(err => {
             console.log("[SERVER][" + peer.id + "] Reply failed.", err);

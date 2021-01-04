@@ -6,10 +6,12 @@ const Utils = require("./utils");
 const _private = {
     peersConnected: Symbol("unready peers"),
     peers: Symbol("ready peers"),
+    proxyClients: Symbol("proxyClients"),
     transports: Symbol("transports"),
     onPeerConnected: Symbol("onPeerConnected"),
     onProtocolReady: Symbol("onPeerReady"),
     onPeerDisconnected: Symbol("onPeerDisconnected"),
+    onPeerInternalMessage: Symbol("onPeerInternalMessage"),
     findTransport: Symbol("findTransport")
 };
 const AnyPeer = require("./AnyPeer");
@@ -26,6 +28,7 @@ class AnySocket extends EventEmitter {
 
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
+        this[_private.proxyClients] = {};
         this[_private.transports] = {};
 
         return this;
@@ -103,10 +106,6 @@ class AnySocket extends EventEmitter {
         return transport.connect();
     }
 
-    createP2P(peer1, peer2) {
-
-    }
-
     stop() {
         return new Promise((resolve, reject) => {
             const promises = [];
@@ -167,6 +166,7 @@ class AnySocket extends EventEmitter {
         anypeer.on("heartbeat", (peer) => {
             this.emit("heartbeat", peer);
         });
+        anypeer.on("internal",this[_private.onPeerInternalMessage].bind(this));
 
         this.emit("connected", anypeer);
     }
@@ -184,6 +184,20 @@ class AnySocket extends EventEmitter {
             delete this[_private.peers][anypeerID];
             anypeer.disconnect();
             this.emit("disconnected", anypeer, reason);
+        }
+    }
+
+    [_private.onPeerInternalMessage](packet) {
+        switch (packet.msg.type) {
+            case "network":
+                if(packet.msg.action == "mesh") {
+                    // initialize mesh
+                } else if(packet.msg.action == "unmesh") {
+                    // destroy mesh
+                }
+                break;
+            default:
+                packet.peer.disconnect("Invalid internal message");
         }
     }
 }
