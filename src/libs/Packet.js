@@ -13,6 +13,7 @@ const TYPE = {
     HEARTBEAT: 5,
     FORWARD: 6,
     toString(number) {
+        number = parseInt(number);
         for(let key in this) {
             if(typeof this[key] === 'number' && this[key] == number) {
                 return key;
