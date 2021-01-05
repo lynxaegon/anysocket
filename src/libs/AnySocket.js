@@ -105,17 +105,24 @@ class AnySocket extends EventEmitter {
 
     proxy(peerID, throughPeerID) {
         return new Promise((resolve, reject) => {
+            if(this[_private.peers][throughPeerID].isProxy())
+            {
+                // TODO: this requires to implement a full network graph (map)
+                // TODO: this will enable to send messages without having multiple forward headers
+                reject("Cannot proxy via a proxy! atm... :)");
+                return;
+            }
             this[_private.peers][throughPeerID].sendInternal({
                 type: "network",
                 action: "proxy",
                 id: peerID
             }, true).then((packet) => {
-                if(!this[_private.peers][peerID]) {
+                if(packet.msg.ok && !this[_private.peers][peerID]) {
                     let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]));
                     this[_private.onProtocolReady](protocol);
                     resolve(this[_private.peers][peerID]);
                 } else {
-                    reject();
+                    reject("Cannot proxy!");
                 }
             }).catch(reject);
         })
@@ -244,6 +251,16 @@ class AnySocket extends EventEmitter {
             case "network":
                 if(packet.msg.action == "proxy") {
                     // initialize mesh
+                    if(this[_private.peers][packet.msg.id].isProxy())
+                    {
+                        packet.reply({
+                            ok: false
+                        });
+                        // TODO: this requires to implement a full network graph (map)
+                        // TODO: this will enable to send messages without having multiple forward headers
+                        return;
+                    }
+
                     if(!this[_private.peers][packet.msg.id]) {
                         packet.peer.disconnect("Invalid proxy request!");
                         return;
@@ -257,7 +274,9 @@ class AnySocket extends EventEmitter {
                         action: "connected",
                         id: packet.peer.id
                     });
-                    packet.reply();
+                    packet.reply({
+                        ok: true
+                    });
                 } else if(packet.msg.action == "unproxy") {
                     // destroy mesh
                     if(!this[_private.peers][packet.msg.id]) {
