@@ -13,8 +13,6 @@ module.exports = class WSPeer extends AbstractPeer {
         this.socket.on("message", (message) => {
             this.emit("message", this, message);
         });
-
-        this.emit("connected", this);
     }
 
     send(message) {

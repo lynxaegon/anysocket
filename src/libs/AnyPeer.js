@@ -4,6 +4,7 @@ const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
+const _links = Symbol("links");
 
 const isBoolean = function(obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
@@ -13,6 +14,7 @@ module.exports = class AnyPeer extends EventEmitter {
     constructor(protocol) {
         super();
 
+        this[_links] = {};
         this[_protocol] = protocol;
         this[_packets] = {};
 
@@ -31,7 +33,14 @@ module.exports = class AnyPeer extends EventEmitter {
         });
     }
 
+    isProxy() {
+        return this[_protocol].isProxy();
+    }
+
     heartbeat() {
+        if(this.isProxy())
+            return;
+
         if(this._heartbeat)
             clearTimeout(this._heartbeat);
         this._heartbeat = setTimeout(() => {
@@ -53,6 +62,18 @@ module.exports = class AnyPeer extends EventEmitter {
         });
     }
 
+    addLink(peer) {
+        this[_links][peer.id] = peer;
+    }
+
+    removeLink(peer) {
+        delete this[_links][peer.id];
+    }
+
+    getLinks() {
+        return this[_links];
+    }
+
     e2e() {
         clearTimeout(this._heartbeat);
         this[_protocol].e2e();
@@ -66,7 +87,12 @@ module.exports = class AnyPeer extends EventEmitter {
         return this._send(packet, awaitReply, timeout);
     }
 
+    forward(packet) {
+        this[_protocol].forward(packet);
+    }
+
     sendInternal(message, awaitReply, timeout) {
+        console.log("Sent internal", message, this.id);
         const packet = Packet
             .data(message)
             .setType(this[_protocol].PACKET_TYPE.INTERNAL);
@@ -119,7 +145,8 @@ module.exports = class AnyPeer extends EventEmitter {
         this[_packets] = {};
         clearTimeout(this._heartbeat);
 
-        this[_protocol].disconnect(reason);
+        if(!this.isProxy())
+            this[_protocol].disconnect(reason);
     }
 
     _send(packet, awaitReply, timeout) {
@@ -150,6 +177,10 @@ module.exports = class AnyPeer extends EventEmitter {
                 };
             }
         });
+    }
+
+    _recvForward(packet) {
+        this[_protocol].onPacket(this[_protocol].peer, packet.msg);
     }
 
     _resolveReply(message) {

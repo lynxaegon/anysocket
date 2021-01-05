@@ -6,7 +6,6 @@ const Utils = require("./utils");
 const _private = {
     peersConnected: Symbol("unready peers"),
     peers: Symbol("ready peers"),
-    proxyClients: Symbol("proxyClients"),
     transports: Symbol("transports"),
     onPeerConnected: Symbol("onPeerConnected"),
     onProtocolReady: Symbol("onPeerReady"),
@@ -16,9 +15,8 @@ const _private = {
 };
 const AnyPeer = require("./AnyPeer");
 const AnyProtocol = require("./AnyProtocol");
+const ProxyPeer = require("./ProxyPeer");
 
-// TODO: implement P2P using a "fake" transport that will use the forward protocol
-// TODO: In the future, this transport will keep multiple peers via it can send a message (with retries on arrival fail)
 class AnySocket extends EventEmitter {
     constructor() {
         super();
@@ -28,7 +26,6 @@ class AnySocket extends EventEmitter {
 
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
-        this[_private.proxyClients] = {};
         this[_private.transports] = {};
 
         return this;
@@ -106,6 +103,24 @@ class AnySocket extends EventEmitter {
         return transport.connect();
     }
 
+    proxy(peerID, throughPeerID) {
+        return new Promise((resolve, reject) => {
+            this[_private.peers][throughPeerID].sendInternal({
+                type: "network",
+                action: "proxy",
+                id: peerID
+            }, true).then((packet) => {
+                if(!this[_private.peers][peerID]) {
+                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]));
+                    this[_private.onProtocolReady](protocol);
+                    resolve(this[_private.peers][peerID]);
+                } else {
+                    reject();
+                }
+            }).catch(reject);
+        })
+    }
+
     stop() {
         return new Promise((resolve, reject) => {
             const promises = [];
@@ -127,6 +142,22 @@ class AnySocket extends EventEmitter {
         });
     }
 
+    onForwardPacket(peerID, packet) {
+        if(this.id == packet.to) {
+            this[_private.peers][packet.from]._recvForward(packet);
+        }
+        else if(this.hasPeer(packet.to)) {
+            this[_private.peers][packet.to].forward(packet);
+        } else {
+            console.error("FORWARD ERROR! We do not have the peer", packet.to);
+        }
+    }
+
+    hasPeer(id) {
+        //TODO: Add check to make sure it's a direct peer and not a proxy peer
+        return !!this[_private.peers][id];
+    }
+
     [_private.findTransport](scheme) {
         for (let name in AnySocket.Transport) {
             if(!AnySocket.Transport.hasOwnProperty(name))
@@ -142,7 +173,7 @@ class AnySocket extends EventEmitter {
 
     [_private.onPeerConnected](peer, options) {
         debug("Peer connected");
-        const anyprotocol = new AnyProtocol(this.id, peer, options);
+        const anyprotocol = new AnyProtocol(this, peer, options);
         this[_private.peersConnected][peer.connectionID] = anyprotocol;
         // register for readiness
         anyprotocol.once("ready", (protocol) => {
@@ -172,28 +203,82 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onPeerDisconnected](peer, reason) {
-        debug("Peer disconnected", reason);
+        debug("Peer disconnected", reason, peer.id);
         let anypeerID = null;
         if (this[_private.peersConnected][peer.connectionID]) {
             anypeerID = this[_private.peersConnected][peer.connectionID].peerID;
             delete this[_private.peersConnected][peer.connectionID];
         }
 
+        if(this[_private.peers][peer.id]) {
+            anypeerID = peer.id;
+        }
+
         if (anypeerID) {
             const anypeer = this[_private.peers][anypeerID];
             delete this[_private.peers][anypeerID];
+
+            const links = anypeer.getLinks();
+            for(let peerID in links) {
+                links[peerID].sendInternal({
+                    type: "network",
+                    action: "disconnected",
+                    id: anypeer.id
+                }).catch(() => {
+                    // ignore, peer maybe already disconnected
+                });
+                anypeer.removeLink(links[peerID]);
+                if(this[_private.peers][peerID]) {
+                    this[_private.peers][peerID].removeLink(anypeer);
+                }
+            }
+
             anypeer.disconnect();
             this.emit("disconnected", anypeer, reason);
         }
     }
 
     [_private.onPeerInternalMessage](packet) {
+        console.log("got internal", packet.msg);
         switch (packet.msg.type) {
             case "network":
-                if(packet.msg.action == "mesh") {
+                if(packet.msg.action == "proxy") {
                     // initialize mesh
-                } else if(packet.msg.action == "unmesh") {
+                    if(!this[_private.peers][packet.msg.id]) {
+                        packet.peer.disconnect("Invalid proxy request!");
+                        return;
+                    }
+
+                    this[_private.peers][packet.msg.id].addLink(this[_private.peers][packet.peer.id]);
+                    this[_private.peers][packet.peer.id].addLink(this[_private.peers][packet.msg.id]);
+
+                    this[_private.peers][packet.msg.id].sendInternal({
+                        type: "network",
+                        action: "connected",
+                        id: packet.peer.id
+                    });
+                    packet.reply();
+                } else if(packet.msg.action == "unproxy") {
                     // destroy mesh
+                    if(!this[_private.peers][packet.msg.id]) {
+                        packet.peer.disconnect("Invalid proxy request!");
+                        return;
+                    }
+
+                    this[_private.peers][packet.msg.id].removeLink(this[_private.peers][packet.peer.id]);
+                    this[_private.peers][packet.peer.id].removeLink(this[_private.peers][packet.msg.id]);
+                } else if(packet.msg.action == "connected") {
+                    if(!this[_private.peers][packet.msg.id]) {
+                        let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, packet.msg.id, this[_private.peers][packet.peer.id]));
+                        this[_private.onProtocolReady](protocol);
+                    }
+                } else if(packet.msg.action == "disconnected") {
+                    if(!this[_private.peers][packet.msg.id]) {
+                        packet.peer.disconnect("Invalid proxy request!");
+                        return;
+                    }
+
+                    this[_private.onPeerDisconnected](this[_private.peers][packet.msg.id], "Proxy Connection Closed");
                 }
                 break;
             default:

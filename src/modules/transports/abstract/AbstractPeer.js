@@ -26,6 +26,8 @@ class AbstractPeer extends EventEmitter {
         this.inited = true;
 
         this.onConnect();
+
+        this.emit("connected", this);
     }
 
     isClient() {

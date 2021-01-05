@@ -100,6 +100,14 @@ class Packet {
 
         return false;
     }
+
+    isForwardPacket(buf) {
+        if(buf.substr(0,1) == TYPE.FORWARD) {
+            return true;
+        }
+
+        return false;
+    }
 }
 
 module.exports = {

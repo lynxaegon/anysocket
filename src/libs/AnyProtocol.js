@@ -19,16 +19,20 @@ const PROTOCOL_ENCRYPTION = {
 
 const MAX_PACKET_SIZE = 2020;
 module.exports = class AnyProtocol extends EventEmitter {
-    constructor(anysocketID, peer, options) {
+    constructor(anysocket, peer, options) {
         super();
 
         this._seq = 0;
 
-        this.peerID = null;
+        this.peerID = peer.id;
         this.peer = peer;
-        this.options = options;
+        this.options = Object.assign({
+            replyTimeout: 30 * 1000,
+            heartbeatTimeout: 5 * 1000,
+            heartbeatInterval: 5 * 1000
+        }, options);
         this.connectionID = this.peer.connectionID;
-        this.anysocketID = anysocketID;
+        this.anysocket = anysocket;
 
         this.PACKET_TYPE = Packet.TYPE;
         this._packetQueue = FastQ(this, this.processPacketQueue, 1);
@@ -39,16 +43,20 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.PLAIN;
 
         this.peer.on("message", this.onPacket.bind(this));
-        this.peer.on("disconnected", (peer, reason) => {
-            this.emit("disconnected", peer, reason);
-        });
 
-        if(this.peer.isClient()) {
+        if(this.peer.isClient() && !this.peerID) {
             this.changeState(PROTOCOL_STATES.AUTHING);
             this.send(Packet.data({
-                id: this.anysocketID
+                id: this.anysocket.id
             }).setType(Packet.TYPE.AUTH));
         }
+        if(this.peerID) {
+            this.changeState(PROTOCOL_STATES.CONNECTED);
+        }
+    }
+
+    isProxy() {
+        return !!this.peer.isProxy;
     }
 
     isConnected() {
@@ -97,6 +105,17 @@ module.exports = class AnyProtocol extends EventEmitter {
         }
     }
 
+    forward(packet) {
+        console.log("FORWARD", packet);
+        return new Promise((resolve, reject) => {
+            this._packetQueue.push({
+                packet: this._encodeForwardPacket(packet.to, packet.from, packet.msg),
+                resolve: resolve,
+                reject: reject
+            });
+        });
+    }
+
     e2e() {
         if(this.peer.hasE2EEnabled())
             return;
@@ -113,113 +132,118 @@ module.exports = class AnyProtocol extends EventEmitter {
         let invalidPacket = true;
         this._buffer = this._buffer || Packet.buffer();
         const packet = this._buffer;
-        let result = packet.deserialize(recv, this._decrypt.bind(this));
-        debug(this.peerID,"<<<<", Packet.TYPE.toString(packet.type), packet.seq);
-        if(result) {
-            this._buffer = false;
 
-            switch (this.state) {
-                case PROTOCOL_STATES.ESTABLISHED:
-                    if(packet.type == Packet.TYPE.AUTH) {
-                        invalidPacket = false;
-                        if(!packet.data.id) {
-                            return this.disconnect("Invalid Auth Packet!");
+        if(packet.isForwardPacket(recv)) {
+            this.anysocket.onForwardPacket(this.peerID, this._decodeForwardPacket(recv));
+        }
+        else {
+            let result = packet.deserialize(recv, this._decrypt.bind(this));
+            debug(this.peerID, "<<<<", Packet.TYPE.toString(packet.type), packet.seq);
+            if (result) {
+                this._buffer = false;
+
+                switch (this.state) {
+                    case PROTOCOL_STATES.ESTABLISHED:
+                        if (packet.type == Packet.TYPE.AUTH) {
+                            invalidPacket = false;
+                            if (!packet.data.id) {
+                                return this.disconnect("Invalid Auth Packet!");
+                            }
+                            this.peerID = packet.data.id;
+
+                            this.send(Packet.data({
+                                id: this.anysocket.id
+                            }).setType(Packet.TYPE.AUTH)).then(() => {
+                                this.changeState(PROTOCOL_STATES.CONNECTED);
+                                this.emit("ready", this);
+                            });
                         }
-                        this.peerID = packet.data.id;
-
-                        this.send(Packet.data({
-                            id: this.anysocketID
-                        }).setType(Packet.TYPE.AUTH)).then(() => {
+                        break;
+                    case PROTOCOL_STATES.AUTHING:
+                        if (packet.type == Packet.TYPE.AUTH) {
+                            invalidPacket = false;
                             this.changeState(PROTOCOL_STATES.CONNECTED);
+                            if (!packet.data.id) {
+                                return this.disconnect("Invalid Auth Packet!");
+                            }
+                            this.peerID = packet.data.id;
+
                             this.emit("ready", this);
-                        });
-                    }
-                    break;
-                case PROTOCOL_STATES.AUTHING:
-                    if(packet.type == Packet.TYPE.AUTH) {
-                        invalidPacket = false;
-                        this.changeState(PROTOCOL_STATES.CONNECTED);
-                        if(!packet.data.id) {
-                            return this.disconnect("Invalid Auth Packet!");
                         }
-                        this.peerID = packet.data.id;
+                        break;
+                    case PROTOCOL_STATES.CONNECTED:
+                        if (packet.type == Packet.TYPE.LINK) {
+                            invalidPacket = false;
+                            this.emit("message", this, {
+                                seq: packet.seq,
+                                data: packet.data
+                            });
+                        } else if (packet.type == Packet.TYPE.FORWARD) {
+                            invalidPacket = false;
+                            // TODO: implement forwarding
+                        } else if (packet.type == Packet.TYPE.INTERNAL) {
+                            invalidPacket = false;
+                            this.emit("internal", this, {
+                                seq: packet.seq,
+                                type: packet.type,
+                                data: packet.data
+                            });
+                        } else if (packet.type == Packet.TYPE.SWITCH) {
+                            invalidPacket = false;
 
-                        this.emit("ready", this);
-                    }
-                    break;
-                case PROTOCOL_STATES.CONNECTED:
-                    if(packet.type == Packet.TYPE.LINK) {
-                        invalidPacket = false;
-                        this.emit("message", this, {
-                            seq: packet.seq,
-                            data: packet.data
-                        });
-                    } else if(packet.type == Packet.TYPE.FORWARD) {
-                        invalidPacket = false;
-                        // TODO: implement forwarding
-                    } else if(packet.type == Packet.TYPE.INTERNAL) {
-                        invalidPacket = false;
-                        this.emit("internal", this, {
-                            seq: packet.seq,
-                            type: packet.type,
-                            data: packet.data
-                        });
-                    } else if(packet.type == Packet.TYPE.SWITCH) {
-                        invalidPacket = false;
+                            let publicKey = this.peer.getPublicKey();
+                            this.peer.setPublicKey(packet.data.key);
 
-                        let publicKey = this.peer.getPublicKey();
-                        this.peer.setPublicKey(packet.data.key);
+                            this.send(Packet.data({
+                                type: PROTOCOL_ENCRYPTION.E2E,
+                                key: publicKey
+                            }).setType(Packet.TYPE.SWITCH)).then(() => {
+                                this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.E2E;
+                                this.changeState(PROTOCOL_STATES.CONNECTED);
+                                this.emit("e2e", this);
+                            });
 
-                        this.send(Packet.data({
-                            type: PROTOCOL_ENCRYPTION.E2E,
-                            key: publicKey
-                        }).setType(Packet.TYPE.SWITCH)).then(() => {
+                            this.changeState(PROTOCOL_STATES.SWITCHING_PROTOCOL);
+                        } else if (packet.type == Packet.TYPE.HEARTBEAT) {
+                            invalidPacket = false;
+                            this.emit("internal", this, {
+                                seq: packet.seq,
+                                type: packet.type,
+                                data: packet.data
+                            });
+                        }
+                        break;
+                    case PROTOCOL_STATES.SWITCHING_PROTOCOL:
+                        if (packet.type == Packet.TYPE.LINK) {
+                            invalidPacket = false;
+                            this.emit("message", this, {
+                                seq: packet.seq,
+                                data: packet.data
+                            });
+                        } else if (packet.type == Packet.TYPE.SWITCH) {
+                            invalidPacket = false;
+                            this.peer.setPublicKey(packet.data.key);
                             this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.E2E;
                             this.changeState(PROTOCOL_STATES.CONNECTED);
                             this.emit("e2e", this);
-                        });
+                        } else if (packet.type == Packet.TYPE.HEARTBEAT) {
+                            invalidPacket = false;
+                            this.emit("internal", this, {
+                                seq: packet.seq,
+                                type: packet.type,
+                                data: packet.data
+                            });
+                        }
+                        break;
+                    case PROTOCOL_STATES.DISCONNECTED:
+                        invalidPacket = false;
+                        this.disconnect("Already disconnected!");
+                        break;
+                }
 
-                        this.changeState(PROTOCOL_STATES.SWITCHING_PROTOCOL);
-                    } else if(packet.type == Packet.TYPE.HEARTBEAT) {
-                        invalidPacket = false;
-                        this.emit("internal", this, {
-                            seq: packet.seq,
-                            type: packet.type,
-                            data: packet.data
-                        });
-                    }
-                    break;
-                case PROTOCOL_STATES.SWITCHING_PROTOCOL:
-                    if(packet.type == Packet.TYPE.LINK) {
-                        invalidPacket = false;
-                        this.emit("message", this, {
-                            seq: packet.seq,
-                            data: packet.data
-                        });
-                    }
-                    else if(packet.type == Packet.TYPE.SWITCH) {
-                        invalidPacket = false;
-                        this.peer.setPublicKey(packet.data.key);
-                        this.ENCRYPTION_STATE = PROTOCOL_ENCRYPTION.E2E;
-                        this.changeState(PROTOCOL_STATES.CONNECTED);
-                        this.emit("e2e", this);
-                    } else if(packet.type == Packet.TYPE.HEARTBEAT) {
-                        invalidPacket = false;
-                        this.emit("internal", this, {
-                            seq: packet.seq,
-                            type: packet.type,
-                            data: packet.data
-                        });
-                    }
-                    break;
-                case PROTOCOL_STATES.DISCONNECTED:
-                    invalidPacket = false;
-                    this.disconnect("Already disconnected!");
-                    break;
-            }
-
-            if(invalidPacket) {
-                debug("Invalid packet received! RECV:", packet);
+                if (invalidPacket) {
+                    debug("Invalid packet received! RECV:", packet);
+                }
             }
         }
     }
@@ -302,6 +326,18 @@ module.exports = class AnyProtocol extends EventEmitter {
         catch(e) {
             this.disconnect(e);
         }
+    }
+
+    _encodeForwardPacket(to, from, msg) {
+        return Packet.TYPE.FORWARD + to + from + msg;
+    }
+
+    _decodeForwardPacket(recv) {
+        return {
+            to: recv.substr(1, 36),
+            from: recv.substr(37, 36),
+            msg: recv.substr(73)
+        };
     }
 
     _getSeq() {

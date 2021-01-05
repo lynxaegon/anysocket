@@ -6,11 +6,7 @@ class AbstractTransport extends EventEmitter {
         super();
 
         this.id = Utils.uuidv4();
-        this.options = Object.assign({
-            replyTimeout: 30 * 1000,
-            heartbeatTimeout: 5 * 1000,
-            heartbeatInterval: 5 * 1000
-        }, options);
+        this.options = Object.assign({}, options);
 
         this.type = type;
         this.peers = new Map();
@@ -78,10 +74,6 @@ class AbstractTransport extends EventEmitter {
         peer.on('disconnected', (peer, reason) => {
             this.peers.delete(peer.connectionID);
             this.emit('disconnected', peer, reason);
-        });
-
-        peer.on('message', (peer, message) => {
-            this.emit('message', peer, message);
         });
 
         peer.init();
