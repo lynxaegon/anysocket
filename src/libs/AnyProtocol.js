@@ -133,7 +133,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         const packet = this._buffer;
 
         if(packet.isForwardPacket(recv)) {
-            this.anysocket.onForwardPacket(this.peerID, this._decodeForwardPacket(recv));
+            this.emit("forward", this.peerID, this._decodeForwardPacket(recv));
         }
         else {
             let result = packet.deserialize(recv, this._decrypt.bind(this));

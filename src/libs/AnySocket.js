@@ -7,6 +7,7 @@ const _private = {
     peersConnected: Symbol("unready peers"),
     peers: Symbol("ready peers"),
     transports: Symbol("transports"),
+    onForward: Symbol("onForward"),
     onPeerConnected: Symbol("onPeerConnected"),
     onProtocolReady: Symbol("onPeerReady"),
     onPeerDisconnected: Symbol("onPeerDisconnected"),
@@ -50,6 +51,48 @@ class AnySocket extends EventEmitter {
         })
     }
 
+    canProxy(peerID, otherPeerID) {
+        return false;
+    }
+
+    proxy(peerID, throughPeerID) {
+        return new Promise((resolve, reject) => {
+            if(peerID == throughPeerID || peerID == this.id) {
+                reject("Cannot proxy loopback!");
+                return;
+            }
+            if(this[_private.peers][throughPeerID].isProxy())
+            {
+                // TODO: this requires to implement a full network graph (map)
+                // TODO: this will enable to send messages without having multiple forward headers
+                reject("Cannot proxy via a proxy! atm... :)");
+                return;
+            }
+            this[_private.peers][throughPeerID].sendInternal({
+                type: "network",
+                action: "proxy",
+                id: peerID
+            }, true).then((packet) => {
+                if(packet.msg.ok && !this[_private.peers][peerID]) {
+                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]));
+                    this[_private.onProtocolReady](protocol);
+                    resolve(this[_private.peers][peerID]);
+                } else {
+                    reject("Cannot proxy!");
+                }
+            }).catch(reject);
+        })
+    }
+
+    hasPeer(id) {
+        return !!this[_private.peers][id];
+    }
+
+    hasDirectPeer(id) {
+        return !!(this[_private.peers][id] && !this[_private.peers][id].isProxy());
+    }
+
+    //region Networking Connect/Listen/Stop
     server(scheme, options) {
         return this.listen(scheme, options);
     }
@@ -103,39 +146,6 @@ class AnySocket extends EventEmitter {
         return transport.connect();
     }
 
-    canProxy(peerID, otherPeerID) {
-        return false;
-    }
-
-    proxy(peerID, throughPeerID) {
-        return new Promise((resolve, reject) => {
-            if(peerID == throughPeerID || peerID == this.id) {
-                reject("Cannot proxy loopback!");
-                return;
-            }
-            if(this[_private.peers][throughPeerID].isProxy())
-            {
-                // TODO: this requires to implement a full network graph (map)
-                // TODO: this will enable to send messages without having multiple forward headers
-                reject("Cannot proxy via a proxy! atm... :)");
-                return;
-            }
-            this[_private.peers][throughPeerID].sendInternal({
-                type: "network",
-                action: "proxy",
-                id: peerID
-            }, true).then((packet) => {
-                if(packet.msg.ok && !this[_private.peers][peerID]) {
-                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]));
-                    this[_private.onProtocolReady](protocol);
-                    resolve(this[_private.peers][peerID]);
-                } else {
-                    reject("Cannot proxy!");
-                }
-            }).catch(reject);
-        })
-    }
-
     stop() {
         return new Promise((resolve, reject) => {
             const promises = [];
@@ -157,27 +167,9 @@ class AnySocket extends EventEmitter {
         });
     }
 
-    onForwardPacket(peerID, packet) {
-        if(this.id == packet.to) {
-            if(!this[_private.peers][packet.from]) {
-                this[_private.peers][peerID].disconnect("Invalid forward packet! Client doesn't exist!");
-                return;
-            }
+    //endregion
 
-            this[_private.peers][packet.from]._recvForward(packet);
-        }
-        else if(this.hasPeer(packet.to)) {
-            this[_private.peers][packet.to].forward(packet);
-        } else {
-            console.error("FORWARD ERROR! We do not have the peer", packet.to);
-        }
-    }
-
-    // has peer and it's not a proxy
-    hasPeer(id) {
-        return !!(this[_private.peers][id] && !this[_private.peers][id].isProxy());
-    }
-
+    //region Private Functions
     [_private.findTransport](scheme) {
         for (let name in AnySocket.Transport) {
             if(!AnySocket.Transport.hasOwnProperty(name))
@@ -195,10 +187,27 @@ class AnySocket extends EventEmitter {
         debug("Peer connected");
         const anyprotocol = new AnyProtocol(this, peer, options);
         this[_private.peersConnected][peer.connectionID] = anyprotocol;
-        // register for readiness
+        // register protocol messages
+        anyprotocol.on("forward", this[_private.onForward].bind(this));
         anyprotocol.once("ready", (protocol) => {
             this[_private.onProtocolReady](protocol);
         });
+    }
+
+    [_private.onForward](peerID, packet) {
+        if(this.id == packet.to) {
+            if(!this[_private.peers][packet.from]) {
+                this[_private.peers][peerID].disconnect("Invalid forward packet! Client doesn't exist!");
+                return;
+            }
+
+            this[_private.peers][packet.from]._recvForward(packet);
+        }
+        else if(this.hasDirectPeer(packet.to)) {
+            this[_private.peers][packet.to].forward(packet);
+        } else {
+            console.error("FORWARD ERROR! We do not have the peer", packet.to);
+        }
     }
 
     [_private.onProtocolReady](protocol) {
@@ -317,6 +326,7 @@ class AnySocket extends EventEmitter {
                 packet.peer.disconnect("Invalid internal message");
         }
     }
+    //endregion
 }
 
 // Module Setup
