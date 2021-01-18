@@ -5,7 +5,7 @@ const AnyPacket = require("./AnyPacket");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
-
+const _heartbeatReq = Symbol("heartbeat raw");
 const isBoolean = function(obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
 };
@@ -37,7 +37,17 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].isProxy();
     }
 
-    heartbeat() {
+    heartbeat(forceOnce) {
+        if(forceOnce) {
+            return new Promise((resolve, reject) => {
+                this[_heartbeatReq]().then(() => {
+                    resolve(this);
+                }).catch((e) => {
+                    reject(this, e);
+                });
+            });
+        }
+
         if(this.isProxy())
             return;
 
@@ -47,18 +57,25 @@ module.exports = class AnyPeer extends EventEmitter {
             this.heartbeat();
         }, this[_protocol].options.heartbeatInterval);
 
+        this[_heartbeatReq]().then(() => {}).catch(() => {});
+    }
 
-        const startTime = (new Date()).getTime();
-        const packet = Packet
-            .data()
-            .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
+    [_heartbeatReq]() {
+        return new Promise((resolve, reject) => {
+            const startTime = (new Date()).getTime();
+            const packet = Packet
+                .data()
+                .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
 
-        this._send(packet, true, this[_protocol].options.heartbeatTimeout).then(() => {
-            this.lag = (new Date()).getTime() - startTime;
-            this.emit("heartbeat", this);
-        }).catch((e) => {
-            debug("Heartbeat Error:", e);
-            this.disconnect(e);
+            this._send(packet, true, this[_protocol].options.heartbeatTimeout).then(() => {
+                this.lag = (new Date()).getTime() - startTime;
+                resolve();
+                this.emit("heartbeat", this);
+            }).catch((e) => {
+                debug("Heartbeat Error:", e);
+                this.disconnect(e);
+                reject(e);
+            });
         });
     }
 

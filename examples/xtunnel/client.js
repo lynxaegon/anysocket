@@ -3,6 +3,7 @@ const Utils = require("./utils");
 
 const args = process.argv.splice(2);
 const PASSWORD = args[0].toString();
+// const PASSWORD = "1234";
 const SECRET_AUTH = "SECRET_TOKEN_HERE";
 
 const anysocket = new AnySocket();
@@ -22,7 +23,7 @@ anysocket.on("connected", (peer) => {
     }
 });
 anysocket.on("e2e", (peer) => {
-   console.log("Connected peer", peer.id);
+    console.log("Connected peer", peer.id);
 });
 anysocket.on("message", (packet) => {
     if(packet.peer.isProxy()) {

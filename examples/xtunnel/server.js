@@ -6,6 +6,7 @@ function getRandom(length) {
 }
 
 const PASSWORD = "" + getRandom(8);
+// const PASSWORD = "1234";
 console.log("PASSWORD", PASSWORD);
 const SECRET_AUTH = "SECRET_TOKEN_HERE";
 
