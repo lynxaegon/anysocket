@@ -106,7 +106,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     forward(packet) {
-        console.log("FORWARD", packet);
+        // console.log("FORWARD", packet);
         return new Promise((resolve, reject) => {
             this._packetQueue.push({
                 packet: this._encodeForwardPacket(packet.to, packet.from, packet.msg),
@@ -128,7 +128,6 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     onPacket(peer, recv) {
-        // TODO: to implement forward without parsing, just read the Packet.TYPE (substr(1,1))
         let invalidPacket = true;
         this._buffer = this._buffer || Packet.buffer();
         const packet = this._buffer;
@@ -178,9 +177,6 @@ module.exports = class AnyProtocol extends EventEmitter {
                                 seq: packet.seq,
                                 data: packet.data
                             });
-                        } else if (packet.type == Packet.TYPE.FORWARD) {
-                            invalidPacket = false;
-                            // TODO: implement forwarding
                         } else if (packet.type == Packet.TYPE.INTERNAL) {
                             invalidPacket = false;
                             this.emit("internal", this, {

@@ -1,57 +1,66 @@
 const AnySocket = require("../../src/index");
-const proxy = new AnySocket();
-proxy.server("ws", 4000);
+const Utils = require("./utils");
 
-const awaitAuth = {};
-const peerToAuth = {};
-const peers = {};
+function getRandom(length) {
+    return Math.floor(Math.pow(10, length-1) + Math.random() * 9 * Math.pow(10, length-1));
+}
 
-proxy.on("connected", (peer) => {
-    console.log("["+peer.id+"] connected");
-});
+const PASSWORD = "" + getRandom(8);
+console.log("PASSWORD", PASSWORD);
+const SECRET_AUTH = "SECRET_TOKEN_HERE";
 
-proxy.on("message", (packet) => {
-    if(packet.msg.type == "auth") {
-        console.log("recv auth:", packet.msg.data);
-        if(awaitAuth[packet.msg.data]) {
-            const authPacket = awaitAuth[packet.msg.data];
-            const peer1 = authPacket.peer;
-            const peer2 = packet.peer;
-            peers[peer1.id] = peer2;
-            peers[peer2.id] = peer1;
-            delete peerToAuth[peer1.id];
-            delete awaitAuth[packet.msg.data];
-            // send connect info
+const anysocket = new AnySocket();
+console.log("AnySocket.ID", anysocket.id);
 
-            console.log("matched", peer1.id, peer2.id);
 
-            console.log("Await Auth", awaitAuth);
-            console.log("PeerToAuth", peerToAuth);
-            console.log("Peers", peerToAuth);
-
-            authPacket.reply(1);
-            packet.reply(0);
-        } else {
-            awaitAuth[packet.msg.data] = packet;
-            peerToAuth[packet.peer.id] = packet.msg.data;
-        }
-    } else if(packet.msg.type == "auth") {
-        console.log("SERVER GOT MSG:", packet.msg);
+anysocket.connect("ws", "127.0.0.1",3000);
+anysocket.on("connected", (peer) => {
+    console.log("[CLIENT][" + peer.id + "] Connected");
+    if(!peer.isProxy()) {
+        console.log("Sending", PASSWORD, SECRET_AUTH);
+        peer.send({
+            type: "auth",
+            key: Utils.encrypt(PASSWORD, SECRET_AUTH)
+        });
     } else {
-        console.log(packet.msg);
-        packet.peer.disconnect("Invalid packet received!");
+        // matched with another client
+        peer.e2e();
     }
 });
+anysocket.on("e2e", (peer) => {
+    console.log("Connected peer", peer.id);
+    peer.send({
+        type: "hello",
+        msg: "world"
+    }, true).then(packet => {
+        console.log("Got Reply", packet.msg);
+    });
+});
+anysocket.on("message", (packet) => {
+    if(packet.peer.isProxy()) {
+        if(packet.peer.isE2EEnabled()) {
+            if (packet.msg.type == "hello") {
+                packet.reply({
 
-proxy.on("disconnected", (peer, reason) => {
-    const code = peerToAuth[peer.id];
-    const assignedPeer = peers[peer.id];
-    delete peerToAuth[peer.id];
-    delete awaitAuth[code];
-    delete peers[peer.id];
+                })
+            }
+        } else {
+            console.log("Requires E2E!");
+            anysocket.stop();
+        }
+    } else {
+        if(packet.msg.type == "matched") {
+            anysocket.proxy(packet.msg.id, packet.peer.id);
+        } else {
+            anysocket.stop("Invalid packet received!")
+        }
+    }
 
-    console.log("["+peer.id+"] disconnected", reason);
-
-    if(assignedPeer)
-        assignedPeer.disconnect("Assigned peer disconnected");
+});
+anysocket.on("disconnected", (peer, reason) => {
+    if(peer.isProxy()) {
+        console.log("finished!");
+        process.exit(0);
+    }
+    console.log("[CLIENT][" + peer.id + "] Disconnected. Reason:", reason);
 });

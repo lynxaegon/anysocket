@@ -103,8 +103,16 @@ class AnySocket extends EventEmitter {
         return transport.connect();
     }
 
+    canProxy(peerID, otherPeerID) {
+        return false;
+    }
+
     proxy(peerID, throughPeerID) {
         return new Promise((resolve, reject) => {
+            if(peerID == throughPeerID || peerID == this.id) {
+                reject("Cannot proxy loopback!");
+                return;
+            }
             if(this[_private.peers][throughPeerID].isProxy())
             {
                 // TODO: this requires to implement a full network graph (map)
@@ -151,6 +159,11 @@ class AnySocket extends EventEmitter {
 
     onForwardPacket(peerID, packet) {
         if(this.id == packet.to) {
+            if(!this[_private.peers][packet.from]) {
+                this[_private.peers][peerID].disconnect("Invalid forward packet! Client doesn't exist!");
+                return;
+            }
+
             this[_private.peers][packet.from]._recvForward(packet);
         }
         else if(this.hasPeer(packet.to)) {
@@ -160,9 +173,9 @@ class AnySocket extends EventEmitter {
         }
     }
 
+    // has peer and it's not a proxy
     hasPeer(id) {
-        //TODO: Add check to make sure it's a direct peer and not a proxy peer
-        return !!this[_private.peers][id];
+        return !!(this[_private.peers][id] && !this[_private.peers][id].isProxy());
     }
 
     [_private.findTransport](scheme) {
@@ -246,11 +259,16 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onPeerInternalMessage](packet) {
-        console.log("got internal", packet.msg);
+        // console.log("got internal", packet.msg);
         switch (packet.msg.type) {
             case "network":
                 if(packet.msg.action == "proxy") {
                     // initialize mesh
+                    if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
+                        packet.peer.disconnect("Invalid proxy request!");
+                        return;
+                    }
+
                     if(this[_private.peers][packet.msg.id].isProxy())
                     {
                         packet.reply({
@@ -258,11 +276,6 @@ class AnySocket extends EventEmitter {
                         });
                         // TODO: this requires to implement a full network graph (map)
                         // TODO: this will enable to send messages without having multiple forward headers
-                        return;
-                    }
-
-                    if(!this[_private.peers][packet.msg.id]) {
-                        packet.peer.disconnect("Invalid proxy request!");
                         return;
                     }
 
@@ -279,7 +292,7 @@ class AnySocket extends EventEmitter {
                     });
                 } else if(packet.msg.action == "unproxy") {
                     // destroy mesh
-                    if(!this[_private.peers][packet.msg.id]) {
+                    if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
                         packet.peer.disconnect("Invalid proxy request!");
                         return;
                     }

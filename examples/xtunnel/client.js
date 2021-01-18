@@ -1,36 +1,54 @@
-const Utils = require("./utils");
 const AnySocket = require("../../src/index");
-const client = new AnySocket();
-client.connect("ws", "127.0.0.1", 4000).catch((err) => {
-    console.log(err);
+const Utils = require("./utils");
+
+const args = process.argv.splice(2);
+const PASSWORD = args[0].toString();
+const SECRET_AUTH = "SECRET_TOKEN_HERE";
+
+const anysocket = new AnySocket();
+console.log("AnySocket.ID", anysocket.id);
+
+anysocket.connect("ws", "127.0.0.1",3000);
+anysocket.on("connected", (peer) => {
+    console.log("[CLIENT][" + peer.id + "] Connected");
+    if(!peer.isProxy()) {
+        peer.send({
+            type: "auth",
+            key: Utils.encrypt(PASSWORD, SECRET_AUTH)
+        });
+    } else {
+        // matched with another client
+        peer.e2e();
+    }
 });
-
-client.on("connected", (peer) => {
-    console.log("connected");
-    // generated password
-    const password = "1234";
-
-    peer.send({
-        type: "auth",
-        data: Utils.encrypt("elo", password)
-    }, true, 1 * 1000).then((packet) => {
-        console.log("matched", packet);
-        if(packet.msg == "1") {
-            packet.peer.e2e();
+anysocket.on("e2e", (peer) => {
+   console.log("Connected peer", peer.id);
+});
+anysocket.on("message", (packet) => {
+    if(packet.peer.isProxy()) {
+        if(packet.peer.isE2EEnabled()) {
+            if (packet.msg.type == "hello") {
+                packet.reply({
+                    world: "hello"
+                });
+            }
+        } else {
+            console.log("Requires E2E!");
+            anysocket.stop();
         }
-    }).catch(e => {
-        console.log("failed reply!", e)
-        peer.disconnect("No match found.. Timeout reached")
-    });
-});
-client.on("e2e", (peer) => {
-    console.log("e2e");
-    peer.send({
-        type: "msg",
-        hello: "world"
-    });
-});
+    } else {
+        if(packet.msg.type == "matched") {
+            anysocket.proxy(packet.msg.id, packet.peer.id);
+        } else {
+            anysocket.stop("Invalid packet received!")
+        }
+    }
 
-client.on("disconnected", (peer, reason) => {
-    console.log("disconnected", reason);
+});
+anysocket.on("disconnected", (peer, reason) => {
+    if(peer.isProxy()) {
+        console.log("finished!");
+        process.exit(0);
+    }
+    console.log("[CLIENT][" + peer.id + "] Disconnected. Reason:", reason);
 });

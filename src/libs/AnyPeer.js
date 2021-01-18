@@ -79,6 +79,10 @@ module.exports = class AnyPeer extends EventEmitter {
         this[_protocol].e2e();
     }
 
+    isE2EEnabled() {
+        return this[_protocol].peer.hasE2EEnabled();
+    }
+
     send(message, awaitReply, timeout) {
         const packet = Packet
             .data(message)
@@ -92,7 +96,7 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     sendInternal(message, awaitReply, timeout) {
-        console.log("Sent internal", message, this.id);
+        // console.log("Sent internal", message, this.id);
         const packet = Packet
             .data(message)
             .setType(this[_protocol].PACKET_TYPE.INTERNAL);
