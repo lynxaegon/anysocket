@@ -1,5 +1,7 @@
 # AnySocket
-An abstract networking layer over multiple transports, agnostic of client/server with support for E2EE
+An abstract networking layer over multiple transports, agnostic of client/server with support for E2EE*
+
+** E2EE implementation doesn't support forward secrecy (atm)
 
 [![Dependency Status](https://david-dm.org/lynxaegon/anysocket.svg)](https://david-dm.org/lynxaegon/anysocket)
 [![devDependency Status](https://david-dm.org/lynxaegon/anysocket/dev-status.svg)](https://david-dm.org/lynxaegon/anysocket#info=devDependencies)
