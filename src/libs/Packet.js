@@ -1,3 +1,4 @@
+const AnyPacker = require("./AnyPacker");
 const _private = {
     buffer: Symbol("buffer")
 };
@@ -22,6 +23,10 @@ const TYPE = {
 
         return false;
     }
+};
+
+const getSeq = (buf) => {
+    return AnyPacker.unpackInt(buf.substr(2, 2));
 };
 
 const regex = {};
@@ -53,19 +58,9 @@ class Packet {
         return this;
     }
 
-    combine(packet) {
-        this.buffer = this.buffer.concat(packet.buffer);
-        return this;
-    }
-
-    serialize(max_packet_size, encryptFnc) {
-        let data = {
-            _: this.seq.toString(),
-            d: this.data
-        };
-
+    async serialize(max_packet_size, encryptFnc) {
         max_packet_size = max_packet_size || Number.MAX_SAFE_INTEGER;
-        let packet = [JSON.stringify(data)];
+        let packet = [JSON.stringify(this.data)];
         if (packet[0].length > max_packet_size) {
             regex[max_packet_size] = regex[max_packet_size] || new RegExp("(.{1," + max_packet_size + "})","g");
             packet = packet[0].match(regex[max_packet_size]);
@@ -75,35 +70,32 @@ class Packet {
             packet[i] =
                 (i == packet.length - 1 ? PACKET_LENGTH.FULL : PACKET_LENGTH.PARTIAL).toString() +
                 this.type.toString() +
-                encryptFnc(packet[i])
+                AnyPacker.packInt(this.seq) +
+                await encryptFnc(packet[i])
         }
 
         return packet;
     }
 
-    deserialize(buf, decryptFnc) {
-        decryptFnc = decryptFnc || ((packet) => packet);
-
+    async deserialize(buf, decryptFnc) {
+        decryptFnc = decryptFnc || ((packet) => Promise.resolve(packet));
         const eol = buf.substr(0, 1) == PACKET_LENGTH.FULL;
         this.type = buf.substr(1, 1);
+        this.seq = getSeq(buf);
 
-        this.buffer.push(decryptFnc(buf.substr(2)));
+        this.buffer.push(await decryptFnc(buf.substr(4)));
 
         if (eol) {
-            this.buffer = this.buffer.join("");
-            let packet = JSON.parse(this.buffer);
-            this.buffer = false;
-            this.seq = packet._;
-            this.data = packet.d;
-
-            return true;
-        }
-
-        return false;
-    }
-
-    isForwardPacket(buf) {
-        if(buf.substr(0,1) == TYPE.FORWARD) {
+            try {
+                this.buffer = this.buffer.join("");
+                let packet = JSON.parse(this.buffer);
+                this.buffer = [];
+                this.data = packet;
+            }
+            catch(e) {
+                // ignored
+                this.data = null;
+            }
             return true;
         }
 
@@ -118,6 +110,12 @@ module.exports = {
     },
     buffer: () => {
         return new Packet();
+    },
+    getSeq: (buf) => {
+        return getSeq(buf);
+    },
+    isForwardPacket(buf) {
+        return buf.substr(0, 1) == TYPE.FORWARD;
     },
     TYPE: TYPE
 };

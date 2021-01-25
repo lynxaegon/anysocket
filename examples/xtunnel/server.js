@@ -1,12 +1,11 @@
 const AnySocket = require("../../src/index");
-const Utils = require("./utils");
 
 function getRandom(length) {
     return Math.floor(Math.pow(10, length-1) + Math.random() * 9 * Math.pow(10, length-1));
 }
 
-const PASSWORD = "" + getRandom(8);
-// const PASSWORD = "1234";
+// const PASSWORD = "" + getRandom(8);
+const PASSWORD = "1234";
 console.log("PASSWORD", PASSWORD);
 const SECRET_AUTH = "SECRET_TOKEN_HERE";
 
@@ -18,10 +17,10 @@ anysocket.connect("ws", "127.0.0.1",3000);
 anysocket.on("connected", (peer) => {
     console.log("[CLIENT][" + peer.id + "] Connected");
     if(!peer.isProxy()) {
-        console.log("Sending", PASSWORD, SECRET_AUTH);
+        console.log("Sending", PASSWORD);
         peer.send({
             type: "auth",
-            key: Utils.encrypt(PASSWORD, SECRET_AUTH)
+            key: PASSWORD
         });
     } else {
         // matched with another client

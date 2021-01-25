@@ -1,54 +1,103 @@
 const crypto = require("crypto");
+const BufferUtils = require("./utils_buffer");
+
 module.exports = new (class Utils {
     uuidv4() {
-        let rnd = crypto.randomBytes(16);
-        rnd[6] = (rnd[6] & 0x0f) | 0x40;
-        rnd[8] = (rnd[8] & 0x3f) | 0x80;
-        rnd = rnd.toString("hex").match(/(.{8})(.{4})(.{4})(.{4})(.{12})/);
-        rnd.shift();
-        return rnd.join("-");
+        return 'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
     }
 
     certificates(size) {
-        const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
-            modulusLength: size,  // the length of your key in bits
-            publicKeyEncoding: {
-                type: 'spki',       // recommended to be 'spki' by the Node.js docs
-                format: 'pem'
-            },
-            privateKeyEncoding: {
-                type: 'pkcs8',      // recommended to be 'pkcs8' by the Node.js docs
-                format: 'pem'
+        return new Promise(resolve => {
+            Promise.resolve(crypto.generateKeyPairSync('rsa', {
+                modulusLength: size,
+                publicKeyEncoding: {
+                    type: 'spki',
+                    format: 'pem'
+                },
+                privateKeyEncoding: {
+                    type: 'pkcs8',
+                    format: 'pem'
+                }
+            })).then(result => {
+                // browser
+                if (typeof window !== 'undefined') {
+                    window.crypto.subtle.exportKey("spki", result.publicKey).then(key => {
+                        let publicKey = window.btoa(String.fromCharCode(...new Uint8Array(key)));
+                        publicKey = publicKey.match(/.{1,64}/g).join('\n');
+                        publicKey = "-----BEGIN PUBLIC KEY-----\n" + publicKey + "\n-----END PUBLIC KEY-----";
+
+                        resolve({
+                            public: publicKey,
+                            private: result.privateKey
+                        });
+                    });
+                } else {
+                    resolve({
+                        public: result.publicKey,
+                        private: result.privateKey
+                    });
+                }
+            });
+        });
+    }
+
+    convertPemToBinary(pem) {
+        let b64Lines = pem.replace(/\n/g, "");
+        let b64Prefix = b64Lines.replace('-----BEGIN PUBLIC KEY-----', '');
+        let b64Final = b64Prefix.replace('-----END PUBLIC KEY-----', '');
+
+        return BufferUtils.bufferFromBase64(b64Final);
+    }
+
+    importKey(key) {
+        return new Promise((resolve) => {
+            if (typeof window !== 'undefined') {
+                window.crypto.subtle.importKey(
+                    "spki",
+                    this.convertPemToBinary(key),
+                    {
+                        name: "RSA-OAEP",
+                        hash: {
+                            name: "SHA-256"
+                        }
+                    },
+                    false,
+                    ["encrypt"]
+                ).then(resolve);
+            } else {
+                resolve(key);
             }
         });
-
-        return {
-            public: publicKey,
-            private: privateKey
-        }
     }
 
     encryptRSA(key, data) {
-        const encryptedData = crypto.publicEncrypt({
-                key: key,
-                padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-                oaepHash: "sha256",
-            },
-            Buffer.from(data)
-        );
-
-        return encryptedData.toString("base64");
+        return new Promise((resolve, reject) => {
+            Promise.resolve(crypto.publicEncrypt({
+                    key: key,
+                    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+                    oaepHash: "sha256",
+                },
+                BufferUtils.bufferFromString(data)
+            )).then(result => {
+                resolve(result.toString("base64"));
+            }).catch(reject);
+        });
     }
 
     decryptRSA(key, data) {
-        const decryptedData = crypto.privateDecrypt({
-                key: key,
-                padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-                oaepHash: "sha256",
-            },
-            Buffer.from(data, "base64")
-        );
-
-        return decryptedData.toString();
+        return new Promise((resolve, reject) => {
+            Promise.resolve(crypto.privateDecrypt({
+                    key: key,
+                    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+                    oaepHash: "sha256",
+                },
+                BufferUtils.bufferFromBase64(data)
+            )).then(result => {
+                resolve(result.toString());
+            }).catch(reject);
+        });
     }
 })();

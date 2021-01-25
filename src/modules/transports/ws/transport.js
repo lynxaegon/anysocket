@@ -36,8 +36,8 @@ class WS extends AbstractTransport {
             let ws = new WebSocket('ws://' + this.options.ip + ':' + this.options.port + '/');
 
             ws.on('open', socket => {
-                resolve();
                 this.addPeer(new Peer(ws));
+                resolve();
             });
 
             ws.on('error', err => {

@@ -1,9 +1,7 @@
 const AnySocket = require("../../src/index");
 const Utils = require("./utils");
 
-const args = process.argv.splice(2);
-const PASSWORD = args[0].toString();
-// const PASSWORD = "1234";
+const PASSWORD = "1234";
 const SECRET_AUTH = "SECRET_TOKEN_HERE";
 
 const anysocket = new AnySocket();
@@ -15,7 +13,7 @@ anysocket.on("connected", (peer) => {
     if(!peer.isProxy()) {
         peer.send({
             type: "auth",
-            key: Utils.encrypt(PASSWORD, SECRET_AUTH)
+            key: PASSWORD
         });
     } else {
         // matched with another client

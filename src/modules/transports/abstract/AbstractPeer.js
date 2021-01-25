@@ -2,10 +2,6 @@ const EventEmitter = require('events');
 const Utils = require("../../../libs/utils");
 const AbstractTransport = require("./AbstractTransport");
 
-const generateKeys = () => {
-    return Utils.certificates(4096);
-};
-
 class AbstractPeer extends EventEmitter {
     constructor(socket) {
         super();
@@ -15,7 +11,7 @@ class AbstractPeer extends EventEmitter {
         this.socket = socket;
         this.type = AbstractTransport.TYPE.NONE;
 
-        this.keys = {public: null, private: null};
+        this.keys = {public: null, private: null, generating: false};
         this.inited = false;
     }
 
@@ -38,29 +34,35 @@ class AbstractPeer extends EventEmitter {
     }
 
     hasE2EEnabled() {
-        return this.keys.public != null && this.keys.private != null
+        return this.keys.generating || (this.keys.public != null && this.keys.private != null);
+    }
+
+    generateKeys() {
+        return new Promise((resolve) => {
+            this.generateKeys = () => {
+                throw new Error("Already generated keys!");
+            };
+            Utils.certificates(4096).then((result) => {
+                this.keys = result;
+                resolve();
+            });
+        });
     }
 
     setPublicKey(key) {
         // disable function
         this.setPublicKey = null;
 
-        this.keys.public = key;
+        return Utils.importKey(key).then((result) => {
+            this.keys.public = result;
+        });
     }
 
     getPublicKey() {
-        if(!this.hasE2EEnabled()) {
-            this.keys = generateKeys();
-        }
-
         return this.keys.public;
     }
 
     getPrivateKey() {
-        if(!this.hasE2EEnabled()) {
-            this.keys = generateKeys();
-        }
-
         return this.keys.private;
     }
 

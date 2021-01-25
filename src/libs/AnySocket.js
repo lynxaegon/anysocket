@@ -1,7 +1,5 @@
 const debug = require('debug')('AnySocket');
 const EventEmitter = require("events");
-const path = require("path");
-const fs = require("fs");
 const Utils = require("./utils");
 const _private = {
     peersConnected: Symbol("unready peers"),
@@ -323,27 +321,16 @@ class AnySocket extends EventEmitter {
                 }
                 break;
             default:
+                console.log("packet", packet);
                 packet.peer.disconnect("Invalid internal message");
         }
     }
     //endregion
 }
 
-// Module Setup
-function loadModules(dir) {
-    const result = {};
-    dir = path.join(__dirname, dir);
-    fs.readdirSync(dir).forEach(function (file) {
-        let name = file.replace(/\.js$/, "");
-        file = path.join(dir, file);
-        if (fs.statSync(file).isDirectory()) {
-            if (path.basename(file) != "abstract") {
-                result[name.toUpperCase()] = require(path.join(file, "transport.js"));
-            }
-        }
-    });
-    return result;
-}
-
-AnySocket.Transport = loadModules("../modules/transports");
+AnySocket.Transport = {
+    "LOCAL": require("../modules/transports/local/transport"),
+    "WS": require("../modules/transports/ws/transport")
+};
+AnySocket.Utils = require("./utils");
 module.exports = AnySocket;

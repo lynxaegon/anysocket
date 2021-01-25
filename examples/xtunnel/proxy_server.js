@@ -34,6 +34,8 @@ server.on("message", (packet) => {
             authQueue[packet.peer.id] = packet.msg.key;
             authPackets[packet.msg.key] = packet.peer;
         }
+    } else {
+        packet.peer.disconnect("Invalid auth packet!");
     }
 });
 
