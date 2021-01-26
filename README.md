@@ -64,6 +64,10 @@ _You can run the benchmarks from: ```/examples/benchmark```_
 ```javascript
 npm install --save anysocket
 ```
+or
+```html
+<script src="/dist/anysocket.bundle.js"></script>
+```
 
 
 <a name="usage"></a>
