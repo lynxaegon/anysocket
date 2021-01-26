@@ -10,6 +10,7 @@ An abstract networking layer over multiple transports, agnostic of client/server
 
 
 * <a href="#features">Features</a>
+* <a href="#benchmark">Benchmark</a>
 * <a href="#installation">Installation</a>
 * <a href="#usage">Usage</a>
 * <a href="#api">API</a>
@@ -26,6 +27,8 @@ _WIP Documentation_
 ## Features
 * Client / Server agnostic
 * Support for request/reply
+* P2P using a proxy server (with support for E2EE between clients)
+* **Browser support** - small footprint (_24kb_) - _see: ```/dist/anysocket.bundle.js```_
 * Multiple transports *(implemented: **ws**)
 * All peers have a UUIDv4 associated
 * E2EE implemented in the protocol
@@ -33,7 +36,27 @@ _WIP Documentation_
 * Automatic packet splitting, if packet is too large (atm: fixed 4kb packet size)
 * **Not Battle Tested** ...yet
 
-_It doesn't support Binary Protocol_ ...yet
+_It doesn't support Binary Protocol... (but it has some binary stuff)_
+
+
+<a name="benchmark"></a>
+## Benchmark
+#### nodejs - browser
+```
+Running PLAIN TEXT benchmark: 1000ms  (test duration)
+Latency: 0.90 ms
+Running E2EE benchmark: 1000ms        (test duration)
+Latency: 2.81 ms
+```
+
+#### nodejs - nodejs
+```
+Running PLAIN TEXT benchmark: 1000ms  (test duration)
+Latency: 0.4 ms
+Running E2EE benchmark: 1000ms        (test duration)
+Latency: 2.07 ms
+```
+_You can run the benchmarks from: ```/examples/benchmark```_
 
 <a name="installation"></a>
 ## Installation
@@ -110,6 +133,10 @@ More in the `examples` folder.
     * <a href="#AnySocket.connect"><code><b>connect()</b></code></a>
     * <a href="#AnySocket.stop"><code><b>stop()</b></code></a>
     * <a href="#AnySocket.send"><code><b>send()</b></code></a>
+    * <a href="#AnySocket.canProxy"><code><b>canProxy()</b></code></a>
+    * <a href="#AnySocket.proxy"><code><b>proxy()</b></code></a>
+    * <a href="#AnySocket.hasPeer"><code><b>hasPeer()</b></code></a>
+    * <a href="#AnySocket.hasDirectPeer"><code><b>hasDirectPeer()</b></code></a>
     * <a href="#AnySocket.on.connected"><code><b>event: _connected_</b></code></a>
     * <a href="#AnySocket.on.message"><code><b>event: _message_</b></code></a>
     * <a href="#AnySocket.on.e2e"><code><b>event: _e2e_</b></code></a>
@@ -128,6 +155,8 @@ More in the `examples` folder.
     * <a href="#AnyPeer.send"><code><b>send()</b></code></a>
     * <a href="#AnyPeer.disconnect"><code><b>disconnect()</b></code></a>
     * <a href="#AnyPeer.heartbeat"><code><b>heartbeat()</b></code></a> - deprecated, will be moved
+    * <a href="#AnyPeer.isProxy"><code><b>isProxy()</b></code></a>
+    * <a href="#AnyPeer.isE2EEnabled"><code><b>isE2EEnabled()</b></code></a>
     * <a href="#AnyPeer.on.message"><code><b>event: _message_</b></code></a>
     * <a href="#AnyPeer.on.e2e"><code><b>event: _e2e_</b></code></a>
     * <a href="#AnyPeer.on.heartbeat"><code><b>event: _heartbeat_</b></code></a>
@@ -216,6 +245,43 @@ Sends a message to all connected peers
 **Returns** a Promise that resolves with a <a href="#AnyPacket">AnyPacket</a> if waiting for a reply or rejects on error
 
 _note: it doesn't resolve if awaitReply is not set_ 
+
+-------------------------------------------------------
+<a name="AnySocket.canProxy"></a>
+### AnySocket.canProxy(peerID, otherPeerID)
+
+Checks if peerID can be proxied through otherPeerID. Defaults to: false
+
+_note: You need to override this function in order to allow proxying_
+
+**Returns** ```true/false```
+
+-------------------------------------------------------
+<a name="AnySocket.hasPeer"></a>
+### AnySocket.hasPeer(id)
+
+_note: returns true for proxies_
+
+**Returns** ```true/false``` if <a href="#AnySocket">AnySocket</a> has a peer with the ```id```
+
+-------------------------------------------------------
+<a name="AnySocket.hasDirectPeer"></a>
+### AnySocket.hasDirectPeer(id)
+
+_note: returns false for proxies_
+
+**Returns** ```true/false``` if <a href="#AnySocket">AnySocket</a> has a direct peer (no proxy) with the ```id```
+
+-------------------------------------------------------
+<a name="AnySocket.proxy"></a>
+### AnySocket.proxy(peerID, throughPeerID)
+
+Send a proxy request for peerID via throughPeerID as relay
+
+_note: A proxied peer uses the same flow as a new connection_
+
+**Returns** a Promise that resolves with a <a href="#AnyPeer">AnyPeer</a> or rejects if proxy fails
+
 
 -------------------------------------------------------
 <a name="AnySocket.on.connected"></a>
@@ -361,6 +427,19 @@ Disconnects the peer
 Send a heartbeet to the peer - _used internally_
 
 -------------------------------------------------------
+<a name="AnyPeer.isProxy"></a>
+### AnyPeer.isProxy()
+
+**Returns** ```true``` if the <a href="#AnyPeer">AnyPeer</a> instance is a proxy (see: <a href="#AnySocket.proxy">AnySocket.proxy</a>)
+
+-------------------------------------------------------
+<a name="AnyPeer.isE2EEnabled"></a>
+### AnyPeer.isE2EEnabled()
+
+**Returns** ```true``` if the connection has been end-to-end encrypted (see: <a href="#AnyPeer.e2e">AnyPeer.e2e</a>)
+
+
+-------------------------------------------------------
 <a name="AnyPeer.on.message"></a>
 ### AnyPeer event `message`
 
@@ -399,10 +478,8 @@ Emitted when the peer has disconnected
 
 <a name="future"></a>
 ## Upcoming Features
-* P2P using a proxy server (with support for e2ee between clients)
 * Mesh Network
-* Multiple transports: **wss**, **tcp**, **http**, **udp**, **ipc**
-* Browser support
+* Multiple transports: **wss**, **tcp**, **http**, **udp***, **ipc**
 * RPC support
 * Client reconnection
 * Custom AUTH method
