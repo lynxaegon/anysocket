@@ -256,7 +256,6 @@ module.exports = class AnyProtocol extends EventEmitter {
                                     break;
                                 case PROTOCOL_STATES.DISCONNECTED:
                                     invalidPacket = false;
-                                    this.disconnect("Already disconnected!");
                                     resolve();
                                     break;
                             }
@@ -297,7 +296,11 @@ module.exports = class AnyProtocol extends EventEmitter {
 
     disconnect(reason) {
         this.changeState(PROTOCOL_STATES.DISCONNECTED);
-        this.peer.disconnect(reason);
+        if(this.isProxy()) {
+            this.anysocket.unproxy(this.peer.id, this.peer.socket.id, reason);
+        } else {
+            this.peer.disconnect(reason);
+        }
     }
 
     processPacketQueue(item, cb) {

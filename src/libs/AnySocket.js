@@ -82,6 +82,18 @@ class AnySocket extends EventEmitter {
         })
     }
 
+    unproxy(peerID, throughPeerID, reason) {
+        reason = reason || "Proxy Connection Closed";
+        if(this[_private.peers][peerID] && this[_private.peers][peerID].isProxy() ) {
+            this[_private.peers][throughPeerID].sendInternal({
+                type: "network",
+                action: "unproxy",
+                id: peerID
+            });
+            this[_private.onPeerDisconnected](this[_private.peers][peerID], reason);
+        }
+    }
+
     hasPeer(id) {
         return !!this[_private.peers][id];
     }
@@ -266,7 +278,6 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onPeerInternalMessage](packet) {
-        // console.log("got internal", packet.msg);
         switch (packet.msg.type) {
             case "network":
                 if(packet.msg.action == "proxy") {
@@ -306,6 +317,12 @@ class AnySocket extends EventEmitter {
 
                     this[_private.peers][packet.msg.id].removeLink(this[_private.peers][packet.peer.id]);
                     this[_private.peers][packet.peer.id].removeLink(this[_private.peers][packet.msg.id]);
+
+                    this[_private.peers][packet.msg.id].sendInternal({
+                        type: "network",
+                        action: "disconnected",
+                        id: packet.peer.id
+                    });
                 } else if(packet.msg.action == "connected") {
                     if(!this[_private.peers][packet.msg.id]) {
                         let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, packet.msg.id, this[_private.peers][packet.peer.id]));
@@ -321,7 +338,6 @@ class AnySocket extends EventEmitter {
                 }
                 break;
             default:
-                console.log("packet", packet);
                 packet.peer.disconnect("Invalid internal message");
         }
     }

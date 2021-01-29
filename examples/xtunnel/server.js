@@ -50,7 +50,7 @@ anysocket.on("message", (packet) => {
         }
     } else {
         if(packet.msg.type == "matched") {
-            anysocket.proxy(packet.msg.id, packet.peer.id);
+            // anysocket.proxy(packet.msg.id, packet.peer.id);
         } else {
             anysocket.stop("Invalid packet received!")
         }

@@ -1,5 +1,4 @@
 const AnySocket = require("../../src/index");
-const Utils = require("./utils");
 
 const PASSWORD = "1234";
 const SECRET_AUTH = "SECRET_TOKEN_HERE";
@@ -22,6 +21,7 @@ anysocket.on("connected", (peer) => {
 });
 anysocket.on("e2e", (peer) => {
     console.log("Connected peer", peer.id);
+    peer.disconnect("Because i said so!");
 });
 anysocket.on("message", (packet) => {
     if(packet.peer.isProxy()) {
@@ -30,6 +30,7 @@ anysocket.on("message", (packet) => {
                 packet.reply({
                     world: "hello"
                 });
+                packet.peer.disconnect("Because i said so!");
             }
         } else {
             console.log("Requires E2E!");

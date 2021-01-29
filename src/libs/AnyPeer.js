@@ -166,8 +166,7 @@ module.exports = class AnyPeer extends EventEmitter {
         this[_packets] = {};
         clearTimeout(this._heartbeat);
 
-        if(!this.isProxy())
-            this[_protocol].disconnect(reason);
+        this[_protocol].disconnect(reason);
     }
 
     _send(packet, awaitReply, timeout) {
