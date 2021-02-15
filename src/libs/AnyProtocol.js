@@ -237,6 +237,9 @@ module.exports = class AnyProtocol extends EventEmitter {
                             if (invalidPacket) {
                                 debug("Invalid packet received! RECV:", packet);
                             }
+                        } else {
+                            // continue processing data
+                            resolve();
                         }
                     });
             }
