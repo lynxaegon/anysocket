@@ -4,7 +4,7 @@ const Utils = require("./utils");
 const constants = require("./_constants");
 
 const _private = {
-    peersConnected: Symbol("unready peers"),
+    peersConnected: Symbol("peers connected"),
     peers: Symbol("ready peers"),
     transports: Symbol("transports"),
     onForward: Symbol("onForward"),
