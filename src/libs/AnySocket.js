@@ -51,7 +51,7 @@ class AnySocket extends EventEmitter {
         })
     }
 
-    setRpc(rpc) {
+    setRPC(rpc) {
         this.rpc = rpc;
     }
 

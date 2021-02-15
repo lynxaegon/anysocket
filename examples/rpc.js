@@ -33,7 +33,7 @@ class Test {
 }
 */
 // world & user methods have "this" set as "hello" object (method parent is always "this")
-client.setRpc({
+client.setRPC({
     hello: {
         world: () => {
             if(!this._user) {
