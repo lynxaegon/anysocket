@@ -1,4 +1,5 @@
 const debug = require('debug')('AnyPeer');
+const constants = require("./_constants");
 const EventEmitter = require("events");
 const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
@@ -22,6 +23,46 @@ module.exports = class AnyPeer extends EventEmitter {
         this.lag = -1;
         this.connectionID = protocol.connectionID;
         this._heartbeat = false;
+
+        const self = this;
+        const handlers = {
+            get: (target, name) => {
+                const prop = target[name];
+                if (prop != null) { return prop; }
+
+                if(!target.path)
+                    target.path = [];
+
+                target.path.push(name);
+                return new Proxy(target, {
+                    get: handlers.get,
+                    apply: (target, name, args) => {
+                        let path = target.path;
+                        target.path = [];
+                        return new Promise((resolve, reject) => {
+                            const packet = Packet
+                                .data({
+                                    type: constants.INTERNAL_PACKET_TYPE.RPC,
+                                    method: path,
+                                    params: args || null
+                                })
+                                .setType(constants.PACKET_TYPE.INTERNAL);
+
+                            this._send(packet, true)
+                                .then((packet) => {
+                                    resolve(packet.msg);
+                                })
+                                .catch((e) => {
+                                    reject(packet.msg)
+                                });
+                        });
+                    }
+                });
+            }
+        };
+
+        this.rpc = new Proxy(() => {}, handlers);
+
         protocol.on("internal", this.onInternalComs.bind(this));
         protocol.on("message", this.onMessage.bind(this));
         protocol.on("e2e", () => {
@@ -65,7 +106,7 @@ module.exports = class AnyPeer extends EventEmitter {
             const startTime = (new Date()).getTime();
             const packet = Packet
                 .data()
-                .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
+                .setType(constants.PACKET_TYPE.HEARTBEAT);
 
             this._send(packet, true, this[_protocol].options.heartbeatTimeout).then(() => {
                 this.lag = (new Date()).getTime() - startTime;
@@ -103,7 +144,7 @@ module.exports = class AnyPeer extends EventEmitter {
     send(message, awaitReply, timeout) {
         const packet = Packet
             .data(message)
-            .setType(this[_protocol].PACKET_TYPE.LINK);
+            .setType(constants.PACKET_TYPE.LINK);
 
         return this._send(packet, awaitReply, timeout);
     }
@@ -116,7 +157,7 @@ module.exports = class AnyPeer extends EventEmitter {
         // console.log("Sent internal", message, this.id);
         const packet = Packet
             .data(message)
-            .setType(this[_protocol].PACKET_TYPE.INTERNAL);
+            .setType(constants.PACKET_TYPE.INTERNAL);
 
         return this._send(packet, awaitReply, timeout);
     }
@@ -144,13 +185,13 @@ module.exports = class AnyPeer extends EventEmitter {
             return;
         }
 
-        if (message.type == this[_protocol].PACKET_TYPE.HEARTBEAT) {
+        if (message.type == constants.PACKET_TYPE.HEARTBEAT) {
             // reply
             const packet = Packet
                 .data()
-                .setType(this[_protocol].PACKET_TYPE.HEARTBEAT);
+                .setType(constants.PACKET_TYPE.HEARTBEAT);
             this._send(packet, message.seq);
-        } else if (message.type == this[_protocol].PACKET_TYPE.INTERNAL) {
+        } else if (message.type == constants.PACKET_TYPE.INTERNAL) {
             this.emit("internal", new AnyPacket(this, message, this.sendInternal.bind(this)));
         }
         else {

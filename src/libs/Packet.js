@@ -1,28 +1,8 @@
 const AnyPacker = require("./AnyPacker");
+const constants = require("./_constants");
+
 const _private = {
     buffer: Symbol("buffer")
-};
-const PACKET_LENGTH = {
-    FULL: 1,
-    PARTIAL: 2
-};
-const TYPE = {
-    AUTH: 1,
-    INTERNAL: 2,
-    LINK: 3,
-    SWITCH: 4,
-    HEARTBEAT: 5,
-    FORWARD: 6,
-    toString(number) {
-        number = parseInt(number);
-        for(let key in this) {
-            if(typeof this[key] === 'number' && this[key] == number) {
-                return key;
-            }
-        }
-
-        return false;
-    }
 };
 
 const getSeq = (buf) => {
@@ -68,7 +48,7 @@ class Packet {
 
         for (let i = 0; i < packet.length; i++) {
             packet[i] =
-                (i == packet.length - 1 ? PACKET_LENGTH.FULL : PACKET_LENGTH.PARTIAL).toString() +
+                (i == packet.length - 1 ? constants.PACKET_LENGTH.FULL : constants.PACKET_LENGTH.PARTIAL).toString() +
                 this.type.toString() +
                 AnyPacker.packInt(this.seq) +
                 await encryptFnc(packet[i])
@@ -79,7 +59,7 @@ class Packet {
 
     async deserialize(buf, decryptFnc) {
         decryptFnc = decryptFnc || ((packet) => Promise.resolve(packet));
-        const eol = buf.substr(0, 1) == PACKET_LENGTH.FULL;
+        const eol = buf.substr(0, 1) == constants.PACKET_LENGTH.FULL;
         this.type = buf.substr(1, 1);
         this.seq = getSeq(buf);
 
@@ -115,7 +95,7 @@ module.exports = {
         return getSeq(buf);
     },
     isForwardPacket(buf) {
-        return buf.substr(0, 1) == TYPE.FORWARD;
+        return buf.substr(0, 1) == constants.PACKET_TYPE.FORWARD;
     },
-    TYPE: TYPE
+    TYPE: constants.PACKET_TYPE
 };

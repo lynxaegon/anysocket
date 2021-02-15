@@ -1,6 +1,8 @@
 const debug = require('debug')('AnySocket');
 const EventEmitter = require("events");
 const Utils = require("./utils");
+const constants = require("./_constants");
+
 const _private = {
     peersConnected: Symbol("unready peers"),
     peers: Symbol("ready peers"),
@@ -49,6 +51,10 @@ class AnySocket extends EventEmitter {
         })
     }
 
+    setRpc(rpc) {
+        this.rpc = rpc;
+    }
+
     canProxy(peerID, otherPeerID) {
         return false;
     }
@@ -67,7 +73,7 @@ class AnySocket extends EventEmitter {
                 return;
             }
             this[_private.peers][throughPeerID].sendInternal({
-                type: "network",
+                type: constants.INTERNAL_PACKET_TYPE.PROXY,
                 action: "proxy",
                 id: peerID
             }, true).then((packet) => {
@@ -86,7 +92,7 @@ class AnySocket extends EventEmitter {
         reason = reason || "Proxy Connection Closed";
         if(this[_private.peers][peerID] && this[_private.peers][peerID].isProxy() ) {
             this[_private.peers][throughPeerID].sendInternal({
-                type: "network",
+                type: constants.INTERNAL_PACKET_TYPE.PROXY,
                 action: "unproxy",
                 id: peerID
             });
@@ -260,7 +266,7 @@ class AnySocket extends EventEmitter {
             const links = anypeer.getLinks();
             for(let peerID in links) {
                 links[peerID].sendInternal({
-                    type: "network",
+                    type: constants.INTERNAL_PACKET_TYPE.NETWORK,
                     action: "disconnected",
                     id: anypeer.id
                 }).catch(() => {
@@ -278,67 +284,113 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onPeerInternalMessage](packet) {
-        switch (packet.msg.type) {
-            case "network":
-                if(packet.msg.action == "proxy") {
-                    // initialize mesh
-                    if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
-                        packet.peer.disconnect("Invalid proxy request!");
-                        return;
-                    }
-
-                    if(this[_private.peers][packet.msg.id].isProxy())
-                    {
-                        packet.reply({
-                            ok: false
-                        });
-                        // TODO: this requires to implement a full network graph (map)
-                        // TODO: this will enable to send messages without having multiple forward headers
-                        return;
-                    }
-
-                    this[_private.peers][packet.msg.id].addLink(this[_private.peers][packet.peer.id]);
-                    this[_private.peers][packet.peer.id].addLink(this[_private.peers][packet.msg.id]);
-
-                    this[_private.peers][packet.msg.id].sendInternal({
-                        type: "network",
-                        action: "connected",
-                        id: packet.peer.id
-                    });
-                    packet.reply({
-                        ok: true
-                    });
-                } else if(packet.msg.action == "unproxy") {
-                    // destroy mesh
-                    if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
-                        packet.peer.disconnect("Invalid proxy request!");
-                        return;
-                    }
-
-                    this[_private.peers][packet.msg.id].removeLink(this[_private.peers][packet.peer.id]);
-                    this[_private.peers][packet.peer.id].removeLink(this[_private.peers][packet.msg.id]);
-
-                    this[_private.peers][packet.msg.id].sendInternal({
-                        type: "network",
-                        action: "disconnected",
-                        id: packet.peer.id
-                    });
-                } else if(packet.msg.action == "connected") {
-                    if(!this[_private.peers][packet.msg.id]) {
-                        let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, packet.msg.id, this[_private.peers][packet.peer.id]));
-                        this[_private.onProtocolReady](protocol);
-                    }
-                } else if(packet.msg.action == "disconnected") {
-                    if(!this[_private.peers][packet.msg.id]) {
-                        packet.peer.disconnect("Invalid proxy request!");
-                        return;
-                    }
-
-                    this[_private.onPeerDisconnected](this[_private.peers][packet.msg.id], "Proxy Connection Closed");
+        if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.NETWORK) {
+            if(packet.msg.action == "connected") {
+                if(!this[_private.peers][packet.msg.id]) {
+                    let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, packet.msg.id, this[_private.peers][packet.peer.id]));
+                    this[_private.onProtocolReady](protocol);
                 }
-                break;
-            default:
-                packet.peer.disconnect("Invalid internal message");
+            }
+            else if(packet.msg.action == "disconnected") {
+                if(!this[_private.peers][packet.msg.id]) {
+                    packet.peer.disconnect("Invalid proxy request!");
+                    return;
+                }
+
+                this[_private.onPeerDisconnected](this[_private.peers][packet.msg.id], "Proxy Connection Closed");
+            }
+        }
+        else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.PROXY) {
+            if(packet.msg.action == "proxy") {
+                // initialize mesh
+                if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
+                    packet.peer.disconnect("Invalid proxy request!");
+                    return;
+                }
+
+                if(this[_private.peers][packet.msg.id].isProxy())
+                {
+                    packet.reply({
+                        ok: false
+                    });
+                    // TODO: this requires to implement a full network graph (map)
+                    // TODO: this will enable to send messages without having multiple forward headers
+                    return;
+                }
+
+                this[_private.peers][packet.msg.id].addLink(this[_private.peers][packet.peer.id]);
+                this[_private.peers][packet.peer.id].addLink(this[_private.peers][packet.msg.id]);
+
+                this[_private.peers][packet.msg.id].sendInternal({
+                    type: constants.INTERNAL_PACKET_TYPE.NETWORK,
+                    action: "connected",
+                    id: packet.peer.id
+                });
+                packet.reply({
+                    ok: true
+                });
+            }
+            else if(packet.msg.action == "unproxy") {
+                // destroy mesh
+                if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
+                    packet.peer.disconnect("Invalid proxy request!");
+                    return;
+                }
+
+                this[_private.peers][packet.msg.id].removeLink(this[_private.peers][packet.peer.id]);
+                this[_private.peers][packet.peer.id].removeLink(this[_private.peers][packet.msg.id]);
+
+                this[_private.peers][packet.msg.id].sendInternal({
+                    type: constants.INTERNAL_PACKET_TYPE.NETWORK,
+                    action: "disconnected",
+                    id: packet.peer.id
+                });
+            }
+        }
+        else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC) {
+            // RUN RPC, send reply
+            let parent = false;
+            let tmp = this.rpc;
+            for(let key in packet.msg.method){
+                parent = tmp;
+                tmp = tmp[packet.msg.method[key]];
+                if(!tmp)
+                    break;
+            }
+
+            // method not found
+            if(!parent || !tmp || typeof tmp != "function") {
+                packet.reply({
+                    error: "Method not found",
+                    code: 404
+                });
+            } else {
+                try {
+                    Promise.resolve(tmp.apply(parent, packet.msg.params))
+                        .then((result) => {
+                            packet.reply(result)
+                        })
+                        .catch((e) => {
+                            packet.reply({
+                                error: e,
+                                code: 500
+                            });
+                        });
+                }
+                catch(e) {
+                    packet.reply({
+                        error: e.message,
+                        code: 500
+                    });
+                }
+            }
+        }
+        else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC_NOTIFY) {
+            // RUN RPC, don't reply
+            console.log("RPC_NOTIFY", packet.msg);
+        }
+        else {
+            packet.peer.disconnect("Invalid internal message");
         }
     }
     //endregion
