@@ -79,6 +79,9 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     heartbeat(forceOnce) {
+        if(this.options.heartbeatInterval <= 0 || this.options.heartbeatTimeout <= 0)
+            return;
+
         if(forceOnce) {
             return new Promise((resolve, reject) => {
                 this[_heartbeatReq]().then(() => {
