@@ -162,6 +162,9 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     onMessage(peer, message) {
+        // reset timer if we recv a message
+        this.heartbeat();
+
         if (message.seq < 0) {
             if (!this._resolveReply(message)) {
                 debug("Dropped reply " + message.seq + ". Delivered after Timeout");
@@ -191,6 +194,9 @@ module.exports = class AnyPeer extends EventEmitter {
                 .setType(constants.PACKET_TYPE.HEARTBEAT);
             this._send(packet, message.seq);
         } else if (message.type == constants.PACKET_TYPE.INTERNAL) {
+            // reset timer if we recv a message
+            this.heartbeat();
+
             this.emit("internal", new AnyPacket(this, message, this.sendInternal.bind(this)));
         }
         else {
@@ -238,7 +244,9 @@ module.exports = class AnyPeer extends EventEmitter {
                 };
             }
             // reset timer if we send a message
-            this.heartbeat();
+            if(packet.type != constants.PACKET_TYPE.HEARTBEAT) {
+                this.heartbeat();
+            }
         });
     }
 
