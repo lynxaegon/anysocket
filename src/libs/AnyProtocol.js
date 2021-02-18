@@ -243,6 +243,8 @@ module.exports = class AnyProtocol extends EventEmitter {
                         }
                     });
             }
+            // reset timer if we send a message
+            this.heartbeat();
         });
     }
 

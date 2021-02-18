@@ -237,6 +237,8 @@ module.exports = class AnyPeer extends EventEmitter {
                     }, timeout || this[_protocol].options.replyTimeout)
                 };
             }
+            // reset timer if we send a message
+            this.heartbeat();
         });
     }
 
