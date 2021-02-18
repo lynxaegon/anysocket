@@ -94,10 +94,10 @@ module.exports = class AnyPeer extends EventEmitter {
         if(this._heartbeat)
             clearTimeout(this._heartbeat);
         this._heartbeat = setTimeout(() => {
-            this.heartbeat();
+            this[_heartbeatReq]().then(() => {
+                this.heartbeat();
+            }).catch(() => {});
         }, this[_protocol].options.heartbeatInterval);
-
-        this[_heartbeatReq]().then(() => {}).catch(() => {});
     }
 
     [_heartbeatReq]() {
