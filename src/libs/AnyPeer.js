@@ -23,6 +23,7 @@ module.exports = class AnyPeer extends EventEmitter {
         this.lag = -1;
         this.connectionID = protocol.connectionID;
         this._heartbeat = false;
+        this.options = protocol.options;
 
         const handlers = {
             get: (target, name) => {

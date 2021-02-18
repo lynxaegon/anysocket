@@ -78,7 +78,7 @@ class AnySocket extends EventEmitter {
                 id: peerID
             }, true).then((packet) => {
                 if(packet.msg.ok && !this[_private.peers][peerID]) {
-                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]));
+                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]), this[_private.peers][throughPeerID].options);
                     this[_private.onProtocolReady](protocol);
                     resolve(this[_private.peers][peerID]);
                 } else {
