@@ -396,9 +396,4 @@ class AnySocket extends EventEmitter {
     //endregion
 }
 
-AnySocket.Transport = {
-    "LOCAL": require("../modules/transports/local/transport"),
-    "WS": require("../modules/transports/ws/transport")
-};
-AnySocket.Utils = require("./utils");
 module.exports = AnySocket;
