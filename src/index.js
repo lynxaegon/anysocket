@@ -7,8 +7,9 @@ AnySocket.Transport = {
 };
 AnySocket.Utils = require("./libs/utils");
 AnySocket.Packer = {
-    pack: AnyPacker.packHex,
-    unpack: AnyPacker.unpackHex
+    pack: AnyPacker.packBytes.bind(AnyPacker),
+    unpack: AnyPacker.unpackBytes.bind(AnyPacker)
+
 };
 
 module.exports = AnySocket;
