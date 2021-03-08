@@ -37,7 +37,7 @@ class AnySocket extends EventEmitter {
         // something smart to filter
     }
 
-    send(message, awaitReply) {
+    broadcast(message, awaitReply) {
         awaitReply = awaitReply || false;
 
         return new Promise((resolve, reject) => {

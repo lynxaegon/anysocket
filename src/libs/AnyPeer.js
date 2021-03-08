@@ -159,7 +159,7 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     isE2EEnabled() {
-        return this[_protocol].peer.hasE2EEnabled();
+        return this[_protocol].hasE2EEnabled();
     }
 
     send(message, awaitReply, timeout) {

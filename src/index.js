@@ -9,8 +9,5 @@ AnySocket.Utils = require("./libs/utils");
 AnySocket.Packer = {
     pack: AnyPacker.packBytes.bind(AnyPacker),
     unpack: AnyPacker.unpackBytes.bind(AnyPacker)
-
 };
-AnySocket.tmp = require("./libs/utils_buffer");
-
 module.exports = AnySocket;

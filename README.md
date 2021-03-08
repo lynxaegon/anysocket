@@ -1,7 +1,5 @@
 # AnySocket
-An abstract networking layer over multiple transports, agnostic of client/server with support for E2EE*
-
-** E2EE implementation doesn't support forward secrecy (atm)
+An abstract networking layer over multiple transports, agnostic of client/server with support for E2EE (with forward secrecy)
 
 [![Dependency Status](https://david-dm.org/lynxaegon/anysocket.svg)](https://david-dm.org/lynxaegon/anysocket)
 [![devDependency Status](https://david-dm.org/lynxaegon/anysocket/dev-status.svg)](https://david-dm.org/lynxaegon/anysocket/?type=dev)
@@ -27,34 +25,35 @@ _WIP Documentation_
 ## Features
 * Client / Server agnostic
 * Support for request/reply
-* P2P using a proxy server (with support for E2EE between clients)
-* **Browser support** - small footprint (_24kb_) - _see: ```/dist/anysocket.bundle.js```_
-* Multiple transports *(implemented: **ws**)
+* E2EE between peers with forward secrecy
+* RPC support
+* P2P using a proxy server (with support for direct E2EE between peers)
+* Binary support (_see: <a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>_)
+* **Browser support** - 30kb footprint (_see: ```/dist/anysocket.bundle.js```_)
+* Multiple transports *(implemented atm: **ws**)
 * All peers have a UUIDv4 associated
-* E2EE implemented in the protocol
 * Disconnect detection using a heartbeat
-* Automatic packet splitting, if packet is too large (atm: fixed 4kb packet size)
 * **Not Battle Tested** ...yet
 
-_It doesn't support Binary Protocol... (but it has some binary stuff)_
+_Info: Binary RPC arguments and responses are auto packed/unpacked (<a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer.pack</b></code></a>/<a href="#AnySocket.Packer.unpack"><code><b>AnySocket.Packer.unpack</b></code></a>)._ 
 
 
 <a name="benchmark"></a>
 ## Benchmark
 #### nodejs - browser
 ```
-Running PLAIN TEXT benchmark: 1000ms  (test duration)
-Latency: 0.90 ms
-Running E2EE benchmark: 1000ms        (test duration)
-Latency: 2.81 ms
+Running PLAIN TEXT benchmark: 5518.838ms  (test duration)
+Latency: 0.86 ms
+Running E2EE benchmark: 5986.633ms        (test duration)
+Latency: 1.06 ms
 ```
 
 #### nodejs - nodejs
 ```
-Running PLAIN TEXT benchmark: 1000ms  (test duration)
-Latency: 0.4 ms
-Running E2EE benchmark: 1000ms        (test duration)
-Latency: 2.07 ms
+Running PLAIN TEXT benchmark: 5010.484ms  (test duration)
+Latency: 0.67 ms
+Running E2EE benchmark: 5003.755ms        (test duration)
+Latency: 0.92 ms
 ```
 _You can run the benchmarks from: ```/examples/benchmark```_
 
@@ -136,7 +135,8 @@ More in the `examples` folder.
     * <a href="#AnySocket.listen"><code><b>listen()</b></code></a>
     * <a href="#AnySocket.connect"><code><b>connect()</b></code></a>
     * <a href="#AnySocket.stop"><code><b>stop()</b></code></a>
-    * <a href="#AnySocket.send"><code><b>send()</b></code></a>
+    * <a href="#AnySocket.broadcast"><code><b>broadcast()</b></code></a>
+    * <a href="#AnySocket.setRPC"><code><b>setRPC()</b></code></a>
     * <a href="#AnySocket.canProxy"><code><b>canProxy()</b></code></a>
     * <a href="#AnySocket.proxy"><code><b>proxy()</b></code></a>
     * <a href="#AnySocket.hasPeer"><code><b>hasPeer()</b></code></a>
@@ -151,10 +151,14 @@ More in the `examples` folder.
     * <a href="#AnyPacket.peer"><code><b>peer</b></code></a>
     * <a href="#AnyPacket.msg"><code><b>msg</b></code></a>
     * <a href="#AnyPacket.reply"><code><b>reply()</b></code></a>
+* <a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>
+    * <a href="#AnySocket.Packer.pack"><code><b>pack()</b></code></a>
+    * <a href="#AnySocket.Packer.unpack"><code><b>unpack()</b></code></a>
 * <a href="#AnyPeer.constructor"><code><b>AnyPeer()</b></code></a>
     * <a href="#AnyPeer.id"><code><b>id</b></code></a>
     * <a href="#AnyPeer.lag"><code><b>lag</b></code></a>
     * <a href="#AnyPeer.connectionID"><code><b>connectionID</b></code></a>
+    * <a href="#AnyPeer.rpc"><code><b>rpc</b></code></a>
     * <a href="#AnyPeer.e2e"><code><b>e2e()</b></code></a>
     * <a href="#AnyPeer.send"><code><b>send()</b></code></a>
     * <a href="#AnyPeer.disconnect"><code><b>disconnect()</b></code></a>
@@ -237,20 +241,45 @@ Stops all servers and disconnects all peers
 **Returns** a Promise that resolves/rejects when finished
 
 -------------------------------------------------------
-<a name="AnySocket.send"></a>
-### AnySocket.send(message, awaitReply)
+<a name="AnySocket.broadcast"></a>
+### AnySocket.broadcast(message, [awaitReply])
 
-Sends a message to all connected peers
+Broadcasts a message to all connected peers
 
 **Arguments:**
 * `message` - a JSON stringifiable object
-* `awaitReply` - set to true if a reply is expected
+* `awaitReply` - set to true if a reply is expected (optional) - default: false
 
 **Returns** a Promise that resolves with a <a href="#AnyPacket">AnyPacket</a> if waiting for a reply or rejects on error
 
 _note: it doesn't resolve if awaitReply is not set_ 
 
 -------------------------------------------------------
+<a name="AnySocket.setRPC"></a>
+### AnySocket.setRPC(rpc)
+
+This sets the RPC functions on the AnySocket object so they can be called using <a href="#AnyPeer.rpc">AnyPeer.rpc</a>
+RPC object can be nested indefinitely, but the "this" object will always be the called method's parent
+
+Each RPC function can return a value, object, Buffer/TypedArray or a Promise (awaits the promise to be resolved)
+
+Binary info:
+* If a RPC receives an argument as a Buffer/TypedArray it will be auto unpacked
+* If a RPC returns a Buffer/TypedArray it will be auto packed
+
+**Arguments:**
+* `rpc` - object or class with RPC functions
+
+Any  throwed error / reject will be sent back to the client in the form: 
+```javascript
+{
+    error: "error message",
+    code: 500
+}
+```
+
+-------------------------------------------------------
+
 <a name="AnySocket.canProxy"></a>
 ### AnySocket.canProxy(peerID, otherPeerID)
 
@@ -369,6 +398,28 @@ Sends a reply to the current packet
 _note: you can only reply to a normal message, you **cannot** reply to a **reply packet**. It fails silently_ 
 
 -------------------------------------------------------
+<a name="AnySocket.Packer.pack"></a>
+### AnySocket.Packer.pack(bytes)
+
+Packs the bytes
+
+**Arguments:**
+* `bytes` - Buffer/TypedArray
+
+**Returns** a string representation of the bytes
+
+-------------------------------------------------------
+<a name="AnySocket.Packer.unpack"></a>
+### AnySocket.Packer.unpack(bytes)
+
+Unpacks the bytes
+
+**Arguments:**
+* `bytes` - String representation of a Buffer/TypedArray
+
+**Returns** a Buffer/TypedArray
+
+-------------------------------------------------------
 <a name="AnyPeer"></a>
 ### AnyPeer()
 
@@ -393,6 +444,30 @@ Last calculated latency (based on heartbeat) in milliseconds
 Unique connection identifier (UUIDv4), used internally before getting a <a href="#AnyPeer.id">AnyPeer.id</a>
 
 -------------------------------------------------------
+<a name="AnyPeer.rpc"></a>
+### AnyPeer.rpc(...args)
+
+This is a special Proxy Object that can indefinitely nested and have any number of arguments
+
+Example: `peer.rpc.hello.world.user("LynxAegon")`
+* This will try to run a RPC on the peer and the RPC object should look like this:
+```javascript
+AnySocket.setRPC({
+    hello: {
+        world: {
+            user: (name) => {
+                return new Promise((resolve, reject) => {
+                    resolve("Hello World, " + name);
+                });
+            }
+        }
+    }
+})
+```
+
+**Returns** a Promise that will resolve if success or reject in case of error 
+
+-------------------------------------------------------
 <a name="AnyPeer.e2e"></a>
 ### AnyPeer.e2e()
 
@@ -406,8 +481,8 @@ Sends a message to the peer
 
 **Arguments:**
 * `message` - a JSON stringifiable object
-* `awaitReply` - set to true if a reply is expected
-* `timeout` - set a custom reply packet timeout (in milliseconds)
+* `awaitReply` - set to true if a reply is expected (optional) - default: false
+* `timeout` - set a custom reply packet timeout in milliseconds (optional)
 
 **Returns** a Promise that resolves with a <a href="#AnyPacket">AnyPacket</a> if waiting for a reply or rejects on error
 
@@ -484,7 +559,6 @@ Emitted when the peer has disconnected
 ## Upcoming Features
 * Mesh Network
 * Multiple transports: **wss**, **tcp**, **http**, **udp***, **ipc**
-* RPC support
 * Client reconnection
 * Custom AUTH method
 
