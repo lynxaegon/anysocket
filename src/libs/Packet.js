@@ -6,7 +6,7 @@ const _private = {
 };
 
 const getSeq = (buf) => {
-    return AnyPacker.unpackInt(buf.substr(2, 2));
+    return AnyPacker.unpackInt16(buf.substr(2, 2));
 };
 
 const regex = {};
@@ -50,8 +50,8 @@ class Packet {
             packet[i] =
                 (i == packet.length - 1 ? constants.PACKET_LENGTH.FULL : constants.PACKET_LENGTH.PARTIAL).toString() +
                 this.type.toString() +
-                AnyPacker.packInt(this.seq) +
-                await encryptFnc(packet[i])
+                AnyPacker.packInt16(this.seq) +
+                await encryptFnc(packet[i], Math.abs(this.seq))
         }
 
         return packet;
@@ -63,7 +63,7 @@ class Packet {
         this.type = buf.substr(1, 1);
         this.seq = getSeq(buf);
 
-        this.buffer.push(await decryptFnc(buf.substr(4)));
+        this.buffer.push(await decryptFnc(buf.substr(4), Math.abs(this.seq)));
 
         if (eol) {
             try {

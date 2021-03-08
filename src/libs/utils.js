@@ -9,95 +9,65 @@ module.exports = new (class Utils {
         });
     }
 
-    certificates(size) {
-        return new Promise(resolve => {
-            Promise.resolve(crypto.generateKeyPairSync('rsa', {
-                modulusLength: size,
-                publicKeyEncoding: {
-                    type: 'spki',
-                    format: 'pem'
-                },
-                privateKeyEncoding: {
-                    type: 'pkcs8',
-                    format: 'pem'
-                }
-            })).then(result => {
-                // browser
-                if (typeof window !== 'undefined') {
-                    window.crypto.subtle.exportKey("spki", result.publicKey).then(key => {
-                        let publicKey = window.btoa(String.fromCharCode(...new Uint8Array(key)));
-                        publicKey = publicKey.match(/.{1,64}/g).join('\n');
-                        publicKey = "-----BEGIN PUBLIC KEY-----\n" + publicKey + "\n-----END PUBLIC KEY-----";
-
-                        resolve({
-                            public: publicKey,
-                            private: result.privateKey
-                        });
-                    });
-                } else {
-                    resolve({
-                        public: result.publicKey,
-                        private: result.privateKey
-                    });
-                }
+    generateAESKey() {
+        return new Promise(async (resolve, reject) => {
+            let ecdh = await crypto.createECDH('secp521r1');
+            let publicKey = await ecdh.generateKeys();
+            resolve({
+                private: ecdh,
+                public: BufferUtils.bufferToString(publicKey),
+                nonce: BufferUtils.bufferToHex(crypto.randomBytes(32))
             });
         });
     }
 
-    convertPemToBinary(pem) {
-        let b64Lines = pem.replace(/\n/g, "");
-        let b64Prefix = b64Lines.replace('-----BEGIN PUBLIC KEY-----', '');
-        let b64Final = b64Prefix.replace('-----END PUBLIC KEY-----', '');
-
-        return BufferUtils.bufferFromBase64(b64Final);
+    computeAESsecret(privateECDHKey, publicECDHKey) {
+        return new Promise(async (resolve, reject) => {
+            let result = await privateECDHKey.computeSecret(BufferUtils.bufferFromString(publicECDHKey), null, 'hex');
+            result = result.substr(0, 128);
+            resolve(result);
+        });
     }
 
-    importKey(key) {
-        return new Promise((resolve) => {
-            if (typeof window !== 'undefined') {
-                window.crypto.subtle.importKey(
-                    "spki",
-                    this.convertPemToBinary(key),
-                    {
-                        name: "RSA-OAEP",
-                        hash: {
-                            name: "SHA-256"
-                        }
-                    },
-                    false,
-                    ["encrypt"]
-                ).then(resolve);
-            } else {
-                resolve(key);
+    getAESSessionKey(secret, nonce, seq) {
+        return new Promise(async (resolve, reject) => {
+            nonce = nonce + "_" + seq;
+            secret = await crypto.pbkdf2Sync(secret, nonce, 1, 32, 'sha256');
+            secret = BufferUtils.bufferToHex(secret);
+            resolve(secret);
+        });
+    }
+
+    encryptAES(secret, data) {
+        return new Promise((resolve, reject) => {
+            try {
+                let iv = crypto.randomBytes(16);
+                let cipher = crypto.createCipheriv('aes-256-cbc', BufferUtils.bufferFromHex(secret), iv);
+                let encrypted = cipher.update(data);
+                encrypted = Buffer.concat([encrypted, cipher.final()]);
+                let msg = iv.toString('hex') + encrypted.toString('hex');
+                this.decryptAES(secret, msg);
+                resolve(msg);
+            }
+            catch(e) {
+                reject(e);
             }
         });
     }
 
-    encryptRSA(key, data) {
+    decryptAES(secret, data) {
         return new Promise((resolve, reject) => {
-            Promise.resolve(crypto.publicEncrypt({
-                    key: key,
-                    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-                    oaepHash: "sha256",
-                },
-                BufferUtils.bufferFromString(data)
-            )).then(result => {
-                resolve(result.toString("base64"));
-            }).catch(reject);
-        });
-    }
-
-    decryptRSA(key, data) {
-        return new Promise((resolve, reject) => {
-            Promise.resolve(crypto.privateDecrypt({
-                    key: key,
-                    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-                    oaepHash: "sha256",
-                },
-                BufferUtils.bufferFromBase64(data)
-            )).then(result => {
-                resolve(result.toString());
-            }).catch(reject);
+            try {
+                let iv = Buffer.from(data.substr(0, 32), 'hex');
+                let encryptedText = Buffer.from(data.substr(32), 'hex');
+                let decipher = crypto.createDecipheriv('aes-256-cbc', BufferUtils.bufferFromHex(secret), iv);
+                let decrypted = decipher.update(encryptedText);
+                decrypted = Buffer.concat([decrypted, decipher.final()]);
+                resolve(decrypted.toString());
+            }
+            catch(e) {
+                reject(e);
+            }
         });
     }
 })();

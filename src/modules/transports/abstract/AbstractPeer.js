@@ -11,7 +11,6 @@ class AbstractPeer extends EventEmitter {
         this.socket = socket;
         this.type = AbstractTransport.TYPE.NONE;
 
-        this.keys = {public: null, private: null, generating: false};
         this.inited = false;
     }
 
@@ -31,39 +30,6 @@ class AbstractPeer extends EventEmitter {
             throw new Error("Invalid transport type!!!");
 
         return this.type == AbstractTransport.TYPE.CLIENT;
-    }
-
-    hasE2EEnabled() {
-        return this.keys.generating || (this.keys.public != null && this.keys.private != null);
-    }
-
-    generateKeys() {
-        return new Promise((resolve) => {
-            this.generateKeys = () => {
-                throw new Error("Already generated keys!");
-            };
-            Utils.certificates(4096).then((result) => {
-                this.keys = result;
-                resolve();
-            });
-        });
-    }
-
-    setPublicKey(key) {
-        // disable function
-        this.setPublicKey = null;
-
-        return Utils.importKey(key).then((result) => {
-            this.keys.public = result;
-        });
-    }
-
-    getPublicKey() {
-        return this.keys.public;
-    }
-
-    getPrivateKey() {
-        return this.keys.private;
     }
 
     disconnect(reason) {

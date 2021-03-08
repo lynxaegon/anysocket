@@ -241,7 +241,7 @@ module.exports = class AnyPeer extends EventEmitter {
                         if (this[_packets][packet.seq]) {
                             let msg = this[_packets][packet.seq];
                             delete this[_packets][packet.seq];
-                            this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE.toString(packet.type))
+                            this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " +  packet.seq);
                             msg.reject("Timeout!");
                         }
                     }, timeout || this[_protocol].options.replyTimeout)

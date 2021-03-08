@@ -5,12 +5,19 @@ const Packet = require("./Packet");
 const Utils = require("./utils");
 const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
+const ENCRYPTION_SECRET = Symbol("secret key");
+const ENCRYPTION_PRIVATE = Symbol("private key");
+const ENCRYPTION_NONCE = Symbol("nonce");
 
 module.exports = class AnyProtocol extends EventEmitter {
     constructor(anysocket, peer, options) {
         super();
 
         this._seq = 0;
+
+        this[ENCRYPTION_SECRET] = null;
+        this[ENCRYPTION_PRIVATE] = null;
+        this[ENCRYPTION_NONCE] = null;
 
         this.peerID = peer.id;
         this.peer = peer;
@@ -76,7 +83,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _send(packet, resolve, reject) {
-        debug(this.peerID,">>>>", Packet.TYPE.toString(packet.type), packet.seq);
+        debug(this.peerID,">>>>", Packet.TYPE._string(packet.type), packet.seq);
         packet.serialize(constants.MAX_PACKET_SIZE, this._encrypt.bind(this))
             .then((packet) => {
                 for(let i = 0; i < packet.length; i++) {
@@ -104,17 +111,24 @@ module.exports = class AnyProtocol extends EventEmitter {
         });
     }
 
-    e2e() {
-        if(this.peer.hasE2EEnabled())
-            return;
+    hasE2EEnabled() {
+        return !!this[ENCRYPTION_PRIVATE];
+    }
 
-        this.peer.generateKeys().then(() => {
+    e2e() {
+        Utils.generateAESKey().then((result) => {
+            this[ENCRYPTION_PRIVATE] = result.private;
+            this[ENCRYPTION_NONCE] = result.nonce;
+
             this.changeState(constants.PROTOCOL_STATES.SWITCHING_PROTOCOL);
             this.send(Packet.data({
-                type: constants.PROTOCOL_ENCRYPTION.E2E,
-                key: this.peer.getPublicKey()
+                type: constants.PROTOCOL_ENCRYPTION.E2EE,
+                key: result.public,
+                nonce: result.nonce
             }).setType(Packet.TYPE.SWITCH));
-        })
+        }).catch((e) => {
+            this.disconnect(e);
+        });
     }
 
     onPacket(peer, recv) {
@@ -134,7 +148,7 @@ module.exports = class AnyProtocol extends EventEmitter {
 
                 packet.deserialize(recv, this._decrypt.bind(this))
                     .then(result => {
-                        debug(this.peerID, "<<<<", Packet.TYPE.toString(packet.type), packet.seq);
+                        debug(this.peerID, "<<<<", Packet.TYPE._string(packet.type), packet.seq);
                         if (result) {
                             delete this._packets[seq];
 
@@ -190,21 +204,29 @@ module.exports = class AnyProtocol extends EventEmitter {
                                     else if (packet.type == Packet.TYPE.SWITCH) {
                                         invalidPacket = false;
 
-                                        this.peer.generateKeys().then(() => {
-                                            let publicKey = this.peer.getPublicKey();
-                                            this.peer.setPublicKey(packet.data.key).then(() => {
-                                                this.send(Packet.data({
-                                                    type: constants.PROTOCOL_ENCRYPTION.E2E,
-                                                    key: publicKey
-                                                }).setType(Packet.TYPE.SWITCH)).then(() => {
-                                                    this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2E;
-                                                    this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                                    this.emit("e2e", this);
+                                        Utils.generateAESKey().then((result) => {
+                                            this[ENCRYPTION_PRIVATE] = result.private;
+                                            this[ENCRYPTION_NONCE] = packet.data.nonce + result.nonce;
+                                            return Utils.getAESSessionKey(this[ENCRYPTION_NONCE], this.peerID, 0)
+                                            .then((nonce) => {
+                                                this[ENCRYPTION_NONCE] = nonce;
+                                                return Utils.computeAESsecret(this[ENCRYPTION_PRIVATE], packet.data.key)
+                                                .then((secret) => {
+                                                    this[ENCRYPTION_SECRET] = secret;
+                                                    this.send(Packet.data({
+                                                        type: constants.PROTOCOL_ENCRYPTION.E2EE,
+                                                        key: result.public,
+                                                        nonce: result.nonce
+                                                    }).setType(Packet.TYPE.SWITCH)).then(() => {
+                                                        this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2EE;
+                                                        this.changeState(constants.PROTOCOL_STATES.CONNECTED);
+                                                        this.emit("e2e", this);
+                                                        resolve();
+                                                    });
                                                 });
-
-                                                this.changeState(constants.PROTOCOL_STATES.SWITCHING_PROTOCOL);
-                                                resolve();
                                             });
+                                        }).catch((e) => {
+                                            this.disconnect(e);
                                         });
                                     }
                                     else if (packet.type == Packet.TYPE.HEARTBEAT) {
@@ -220,12 +242,40 @@ module.exports = class AnyProtocol extends EventEmitter {
                                 case constants.PROTOCOL_STATES.SWITCHING_PROTOCOL:
                                     if (packet.type == Packet.TYPE.SWITCH) {
                                         invalidPacket = false;
-                                        this.peer.setPublicKey(packet.data.key).then(() => {
-                                            this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2E;
-                                            this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                            this.emit("e2e", this);
-                                            resolve();
+                                        this[ENCRYPTION_NONCE] = this[ENCRYPTION_NONCE] + packet.data.nonce;
+                                        Utils.getAESSessionKey(this[ENCRYPTION_NONCE], this.anysocket.id, 0)
+                                        .then((nonce) => {
+                                            this[ENCRYPTION_NONCE] = nonce;
+                                            return Utils.computeAESsecret(this[ENCRYPTION_PRIVATE], packet.data.key)
+                                                .then((secret) => {
+                                                    this[ENCRYPTION_SECRET] = secret;
+                                                    this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2EE;
+                                                    this.changeState(constants.PROTOCOL_STATES.CONNECTED);
+                                                    this.emit("e2e", this);
+                                                    resolve();
+                                                })
+                                        })
+                                        .catch((e) => {
+                                            this.disconnect(e);
                                         });
+                                    }
+                                    else if (packet.type == Packet.TYPE.INTERNAL) {
+                                        invalidPacket = false;
+                                        this.emit("internal", this, {
+                                            seq: packet.seq,
+                                            type: packet.type,
+                                            data: packet.data
+                                        });
+                                        resolve();
+                                    }
+                                    else if (packet.type == Packet.TYPE.HEARTBEAT) {
+                                        invalidPacket = false;
+                                        this.emit("internal", this, {
+                                            seq: packet.seq,
+                                            type: packet.type,
+                                            data: packet.data
+                                        });
+                                        resolve();
                                     }
                                     break;
                                 case constants.PROTOCOL_STATES.DISCONNECTED:
@@ -304,42 +354,42 @@ module.exports = class AnyProtocol extends EventEmitter {
         });
     }
 
-    _encrypt(packet) {
+    _encrypt(packet, seq) {
         return new Promise(resolve => {
             switch (this.ENCRYPTION_STATE) {
                 case constants.PROTOCOL_ENCRYPTION.PLAIN:
                     resolve(packet);
                     break;
-                case constants.PROTOCOL_ENCRYPTION.AES:
-                    resolve(packet);
+                case constants.PROTOCOL_ENCRYPTION.E2EE:
+                    Utils.getAESSessionKey(this[ENCRYPTION_SECRET], this[ENCRYPTION_NONCE], seq)
+                    .then((secretKey) => {
+                        return Utils.encryptAES(secretKey, packet).then(resolve);
+                    }).catch((e) => {
+                        this.disconnect(e);
+                    });
                     break;
-                case constants.PROTOCOL_ENCRYPTION.E2E:
-                    Utils.encryptRSA(this.peer.getPublicKey(), packet)
-                        .then(resolve)
-                        .catch((e) => {
-                            this.disconnect(e);
-                        });
-                    break;
+                default:
+                    throw new Error("Encryption state '"+ this.ENCRYPTION_STATE +"' not implemented!");
             }
         });
     }
 
-    _decrypt(packet) {
+    _decrypt(packet, seq) {
         return new Promise(resolve => {
             switch (this.ENCRYPTION_STATE) {
                 case constants.PROTOCOL_ENCRYPTION.PLAIN:
                     resolve(packet);
                     break;
-                case constants.PROTOCOL_ENCRYPTION.AES:
-                    resolve(packet);
+                case constants.PROTOCOL_ENCRYPTION.E2EE:
+                    Utils.getAESSessionKey(this[ENCRYPTION_SECRET], this[ENCRYPTION_NONCE], seq)
+                        .then((secretKey) => {
+                            return Utils.decryptAES(secretKey, packet).then(resolve);
+                        }).catch((e) => {
+                        this.disconnect(e);
+                    });
                     break;
-                case constants.PROTOCOL_ENCRYPTION.E2E:
-                    Utils.decryptRSA(this.peer.getPrivateKey(), packet)
-                        .then(resolve)
-                        .catch((e) => {
-                            this.disconnect(e);
-                        });
-                    break;
+                default:
+                    throw new Error("Encryption state '"+ this.ENCRYPTION_STATE +"' not implemented!");
             }
         });
     }

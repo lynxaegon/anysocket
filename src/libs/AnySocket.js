@@ -48,7 +48,7 @@ class AnySocket extends EventEmitter {
                 );
                 Promise.all(promises).then(resolve).catch(reject);
             }
-        })
+        });
     }
 
     setRPC(rpc) {

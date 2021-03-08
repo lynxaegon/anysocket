@@ -1,8 +1,14 @@
 module.exports = {
     bufferFromString(buf) {
-        return Buffer.from(buf);
+        return Buffer.from(buf, 'binary');
     },
-    bufferFromBase64(buf) {
-        return Buffer.from(buf, "base64");
+    bufferToString(buf) {
+        return buf.toString('binary');
+    },
+    bufferToHex(buf) {
+        return buf.toString('hex');
+    },
+    bufferFromHex(buf) {
+        return Buffer.from(buf, 'hex');
     }
 };

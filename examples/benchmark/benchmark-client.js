@@ -1,4 +1,5 @@
 const AnySocket = require("../../src");
+const BENCHMARK_DURATION = 5;
 
 const anysocket = new AnySocket();
 console.log("AnySocket.ID", anysocket.id);
@@ -7,7 +8,7 @@ anysocket.connect("ws", "127.0.0.1",3000);
 anysocket.on("connected", (peer) => {
     console.log("[CLIENT][" + peer.id + "] Connected");
     console.time("Running PLAIN TEXT benchmark");
-    runBenchmark(peer, 1).then((latency) => {
+    runBenchmark(peer, BENCHMARK_DURATION).then((latency) => {
         console.timeEnd("Running PLAIN TEXT benchmark");
         console.log("Latency:", latency.toFixed(2), "ms");
         peer.e2e();
@@ -15,9 +16,10 @@ anysocket.on("connected", (peer) => {
 });
 anysocket.on("e2e", (peer) => {
     console.time("Running E2EE benchmark");
-    runBenchmark(peer, 1).then((latency) => {
+    runBenchmark(peer, BENCHMARK_DURATION).then((latency) => {
         console.timeEnd("Running E2EE benchmark");
         console.log("Latency:", latency.toFixed(2), "ms");
+        anysocket.stop();
     });
 });
 anysocket.on("message", (packet) => {
@@ -52,5 +54,7 @@ function benchmark(peer) {
         setTimeout(() => {
             benchmark(peer);
         }, 1);
+    }).catch(e => {
+        // ignored
     });
 }

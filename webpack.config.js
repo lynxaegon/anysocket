@@ -43,6 +43,13 @@ module.exports = {
         }),
         new webpack.NormalModuleReplacementPlugin(/.+utils_buffer$/, function(resource) {
             resource.request = path.resolve(__dirname, 'src/browser/', "utils_buffer.js")
+        }),
+        // extends
+        new webpack.NormalModuleReplacementPlugin(/.+utils$/, function(resource) {
+            if(resource.context.match(/.+browser$/)) {
+                return;
+            }
+            resource.request = path.resolve(__dirname, 'src/browser/', "utils.js")
         })
     ]
 };

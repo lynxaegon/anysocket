@@ -1,12 +1,14 @@
+const BufferUtils = require("./utils_buffer");
+
 class AnyPacker {
-    packInt(int) {
+    packInt16(int) {
         const arr = new ArrayBuffer(2);
         const view = new DataView(arr);
         view.setInt16(0, int, false);
         return String.fromCharCode.apply(String, new Uint8Array(arr));
     }
 
-    unpackInt(bytes) {
+    unpackInt16(bytes) {
         const arr = new ArrayBuffer(2);
         const bufView = new Uint8Array(arr);
         for (let i in bytes) {
@@ -17,39 +19,31 @@ class AnyPacker {
     }
 
     packHex(hex) {
-        let a = [];
-        for (let i = 0, len = hex.length; i < len; i += 2) {
-            a.push(parseInt(hex.substr(i, 2), 16));
+        let str = '';
+        for (let n = 0; n < hex.length; n += 2) {
+            str += String.fromCharCode(parseInt(hex.substr(n, 2), 16));
         }
-
-        return String.fromCharCode.apply(null, new Uint8Array(a));
+        return str;
     }
 
     unpackHex(bytes) {
-        let hexStr = '';
-        for (let i = 0; i < bytes.length; i++) {
-            let hex = (bytes[i] & 0xff).toString(16);
-            hex = (hex.length === 1) ? '0' + hex : hex;
-            hexStr += hex;
+        let str = '';
+        for (let n = 0; n < bytes.length; n++) {
+            let hex = Number(bytes.charCodeAt(n)).toString(16);
+            str += (hex.length === 1) ? '0' + hex : hex;
         }
-        return hexStr;
+        return str;
     }
 
     packBytes(bytes) {
-        if(!(bytes instanceof ArrayBuffer || bytes instanceof Uint8Array))
+        if (!(bytes instanceof ArrayBuffer || bytes instanceof Uint8Array))
             throw new Error("packBytes requires ArrayBuffer or UInt8Array");
 
-        return String.fromCharCode.apply(null, new Uint8Array(bytes));
+        return BufferUtils.bufferToString(bytes);
     }
 
     unpackBytes(bytes) {
-        let buf = new ArrayBuffer(bytes.length);
-        let bufView = new Uint8Array(buf);
-        for (let i = 0, strLen = bytes.length; i < strLen; i++) {
-            bufView[i] = bytes.charCodeAt(i);
-        }
-
-        return bufView;
+        return BufferUtils.bufferFromString(bytes);
     }
 }
 

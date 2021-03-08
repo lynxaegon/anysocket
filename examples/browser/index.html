@@ -2,16 +2,12 @@
 	<head>
 		<script src="../../dist/anysocket.bundle.js"></script>
 		<script>
-            const PASSWORD = "1234";
-            const SECRET_AUTH = "SECRET_TOKEN_HERE";
-
             const anysocket = new AnySocket();
             console.log("AnySocket.ID", anysocket.id);
 
             anysocket.connect("ws", "127.0.0.1",3000);
             anysocket.on("connected", (peer) => {
                 console.log("[CLIENT][" + peer.id + "] Connected");
-                peer.send("hello world");
                 peer.e2e();
             });
             anysocket.on("e2e", (peer) => {

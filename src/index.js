@@ -11,5 +11,6 @@ AnySocket.Packer = {
     unpack: AnyPacker.unpackBytes.bind(AnyPacker)
 
 };
+AnySocket.tmp = require("./libs/utils_buffer");
 
 module.exports = AnySocket;

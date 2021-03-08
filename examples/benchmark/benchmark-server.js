@@ -1,4 +1,5 @@
 const AnySocket = require("../../src");
+const BENCHMARK_DURATION = 5;
 
 const server = new AnySocket();
 server.listen("ws", 3000);
@@ -6,7 +7,7 @@ server.on("connected", (peer) => {
     console.log("[SERVER][" + peer.id + "] Connected");
 
     console.time("Running PLAIN TEXT benchmark");
-    runBenchmark(peer, 1).then((latency) => {
+    runBenchmark(peer, BENCHMARK_DURATION).then((latency) => {
         console.timeEnd("Running PLAIN TEXT benchmark");
         console.log("Latency:", latency.toFixed(2), "ms");
     });
@@ -18,9 +19,13 @@ server.on("message", (packet) => {
 
 server.on("e2e", (peer) => {
     console.time("Running E2EE benchmark");
-    runBenchmark(peer, 1).then((latency) => {
+    runBenchmark(peer, BENCHMARK_DURATION).then((latency) => {
         console.timeEnd("Running E2EE benchmark");
         console.log("Latency:", latency.toFixed(2), "ms");
+        setTimeout(() => {
+            server.stop();
+        }, 1000);
+
     });
 });
 
@@ -52,5 +57,7 @@ function benchmarkServer(peer) {
         setTimeout(() => {
             benchmarkServer(peer);
         }, 1);
+    }).catch(e => {
+        // ignored
     });
 }

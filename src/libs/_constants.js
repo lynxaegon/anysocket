@@ -26,25 +26,21 @@ const constants = {
     },
     PROTOCOL_ENCRYPTION: {
         PLAIN: 1,
-        E2E: 2,
-        AES: 3
+        E2EE: 2
     },
-    MAX_PACKET_SIZE: 4000
+    MAX_PACKET_SIZE: 1024 * 512
 };
 
 for(let item in constants) {
-    constants[item].toString = ((number) => {
-        if(typeof number === 'number') {
-            number = parseInt(number);
-            for (let key in this) {
-                if (typeof this[key] === 'number' && this[key] == number) {
-                    return key;
-                }
+    constants[item]._string = ((number) => {
+        for (let key in constants[item]) {
+            if (constants[item][key] == number) {
+                return key;
             }
         }
 
         return number;
-    }).bind(item);
+    });
 }
 
 module.exports = constants;
