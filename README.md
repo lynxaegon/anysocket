@@ -471,7 +471,9 @@ AnySocket.setRPC({
 <a name="AnyPeer.e2e"></a>
 ### AnyPeer.e2e()
 
-Enables E2E encryption. The certificate is generated on the spot with a size of 4096 bytes
+Enables E2E encryption using ECDH for exchange and then switches to AES-256-CBC with forward secrecy. 
+
+Each message is encrypted with a different key derrived from the master key
 
 -------------------------------------------------------
 <a name="AnyPeer.send"></a>
