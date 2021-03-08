@@ -62,5 +62,8 @@ module.exports = {
         }
 
         return view;
+    },
+    isBuffer(buf) {
+        return Buffer.isBuffer(buf);
     }
 };

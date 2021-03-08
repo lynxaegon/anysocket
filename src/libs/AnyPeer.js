@@ -3,10 +3,13 @@ const constants = require("./_constants");
 const EventEmitter = require("events");
 const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
+const AnyPacker = require("./AnyPacker");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
 const _heartbeatReq = Symbol("heartbeat raw");
+const BufferUtils = require("./utils_buffer");
+
 const isBoolean = function(obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
 };
@@ -40,17 +43,32 @@ module.exports = class AnyPeer extends EventEmitter {
                         let path = target.path;
                         target.path = [];
                         return new Promise((resolve, reject) => {
+                            let binary = [];
+                            for(let item in args) {
+                                if(BufferUtils.isBuffer(args[item])) {
+                                    args[item] = AnyPacker.packBytes(args[item]);
+                                    binary.push(item);
+                                }
+                            }
                             const packet = Packet
                                 .data({
                                     type: constants.INTERNAL_PACKET_TYPE.RPC,
                                     method: path,
-                                    params: args || null
+                                    params: args || null,
+                                    bin: binary
                                 })
                                 .setType(constants.PACKET_TYPE.INTERNAL);
 
                             this._send(packet, true)
                                 .then((packet) => {
-                                    resolve(packet.msg);
+                                    if(packet.msg.error) {
+                                        reject(packet.msg);
+                                    } else {
+                                        let result = packet.msg.result;
+                                        if(packet.msg.bin)
+                                            result = AnyPacker.unpackBytes(result);
+                                        resolve(result);
+                                    }
                                 })
                                 .catch((e) => {
                                     reject(packet.msg)

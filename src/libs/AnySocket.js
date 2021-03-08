@@ -1,6 +1,7 @@
 const debug = require('debug')('AnySocket');
 const EventEmitter = require("events");
 const Utils = require("./utils");
+const BufferUtils = require("./utils_buffer");
 const constants = require("./_constants");
 
 const _private = {
@@ -366,9 +367,21 @@ class AnySocket extends EventEmitter {
                 });
             } else {
                 try {
+                    for(let item of packet.msg.bin) {
+                        packet.msg.params[item] = AnySocket.Packer.unpack(packet.msg.params[item]);
+                    }
+
                     Promise.resolve(tmp.apply(parent, packet.msg.params))
                         .then((result) => {
-                            packet.reply(result)
+                            let binary = false;
+                            if(BufferUtils.isBuffer(result)) {
+                                result = AnySocket.Packer.pack(result)
+                                binary = true;
+                            }
+                            packet.reply({
+                                result: result,
+                                bin: binary
+                            });
                         })
                         .catch((e) => {
                             packet.reply({

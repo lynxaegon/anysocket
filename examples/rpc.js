@@ -12,6 +12,7 @@ server.on("connected", async (peer) => {
     console.log("[SERVER][" + peer.id + "] Sent Hello Message");
     console.log("result", await peer.rpc.hello.user("LynxAegon"));
     console.log("result", await peer.rpc.hello.world());
+    console.log("result", await peer.rpc.hello.binary(Buffer.from(new Uint8Array([1,2,3,4,5,6,7,8,9,10]))));
 });
 server.on("disconnected", (peer, reason) => {
     console.log("[SERVER][" + peer.id + "] Disconnected. Reason:", reason);
@@ -45,6 +46,10 @@ client.setRPC({
         user: (user) => {
             this._user = user;
             return "Hello " + user;
+        },
+        binary(bytes) {
+            console.log(bytes);
+            return bytes;
         }
     }
 });

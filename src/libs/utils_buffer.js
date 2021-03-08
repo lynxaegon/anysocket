@@ -10,5 +10,8 @@ module.exports = {
     },
     bufferFromHex(buf) {
         return Buffer.from(buf, 'hex');
+    },
+    isBuffer(buf) {
+        return Buffer.isBuffer(buf);
     }
 };
