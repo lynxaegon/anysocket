@@ -453,7 +453,6 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         this[heartbeatTimer] = setTimeout(() => {
             if (!this[heartbeatPonged]) {
-                console.log("heartbeat missed", this[heartbeatsMissed] + 1);
                 this[heartbeatsMissed]++;
 
                 if(this[heartbeatsMissed] >= 2) {
