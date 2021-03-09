@@ -1,6 +1,6 @@
 {
   "name": "anysocket",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "An abstract networking layer over multiple transports, agnostic of client/server with support for E2EE",
   "main": "src/index.js",
   "scripts": {
@@ -12,7 +12,7 @@
   },
   "keywords": [
     "anysocket",
-    "e2e",
+    "e2ee",
     "network",
     "socket",
     "websocket",
@@ -23,7 +23,9 @@
     "end-to-end",
     "encrypted",
     "json",
-    "rpc"
+    "rpc",
+    "proxy",
+    "p2p"
   ],
   "author": "Andrei Vaduva",
   "license": "MIT",
@@ -33,7 +35,7 @@
   "homepage": "https://github.com/lynxaegon/anysocket#readme",
   "dependencies": {
     "debug": "^4.3.1",
-    "fastq": "^1.10.0",
+    "fastq": "^1.11.0",
     "ws": "^7.4.1"
   },
   "devDependencies": {
