@@ -144,7 +144,6 @@ More in the `examples` folder.
     * <a href="#AnySocket.on.connected"><code><b>event: _connected_</b></code></a>
     * <a href="#AnySocket.on.message"><code><b>event: _message_</b></code></a>
     * <a href="#AnySocket.on.e2e"><code><b>event: _e2e_</b></code></a>
-    * <a href="#AnySocket.on.heartbeat"><code><b>event: _heartbeat_</b></code></a>
     * <a href="#AnySocket.on.disconnected"><code><b>event: _disconnected_</b></code></a>
 * <a href="#AnyPacket.constructor"><code><b>AnyPacket()</b></code></a>
     * <a href="#AnyPacket.seq"><code><b>seq</b></code></a>
@@ -156,18 +155,15 @@ More in the `examples` folder.
     * <a href="#AnySocket.Packer.unpack"><code><b>unpack()</b></code></a>
 * <a href="#AnyPeer.constructor"><code><b>AnyPeer()</b></code></a>
     * <a href="#AnyPeer.id"><code><b>id</b></code></a>
-    * <a href="#AnyPeer.lag"><code><b>lag</b></code></a>
     * <a href="#AnyPeer.connectionID"><code><b>connectionID</b></code></a>
     * <a href="#AnyPeer.rpc"><code><b>rpc</b></code></a>
     * <a href="#AnyPeer.e2e"><code><b>e2e()</b></code></a>
     * <a href="#AnyPeer.send"><code><b>send()</b></code></a>
     * <a href="#AnyPeer.disconnect"><code><b>disconnect()</b></code></a>
-    * <a href="#AnyPeer.heartbeat"><code><b>heartbeat()</b></code></a> - deprecated, will be moved
     * <a href="#AnyPeer.isProxy"><code><b>isProxy()</b></code></a>
     * <a href="#AnyPeer.isE2EEnabled"><code><b>isE2EEnabled()</b></code></a>
     * <a href="#AnyPeer.on.message"><code><b>event: _message_</b></code></a>
     * <a href="#AnyPeer.on.e2e"><code><b>event: _e2e_</b></code></a>
-    * <a href="#AnyPeer.on.heartbeat"><code><b>event: _heartbeat_</b></code></a>
     * <a href="#AnyPeer.on.disconnected"><code><b>event: _disconnected_</b></code></a>
 ## Documentation
 <a name="AnySocket.constructor"></a>
@@ -203,8 +199,7 @@ Attaches a new server transport based on the selected **scheme*
     ip: "0.0.0.0", // listening ip
     port: 3000, // listening port
     replyTimeout: 30 * 1000, // reply timeout
-    heartbeatInterval: 5 * 1000, // heartbeat interval
-    heartbeatTimeout: 5 * 1000 // heartbeat timeout (disconnect)
+    heartbeatInterval: 5 * 1000 // heartbeat interval
 }
 ```
 
@@ -224,8 +219,7 @@ Connects to AnySocket Server
 ```
 {
     replyTimeout: 30 * 1000, // reply timeout
-    heartbeatInterval: 5 * 1000, // heartbeat interval
-    heartbeatTimeout: 5 * 1000 // heartbeat timeout (disconnect)
+    heartbeatInterval: 5 * 1000 // heartbeat interval
 }
 ```
 
@@ -344,15 +338,6 @@ Emitted when the link has been end-to-end encrypted and it's ready to be used
 * `peer` - <a href="#AnyPeer">AnyPeer</a> instance
 
 -------------------------------------------------------
-<a name="AnySocket.on.heartbeat"></a>
-### AnySocket event `heartbeat`
-
-Emitted when a PING/PONG heartbeat has finished
-
-**Arguments:**
-* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
-
--------------------------------------------------------
 <a name="AnySocket.on.disconnected"></a>
 ### AnySocket event `disconnected`
 
@@ -432,12 +417,6 @@ Constructor should not be used directly
 Unique peer identifier (UUIDv4) - Peer <a href="#AnySocket.id">AnySocket.id</a>
 
 -------------------------------------------------------
-<a name="AnyPeer.lag"></a>
-### AnyPeer.lag
-
-Last calculated latency (based on heartbeat) in milliseconds
-
--------------------------------------------------------
 <a name="AnyPeer.connectionID"></a>
 ### AnyPeer.connectionID
 
@@ -502,12 +481,6 @@ Disconnects the peer
 * `reason` - a string that explains why the peer was disconnected
 
 -------------------------------------------------------
-<a name="AnyPeer.heartbeat"></a>
-### ~~AnyPeer.heartbeat()~~
-
-Send a heartbeet to the peer - _used internally_
-
--------------------------------------------------------
 <a name="AnyPeer.isProxy"></a>
 ### AnyPeer.isProxy()
 
@@ -534,15 +507,6 @@ Emitted when a message is received
 ### AnyPeer event `e2e`
 
 Emitted when the link has been end-to-end encrypted and it's ready to be used
-
-**Arguments:**
-* `peer` - <a href="#AnyPeer">AnyPeer</a> instance
-
--------------------------------------------------------
-<a name="AnyPeer.on.heartbeat"></a>
-### AnyPeer event `heartbeat`
-
-Emitted when a PING/PONG heartbeat has finished
 
 **Arguments:**
 * `peer` - <a href="#AnyPeer">AnyPeer</a> instance

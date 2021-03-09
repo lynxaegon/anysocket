@@ -29,7 +29,6 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.peer = peer;
         this.options = Object.assign({
             replyTimeout: 30 * 1000,
-            heartbeatTimeout: 5 * 1000,
             heartbeatInterval: 5 * 1000
         }, options);
         this.connectionID = this.peer.connectionID;
