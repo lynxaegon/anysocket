@@ -1,4 +1,5 @@
 const AnySocket = require("../src/index");
+const crypto = require('crypto');
 
 // SERVER
 const server = new AnySocket();
@@ -6,12 +7,24 @@ server.listen("ws", 3000);
 server.on("connected", (peer) => {
     console.log("[SERVER][" + peer.id + "] Connected");
 
-    peer.send({
-        hello: "world",
-        bin: AnySocket.Packer.pack(str2ab("Hello World"))
-    });
+    // peer.send({
+    //     hello: "world",
+    //     bin: AnySocket.Packer.pack(str2ab("Hello World"))
+    // });
+    console.time("e2e enabling");
+
+    peer.e2e();
 
     console.log("[SERVER][" + peer.id + "] Sent Hello Message");
+});
+server.on("e2e", (peer) => {
+    console.timeEnd("e2e enabling");
+    console.log("E2E enabled!");
+    console.time("send binary");
+    peer.send({
+        hello: "world",
+        bin: AnySocket.Packer.pack(crypto.randomBytes(1024 * 1024 * 100))
+    });
 });
 server.on("disconnected", (peer, reason) => {
     console.log("[SERVER][" + peer.id + "] Disconnected. Reason:", reason);
@@ -25,9 +38,12 @@ client.on("connected", (peer) => {
     console.log("[CLIENT][" + peer.id + "] Connected");
 });
 client.on("message", (packet) => {
-    console.log("[CLIENT][" + packet.peer.id + "]",
-        ab2str(AnySocket.Packer.unpack(packet.msg.bin)) == "Hello World" ? "Received Binary" : "Failed Binary"
-    );
+    // console.log("[CLIENT][" + packet.peer.id + "]",
+    //     ab2str(AnySocket.Packer.unpack(packet.msg.bin)) == "Hello World" ? "Received Binary" : "Failed Binary"
+    // );
+
+    console.timeEnd("send binary");
+    console.log("Received", packet.msg.bin.length);
     server.stop();
     client.stop();
 });

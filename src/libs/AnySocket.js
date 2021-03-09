@@ -232,16 +232,11 @@ class AnySocket extends EventEmitter {
         const anypeer = new AnyPeer(protocol);
         this[_private.peers][protocol.peerID] = anypeer;
 
-        anypeer.heartbeat();
-
         anypeer.on("message", (packet) => {
             this.emit("message", packet);
         });
         anypeer.on("e2e", (peer) => {
             this.emit("e2e", peer);
-        });
-        anypeer.on("heartbeat", (peer) => {
-            this.emit("heartbeat", peer);
         });
         anypeer.on("internal",this[_private.onPeerInternalMessage].bind(this));
 

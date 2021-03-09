@@ -1,9 +1,10 @@
 const AnySocket = require("../../src");
 const BENCHMARK_DURATION = 5;
 
-const server = new AnySocket();
-server.listen("ws", 3000);
-server.on("connected", (peer) => {
+let FINISHED_BENCHMARK = 0;
+const anysocket = new AnySocket();
+anysocket.listen("ws", 3000);
+anysocket.on("connected", (peer) => {
     console.log("[SERVER][" + peer.id + "] Connected");
 
     console.time("Running PLAIN TEXT benchmark");
@@ -13,23 +14,26 @@ server.on("connected", (peer) => {
     });
 });
 
-server.on("message", (packet) => {
-    console.log("[SERVER][" + packet.peer.id + "]", packet.msg);
+anysocket.on("message", (packet) => {
+    if(packet.msg.type == "finish") {
+        finishBenchmark();
+    } else {
+        // echo the message back
+        packet.reply(packet.msg);
+    }
 });
 
-server.on("e2e", (peer) => {
+anysocket.on("e2e", (peer) => {
     console.time("Running E2EE benchmark");
     runBenchmark(peer, BENCHMARK_DURATION).then((latency) => {
         console.timeEnd("Running E2EE benchmark");
         console.log("Latency:", latency.toFixed(2), "ms");
-        setTimeout(() => {
-            server.stop();
-        }, 1000);
 
+        finishBenchmark(peer);
     });
 });
 
-server.on("disconnected", (peer, reason) => {
+anysocket.on("disconnected", (peer, reason) => {
     console.log("[SERVER][" + peer.id + "] Disconnected. Reason:", reason);
 });
 
@@ -38,7 +42,7 @@ let benchmarkLatency = [];
 function runBenchmark(peer, time) {
     return new Promise((resolve) => {
         benchmarkStop = false;
-        benchmarkServer(peer);
+        benchmark(peer);
         setTimeout(() => {
             benchmarkStop = true;
             resolve(benchmarkLatency.reduce((avg, value, _, { length }) => {
@@ -48,16 +52,33 @@ function runBenchmark(peer, time) {
     });
 }
 
-function benchmarkServer(peer) {
+function benchmark(peer) {
     if(benchmarkStop) {
         return;
     }
-    peer.heartbeat(true).then(peer => {
-        benchmarkLatency.push(peer.lag);
+
+    peer.send({
+        time: (new Date()).getTime()
+    }, true).then((packet) => {
+        let elapsed = (new Date()).getTime() - packet.msg.time;
+        benchmarkLatency.push(elapsed);
         setTimeout(() => {
-            benchmarkServer(peer);
+            benchmark(peer);
         }, 1);
     }).catch(e => {
         // ignored
     });
+}
+
+function finishBenchmark(peer) {
+    FINISHED_BENCHMARK++;
+    if(peer) {
+        peer.send({
+            type: "finish"
+        });
+    }
+
+    if(FINISHED_BENCHMARK == 2) {
+        anysocket.stop();
+    }
 }

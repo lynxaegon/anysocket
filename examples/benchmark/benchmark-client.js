@@ -1,6 +1,7 @@
 const AnySocket = require("../../src");
 const BENCHMARK_DURATION = 5;
 
+let FINISHED_BENCHMARK = 0;
 const anysocket = new AnySocket();
 console.log("AnySocket.ID", anysocket.id);
 
@@ -19,12 +20,18 @@ anysocket.on("e2e", (peer) => {
     runBenchmark(peer, BENCHMARK_DURATION).then((latency) => {
         console.timeEnd("Running E2EE benchmark");
         console.log("Latency:", latency.toFixed(2), "ms");
-        anysocket.stop();
+        finishBenchmark(peer);
     });
 });
 anysocket.on("message", (packet) => {
-    console.log(packet.msg);
+    if(packet.msg.type == "finish" && benchmarkStop) {
+        finishBenchmark();
+    } else {
+        // echo the message back
+        packet.reply(packet.msg);
+    }
 });
+
 anysocket.on("disconnected", (peer, reason) => {
     console.log("[CLIENT][" + peer.id + "] Disconnected. Reason:", reason);
 });
@@ -49,12 +56,29 @@ function benchmark(peer) {
     if(benchmarkStop) {
         return;
     }
-    peer.heartbeat(true).then(peer => {
-        benchmarkLatency.push(peer.lag);
+
+    peer.send({
+        time: (new Date()).getTime()
+    }, true).then((packet) => {
+        let elapsed = (new Date()).getTime() - packet.msg.time;
+        benchmarkLatency.push(elapsed);
         setTimeout(() => {
             benchmark(peer);
         }, 1);
     }).catch(e => {
         // ignored
     });
+}
+
+function finishBenchmark(peer) {
+    FINISHED_BENCHMARK++;
+    if(peer) {
+        peer.send({
+            type: "finish"
+        });
+    }
+
+    if(FINISHED_BENCHMARK == 2) {
+        anysocket.stop();
+    }
 }

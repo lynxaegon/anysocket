@@ -1,12 +1,12 @@
 const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
 
-const _private = {
-    buffer: Symbol("buffer")
-};
-
 const getSeq = (buf) => {
     return AnyPacker.unpackInt16(buf.substr(2, 2));
+};
+
+const getType = (buf) => {
+    return parseInt(buf.substr(1, 1));
 };
 
 const regex = {};
@@ -57,13 +57,13 @@ class Packet {
         return packet;
     }
 
-    async deserialize(buf, decryptFnc) {
+    async deserialize(buf, encryptionState, decryptFnc) {
         decryptFnc = decryptFnc || ((packet) => Promise.resolve(packet));
         const eol = buf.substr(0, 1) == constants.PACKET_LENGTH.FULL;
-        this.type = buf.substr(1, 1);
+        this.type = getType(buf);
         this.seq = getSeq(buf);
 
-        this.buffer.push(await decryptFnc(buf.substr(4), Math.abs(this.seq)));
+        this.buffer.push(await decryptFnc(encryptionState, buf.substr(4), Math.abs(this.seq)));
 
         if (eol) {
             try {
@@ -93,6 +93,9 @@ module.exports = {
     },
     getSeq: (buf) => {
         return getSeq(buf);
+    },
+    getType: (buf) => {
+        return getType(buf);
     },
     isForwardPacket(buf) {
         return buf.substr(0, 1) == constants.PACKET_TYPE.FORWARD;

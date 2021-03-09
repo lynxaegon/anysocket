@@ -7,7 +7,6 @@ const AnyPacker = require("./AnyPacker");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
-const _heartbeatReq = Symbol("heartbeat raw");
 const BufferUtils = require("./utils_buffer");
 
 const isBoolean = function(obj) {
@@ -23,9 +22,7 @@ module.exports = class AnyPeer extends EventEmitter {
         this[_packets] = {};
 
         this.id = protocol.peerID;
-        this.lag = -1;
         this.connectionID = protocol.connectionID;
-        this._heartbeat = false;
         this.options = protocol.options;
 
         const handlers = {
@@ -85,7 +82,6 @@ module.exports = class AnyPeer extends EventEmitter {
         protocol.on("message", this.onMessage.bind(this));
         protocol.on("e2e", () => {
             this.onE2E();
-            this.heartbeat();
         });
         protocol.on("disconnected", (peer, reason) => {
             this.emit("disconnected", peer, reason);
@@ -94,51 +90,6 @@ module.exports = class AnyPeer extends EventEmitter {
 
     isProxy() {
         return this[_protocol].isProxy();
-    }
-
-    heartbeat(forceOnce) {
-        if(this.options.heartbeatInterval <= 0 || this.options.heartbeatTimeout <= 0)
-            return;
-
-        if(forceOnce) {
-            return new Promise((resolve, reject) => {
-                this[_heartbeatReq]().then(() => {
-                    resolve(this);
-                }).catch((e) => {
-                    reject(this, e);
-                });
-            });
-        }
-
-        if(this.isProxy())
-            return;
-
-        if(this._heartbeat)
-            clearTimeout(this._heartbeat);
-        this._heartbeat = setTimeout(() => {
-            this[_heartbeatReq]().then(() => {
-                this.heartbeat();
-            }).catch(() => {});
-        }, this[_protocol].options.heartbeatInterval);
-    }
-
-    [_heartbeatReq]() {
-        return new Promise((resolve, reject) => {
-            const startTime = (new Date()).getTime();
-            const packet = Packet
-                .data()
-                .setType(constants.PACKET_TYPE.HEARTBEAT);
-
-            this._send(packet, true, this[_protocol].options.heartbeatTimeout).then(() => {
-                this.lag = (new Date()).getTime() - startTime;
-                resolve();
-                this.emit("heartbeat", this);
-            }).catch((e) => {
-                debug("Heartbeat Error:", e);
-                this.disconnect(e);
-                reject(e);
-            });
-        });
     }
 
     addLink(peer) {
@@ -154,7 +105,6 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     e2e() {
-        clearTimeout(this._heartbeat);
         this[_protocol].e2e();
     }
 
@@ -184,9 +134,6 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     onMessage(peer, message) {
-        // reset timer if we recv a message
-        this.heartbeat();
-
         if (message.seq < 0) {
             if (!this._resolveReply(message)) {
                 debug("Dropped reply " + message.seq + ". Delivered after Timeout");
@@ -209,16 +156,7 @@ module.exports = class AnyPeer extends EventEmitter {
             return;
         }
 
-        if (message.type == constants.PACKET_TYPE.HEARTBEAT) {
-            // reply
-            const packet = Packet
-                .data()
-                .setType(constants.PACKET_TYPE.HEARTBEAT);
-            this._send(packet, message.seq);
-        } else if (message.type == constants.PACKET_TYPE.INTERNAL) {
-            // reset timer if we recv a message
-            this.heartbeat();
-
+        if (message.type == constants.PACKET_TYPE.INTERNAL) {
             this.emit("internal", new AnyPacket(this, message, this.sendInternal.bind(this)));
         }
         else {
@@ -232,7 +170,6 @@ module.exports = class AnyPeer extends EventEmitter {
             this[_packets][seq].reject("Peer disconnected!");
         }
         this[_packets] = {};
-        clearTimeout(this._heartbeat);
 
         this[_protocol].disconnect(reason);
     }
@@ -264,10 +201,6 @@ module.exports = class AnyPeer extends EventEmitter {
                         }
                     }, timeout || this[_protocol].options.replyTimeout)
                 };
-            }
-            // reset timer if we send a message
-            if(packet.type != constants.PACKET_TYPE.HEARTBEAT) {
-                this.heartbeat();
             }
         });
     }
