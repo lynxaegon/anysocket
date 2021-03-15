@@ -1,8 +1,11 @@
 const debug = require('debug')('AnySocket');
+const fs = require("fs");
 const EventEmitter = require("events");
 const Utils = require("./utils");
 const BufferUtils = require("./utils_buffer");
 const constants = require("./_constants");
+const AnyHTTPPeer = require("./AnyHTTPPeer");
+const AnyRouter = require("./AnyHTTPRouter");
 
 const _private = {
     peersConnected: Symbol("peers connected"),
@@ -13,8 +16,10 @@ const _private = {
     onProtocolReady: Symbol("onPeerReady"),
     onPeerDisconnected: Symbol("onPeerDisconnected"),
     onPeerInternalMessage: Symbol("onPeerInternalMessage"),
-    findTransport: Symbol("findTransport")
+    findTransport: Symbol("findTransport"),
+    httpBundle: Symbol("http bundle js")
 };
+
 const AnyPeer = require("./AnyPeer");
 const AnyProtocol = require("./AnyProtocol");
 const ProxyPeer = require("./ProxyPeer");
@@ -24,11 +29,16 @@ class AnySocket extends EventEmitter {
         super();
 
         this.id = Utils.uuidv4();
+        this.http = new AnyRouter();
         debug("AnySocketID:", this.id);
 
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
         this[_private.transports] = {};
+        if (typeof window === 'undefined') {
+            // nodejs
+            this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.bundle.js");
+        }
 
         return this;
     }
@@ -202,6 +212,29 @@ class AnySocket extends EventEmitter {
 
     [_private.onPeerConnected](peer, options) {
         debug("Peer connected");
+        if(peer.type == "http") {
+            peer.on("message", (req, res) => {
+                let httpPeer = new AnyHTTPPeer(req, res);
+                if(httpPeer.url == "/@anysocket") {
+                    httpPeer.body(this[_private.httpBundle]);
+                    httpPeer.end();
+                    return;
+                }
+
+                req.body = [];
+                req.on('error', (err) => {
+                    console.log("Err", err);
+                }).on('data', (chunk) => {
+                    req.body.push(chunk);
+                }).on('end', () => {
+                    req.body = Buffer.concat(req.body).toString();
+                    httpPeer.header("ANYSOCKET-ID", this.id);
+                    this.http._process(httpPeer);
+                    this.emit("http", httpPeer, req, res);
+                });
+            });
+            return;
+        }
         const anyprotocol = new AnyProtocol(this, peer, options);
         this[_private.peersConnected][peer.connectionID] = anyprotocol;
         // register protocol messages

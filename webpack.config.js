@@ -44,6 +44,15 @@ module.exports = {
         new webpack.NormalModuleReplacementPlugin(/.+utils_buffer$/, function(resource) {
             resource.request = path.resolve(__dirname, 'src/browser/', "utils_buffer.js")
         }),
+        new webpack.NormalModuleReplacementPlugin(/.+transports\/http\/.*$/, function(resource) {
+            resource.request = path.resolve(__dirname, 'src/browser/', "empty.js")
+        }),
+        new webpack.NormalModuleReplacementPlugin(/.+AnyHTTPPeer$/, function(resource) {
+            resource.request = path.resolve(__dirname, 'src/browser/', "empty.js")
+        }),
+        new webpack.NormalModuleReplacementPlugin(/^fs$/, function(resource) {
+            resource.request = path.resolve(__dirname, 'src/browser/', "empty.js")
+        }),
         // extends
         new webpack.NormalModuleReplacementPlugin(/.+utils$/, function(resource) {
             if(resource.context.match(/.+browser$/)) {

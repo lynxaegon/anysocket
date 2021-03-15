@@ -99,5 +99,6 @@ class AbstractTransport extends EventEmitter {
 module.exports = AbstractTransport;
 AbstractTransport.TYPE = {
     CLIENT: "client",
-    SERVER: "server"
+    SERVER: "server",
+    HTTP: "http"
 };
