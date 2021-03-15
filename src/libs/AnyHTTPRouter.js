@@ -70,7 +70,7 @@ module.exports = class AnyHTTPRouter {
             if (this.routesRegexp[peer.query.method]) {
                 for (let item of this.routesRegexp[peer.query.method]) {
                     if (item.path.test(this.routesRegexp.url)) {
-                        item.cb(this.routesRegexp);
+                        item.cb(peer);
                         return true;
                     }
                 }
