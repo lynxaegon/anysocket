@@ -64,6 +64,6 @@ module.exports = {
         return view;
     },
     isBuffer(buf) {
-        return Buffer.isBuffer(buf);
+        return !!(buf.buffer instanceof ArrayBuffer && buf.BYTES_PER_ELEMENT);
     }
 };
