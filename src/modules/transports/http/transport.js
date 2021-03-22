@@ -1,7 +1,6 @@
 const AbstractTransport = require("../abstract/AbstractTransport");
 const Peer = require("./peer.js");
 const http = require("http");
-const fs = require("fs");
 
 class HTTP extends AbstractTransport {
     constructor(type, options) {
