@@ -21,15 +21,13 @@ class HTTP extends AbstractTransport {
     onListen() {
         return new Promise((resolve, reject) => {
             if(
-                this.options.certificate && this.options.privateKey &&
-                fs.existsSync(this.options.certificate) && fs.existsSync(this.options.privateKey)
+                this.options.cert && this.options.key &&
+                fs.existsSync(this.options.cert) && fs.existsSync(this.options.key)
             ) {
-                let credentials = {
-                    key: fs.readFileSync(certificates.privateKey).toString(),
-                    cert: fs.readFileSync(certificates.certificate).toString()
-                };
-
-                this.http = https.createServer(credentials, this._handler.bind(this));
+                this.http = https.createServer({
+                    key: fs.readFileSync(this.options.key).toString(),
+                    cert: fs.readFileSync(this.options.cert).toString()
+                }, this._handler.bind(this));
                 this.http.listen(this.options.port, this.options.host, () => {
                     resolve();
                 });
