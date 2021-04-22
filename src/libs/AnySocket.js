@@ -246,7 +246,7 @@ class AnySocket extends EventEmitter {
                     if (req.body.length > 1e7)
                         req.connection.destroy();
                 }).on('end', () => {
-                    req.body = Buffer.concat(req.body).toString();
+                    req.body = req.body.toString();
                     httpPeer.header("ANYSOCKET-ID", this.id);
                     this.http._process(httpPeer);
                     this.emit("http", httpPeer, req, res);

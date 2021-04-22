@@ -22,4 +22,9 @@ server.http.error((peer, error) => {
         .body("404 Page not found")
         .end();
 });
-server.listen("http", 80);
+server.listen("http", {
+    key: "./key.pem",
+    cert: "./cert.pem",
+    port: 443,
+    host: "0.0.0.0"
+});

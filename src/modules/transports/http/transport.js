@@ -15,7 +15,12 @@ class HTTP extends AbstractTransport {
     }
 
     _handler(req, res) {
-        this.peers.get(req.socket.connectionID).emit("message", req, res);
+        let socket = req.socket._parent;
+        if(!socket){
+            socket = req.socket;
+        }
+
+        this.peers.get(socket.connectionID).emit("message", req, res);
     }
 
     onListen() {

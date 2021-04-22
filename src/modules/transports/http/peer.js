@@ -2,6 +2,7 @@ const AbstractPeer = require("../abstract/AbstractPeer");
 
 module.exports = class HTTPPeer extends AbstractPeer {
     onConnect() {
+        // console.log("GOT CONNECTION", this.connectionID, this.socket);
         this.socket.connectionID = this.connectionID;
         this.socket.on("close", () => {
             this.disconnect("Remote Connection Closed");
