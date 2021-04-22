@@ -143,7 +143,7 @@ class AnySocket extends EventEmitter {
         }
 
         options.ip = options.ip || "0.0.0.0";
-        if(!options.port)
+        if(scheme.toLowerCase() !== "http" && !options.port)
             throw new Error("Invalid port!");
 
         let transport = this[_private.findTransport](scheme);
