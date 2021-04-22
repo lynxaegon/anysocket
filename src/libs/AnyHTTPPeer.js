@@ -33,11 +33,10 @@ module.exports = class AnyHTTPPeer {
             _status: 200
         };
         self[endSymbol] = false;
-        self[parseCookies] = (request) => {
-            const list = {},
-                rc = request.headers.cookie;
+        self[parseCookies] = (cookies) => {
+            const list = {};
 
-            rc && rc.split(';').forEach(function( cookie ) {
+            cookies && cookies.split(';').forEach(function( cookie ) {
                 const parts = cookie.split('=');
                 list[parts.shift().trim()] = decodeURI(parts.join('='));
             });
@@ -56,7 +55,7 @@ module.exports = class AnyHTTPPeer {
     }
 
     get cookies() {
-        return this[parseCookies];
+        return this[parseCookies](this.query.cookies);
     }
 
     status(code) {
