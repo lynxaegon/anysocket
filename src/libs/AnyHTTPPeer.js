@@ -94,6 +94,7 @@ module.exports = class AnyHTTPPeer {
             value: value,
             expires: expires
         };
+        return this;
     }
 
     deleteCookie(key) {
@@ -101,6 +102,7 @@ module.exports = class AnyHTTPPeer {
             value: "",
             expires: 1
         };
+        return this;
     }
 
     end() {
