@@ -1,6 +1,8 @@
 const AbstractTransport = require("../abstract/AbstractTransport");
 const Peer = require("./peer.js");
 const http = require("http");
+const https = require("https");
+const fs = require("fs");
 
 class HTTP extends AbstractTransport {
     constructor(type, options) {
@@ -18,10 +20,25 @@ class HTTP extends AbstractTransport {
 
     onListen() {
         return new Promise((resolve, reject) => {
-            this.http = http.createServer(this._handler.bind(this));
-            this.http.listen(this.options.port, this.options.host, () => {
-                resolve();
-            });
+            if(
+                this.options.certificate && this.options.privateKey &&
+                fs.existsSync(this.options.certificate) && fs.existsSync(this.options.privateKey)
+            ) {
+                let credentials = {
+                    key: fs.readFileSync(certificates.privateKey).toString(),
+                    cert: fs.readFileSync(certificates.certificate).toString()
+                };
+
+                this.http = https.createServer(credentials, this._handler.bind(this));
+                this.http.listen(this.options.port, this.options.host, () => {
+                    resolve();
+                });
+            } else {
+                this.http = http.createServer(this._handler.bind(this));
+                this.http.listen(this.options.port, this.options.host, () => {
+                    resolve();
+                });
+            }
 
             this.http.on('connection', socket => {
                 this.addPeer(new Peer(socket));
@@ -51,7 +68,7 @@ class HTTP extends AbstractTransport {
     }
 
     onStop() {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             if (this.http) {
                 this.http.close();
                 this.http = null;

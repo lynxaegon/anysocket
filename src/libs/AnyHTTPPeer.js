@@ -2,6 +2,7 @@ const httpResult = Symbol("httpResult");
 const reqSymbol = Symbol("req");
 const resSymbol = Symbol("res");
 const endSymbol = Symbol("ended");
+const parseCookies = Symbol("parseCookies");
 const debug = require('debug')('AnyHTTPPeer');
 
 const url = require('url');
@@ -20,6 +21,7 @@ module.exports = class AnyHTTPPeer {
         self[httpResult] = {
             _headers: {},
             _body: [],
+            _cookies: [],
             _url: qs.pathname,
             _query: {
                 headers: req.headers,
@@ -31,6 +33,18 @@ module.exports = class AnyHTTPPeer {
             _status: 200
         };
         self[endSymbol] = false;
+        self[parseCookies] = (request) => {
+            const list = {},
+                rc = request.headers.cookie;
+
+            rc && rc.split(';').forEach(function( cookie ) {
+                const parts = cookie.split('=');
+                list[parts.shift().trim()] = decodeURI(parts.join('='));
+            });
+
+            self[httpResult]._cookies = list;
+            return list;
+        }
     }
 
     get url() {
@@ -39,6 +53,10 @@ module.exports = class AnyHTTPPeer {
 
     get query() {
         return this[httpResult]._query;
+    }
+
+    get cookies() {
+        return this[parseCookies];
     }
 
     status(code) {
@@ -71,14 +89,42 @@ module.exports = class AnyHTTPPeer {
         return this;
     }
 
+    setCookie(key, value, expires) {
+        this[httpResult]._cookies[key] = {
+            value: value,
+            expires: expires
+        };
+    }
+
+    deleteCookie(key) {
+        this[httpResult]._cookies[key] = {
+            value: "",
+            expires: 1
+        };
+    }
+
     end() {
         if (this.isClosed()) {
             debug("Connection already ended!");
             return this;
         }
 
-        this[endSymbol] = true;
+        if(Object.keys(this[httpResult]._cookies) > 0) {
+            let cookie = [];
+            for(let key in this[httpResult]._cookies) {
+                if(!this[httpResult]._cookies.hasOwnProperty(key))
+                    continue;
+
+                let c = this[httpResult]._cookies[key];
+                cookie.push(
+                    key + ":" + c.value +
+                    (c.expires ? ";" + (new Date(c.expires)).toUTCString() : "")
+                );
+            }
+            this.header("Cookie", cookie.join(";"));
+        }
         this[resSymbol].writeHead(this[httpResult]._status, this[httpResult]._headers);
+        this[endSymbol] = true;
 
         if (this[httpResult]._body.length > 0)
             for (let i in this[httpResult]._body) {

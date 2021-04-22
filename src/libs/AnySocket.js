@@ -17,10 +17,12 @@ const _private = {
     onPeerDisconnected: Symbol("onPeerDisconnected"),
     onPeerInternalMessage: Symbol("onPeerInternalMessage"),
     findTransport: Symbol("findTransport"),
-    httpBundle: Symbol("http bundle js")
+    httpBundle: Symbol("http bundle js"),
+    anymesh: Symbol("AnyMesh")
 };
 
 const AnyPeer = require("./AnyPeer");
+const AnyMesh = require("./AnyMesh");
 const AnyProtocol = require("./AnyProtocol");
 const ProxyPeer = require("./ProxyPeer");
 
@@ -28,6 +30,7 @@ class AnySocket extends EventEmitter {
     constructor() {
         super();
 
+        this._started = false;
         this.id = Utils.uuidv4();
         this.http = new AnyRouter();
         debug("AnySocketID:", this.id);
@@ -35,6 +38,7 @@ class AnySocket extends EventEmitter {
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
         this[_private.transports] = {};
+        this[_private.anymesh] = null;
         if (typeof window === 'undefined') {
             // nodejs
             this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.bundle.js");
@@ -60,6 +64,13 @@ class AnySocket extends EventEmitter {
                 Promise.all(promises).then(resolve).catch(reject);
             }
         });
+    }
+
+    mesh() {
+        if(this._started)
+            throw new Error("Cannot enable Mesh while AnySocket is running. You must first stop AnySocket!");
+
+        this[_private.anymesh] = new AnyMesh(this);
     }
 
     setRPC(rpc) {
@@ -126,6 +137,7 @@ class AnySocket extends EventEmitter {
 
     listen(scheme, options) {
         // server
+        this._started = true;
         if(typeof options == 'number'){
             options = { port: options };
         }
@@ -149,6 +161,7 @@ class AnySocket extends EventEmitter {
     }
 
     connect(scheme, ip, port, options) {
+        this._started = true;
         options = Object.assign(options || {}, {
             ip: ip,
             port: port
@@ -174,6 +187,7 @@ class AnySocket extends EventEmitter {
     }
 
     stop() {
+        this._started = false;
         return new Promise((resolve, reject) => {
             const promises = [];
             for (let id in this[_private.transports]) {
@@ -221,11 +235,15 @@ class AnySocket extends EventEmitter {
                     return;
                 }
 
-                req.body = [];
+                req.body = '';
                 req.on('error', (err) => {
                     console.log("Err", err);
                 }).on('data', (chunk) => {
-                    req.body.push(chunk);
+                    req.body += chunk;
+                    // Too much POST data, kill the connection!
+                    // 1e7 === 1 * Math.pow(10, 7) === 1 * 10000000 ~~~ 10MB
+                    if (req.body.length > 1e7)
+                        req.connection.destroy();
                 }).on('end', () => {
                     req.body = Buffer.concat(req.body).toString();
                     httpPeer.header("ANYSOCKET-ID", this.id);
