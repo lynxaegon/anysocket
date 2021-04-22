@@ -35,6 +35,7 @@ class AnySocket extends EventEmitter {
         this.http = new AnyRouter();
         debug("AnySocketID:", this.id);
 
+        this.rpc = {};
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
         this[_private.transports] = {};
