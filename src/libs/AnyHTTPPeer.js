@@ -110,7 +110,7 @@ module.exports = class AnyHTTPPeer {
             return this;
         }
 
-        if(Object.keys(this[httpResult]._cookies) > 0) {
+        if(Object.keys(this[httpResult]._cookies).length > 0) {
             let cookie = [];
             for(let key in this[httpResult]._cookies) {
                 if(!this[httpResult]._cookies.hasOwnProperty(key))
