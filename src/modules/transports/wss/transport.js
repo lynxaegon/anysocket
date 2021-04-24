@@ -1,6 +1,7 @@
 const AbstractTransport = require("../abstract/AbstractTransport");
 const Peer = require("./peer.js");
 const WebSocket = require("ws");
+const https = require("https");
 
 class WSS extends AbstractTransport {
     constructor(type, options) {
@@ -14,8 +15,12 @@ class WSS extends AbstractTransport {
     onListen() {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket.Server({
-                port: this.options.port,
-                host: this.options.ip
+                server: https.createServer({
+                    key: this.options.key,
+                    cert: this.options.cert,
+                    port: this.options.port,
+                    host: this.options.ip
+                })
             });
             this.ws.on('connection', socket => {
                 this.addPeer(new Peer(socket));
