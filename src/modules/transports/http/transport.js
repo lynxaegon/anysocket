@@ -9,6 +9,7 @@ class HTTP extends AbstractTransport {
         super(type, options);
         this.type = AbstractTransport.TYPE.HTTP;
         this.server = null;
+        this.isSecure = false;
     }
 
     static scheme() {
@@ -34,6 +35,7 @@ class HTTP extends AbstractTransport {
                     key: fs.readFileSync(this.options.key).toString(),
                     cert: fs.readFileSync(this.options.cert).toString()
                 }, this._handler.bind(this));
+                this.isSecure = true;
                 this.server.listen(this.options.port, this.options.host, () => {
                     resolve();
                 });
@@ -57,25 +59,13 @@ class HTTP extends AbstractTransport {
 
     onConnect() {
         throw new Error("not implemented!");
-        // return new Promise((resolve, reject) => {
-        //     let ws = new WebSocket('ws://' + this.options.ip + ':' + this.options.port + '/');
-        //
-        //     ws.on('open', socket => {
-        //         this.addPeer(new Peer(ws));
-        //         resolve();
-        //     });
-        //
-        //     ws.on('error', err => {
-        //         reject(err);
-        //     });
-        // });
     }
 
     onStop() {
         return new Promise((resolve) => {
-            if (this.http) {
-                this.http.close();
-                this.http = null;
+            if (this.server) {
+                this.server.close();
+                this.server = null;
             }
             resolve();
         });

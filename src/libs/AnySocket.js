@@ -147,10 +147,14 @@ class AnySocket extends EventEmitter {
         }
 
         options.ip = options.ip || "0.0.0.0";
-        if(["http", "wss"].indexOf(scheme.toLowerCase()) == -1 && !options.port)
+        if(["http", "ws"].indexOf(scheme.toLowerCase()) == -1 && !options.port)
             throw new Error("Invalid port!");
 
-        if(["wss"].indexOf(scheme.toLowerCase()) != -1) {
+        if(["ws"].indexOf(scheme.toLowerCase()) != -1) {
+            if(!this[_private.httpServer]) {
+                this.listen("http", options);
+            }
+
             options = {
                 server: this[_private.httpServer]
             };
@@ -172,7 +176,6 @@ class AnySocket extends EventEmitter {
         if(scheme == "http") {
             this[_private.httpServer] = transport.server;
         }
-
         return result;
     }
 

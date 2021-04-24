@@ -14,8 +14,7 @@ class WS extends AbstractTransport {
     onListen() {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket.Server({
-                port: this.options.port,
-                host: this.options.ip
+                server: this.options.server
             });
             this.ws.on('connection', socket => {
                 this.addPeer(new Peer(socket));
