@@ -16,8 +16,8 @@ class WSS extends AbstractTransport {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket.Server({
                 server: https.createServer({
-                    key: this.options.key,
-                    cert: this.options.cert,
+                    key: fs.readFileSync(this.options.key).toString(),
+                    cert: fs.readFileSync(this.options.cert).toString(),
                     port: this.options.port,
                     host: this.options.ip
                 })
