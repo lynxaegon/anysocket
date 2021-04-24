@@ -2,7 +2,7 @@ const AbstractTransport = require("../abstract/AbstractTransport");
 const Peer = require("./peer.js");
 const WebSocket = require("ws");
 const https = require("https");
-const fs = require("fs);
+const fs = require("fs");
 
 class WSS extends AbstractTransport {
     constructor(type, options) {
