@@ -33,7 +33,7 @@ class WS extends AbstractTransport {
     onConnect(plain) {
         return new Promise((resolve, reject) => {
             let connected = false;
-            let ws = new WebSocket(  (plain ? "ws" : "wss") + "://' + this.options.ip + ':' + this.options.port + '/');
+            let ws = new WebSocket(  (plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/');
             ws.on('open', socket => {
                 connected = true;
                 this.addPeer(new Peer(ws));
