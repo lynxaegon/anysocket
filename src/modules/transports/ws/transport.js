@@ -30,17 +30,23 @@ class WS extends AbstractTransport {
         });
     }
 
-    onConnect() {
+    onConnect(plain) {
         return new Promise((resolve, reject) => {
-            let ws = new WebSocket(WS.scheme() + '://' + this.options.ip + ':' + this.options.port + '/');
-
+            let connected = false;
+            let ws = new WebSocket(  (plain ? "ws" : "wss") + "://' + this.options.ip + ':' + this.options.port + '/');
             ws.on('open', socket => {
+                connected = true;
                 this.addPeer(new Peer(ws));
                 resolve();
             });
 
             ws.on('error', err => {
-                reject(err);
+                if(!plain && !connected) {
+                    this.onConnect(true).then(resolve).catch(reject)
+                } else {
+                    reject(err);
+                }
+                connected = false;
             });
         });
     }
