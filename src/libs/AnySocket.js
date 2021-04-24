@@ -18,7 +18,8 @@ const _private = {
     onPeerInternalMessage: Symbol("onPeerInternalMessage"),
     findTransport: Symbol("findTransport"),
     httpBundle: Symbol("http bundle js"),
-    anymesh: Symbol("AnyMesh")
+    anymesh: Symbol("AnyMesh"),
+    httpServer: Symbol("HTTPServer")
 };
 
 const AnyPeer = require("./AnyPeer");
@@ -39,6 +40,7 @@ class AnySocket extends EventEmitter {
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
         this[_private.transports] = {};
+        this[_private.httpServer] = null;
         this[_private.anymesh] = null;
         if (typeof window === 'undefined') {
             // nodejs
@@ -147,9 +149,18 @@ class AnySocket extends EventEmitter {
         if(scheme.toLowerCase() !== "http" && !options.port)
             throw new Error("Invalid port!");
 
+        if(scheme.toLowerCase == "ws" || scheme.toLowerCase == "wss") {
+            options = this[_private.httpServer];
+        }
+
         let transport = this[_private.findTransport](scheme);
         transport = new transport("server", options);
         this[_private.transports][transport.id] = transport;
+
+        if(scheme == "http") {
+            this[_private.httpServer] = transport.http;
+        }
+
 
         // start transport
         transport.on("connected", (peer) => {
