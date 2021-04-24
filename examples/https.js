@@ -28,4 +28,4 @@ server.listen("http", {
     port: 443,
     host: "0.0.0.0"
 });
-server.listen("ws")
+server.listen("wss")

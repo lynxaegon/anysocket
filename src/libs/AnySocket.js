@@ -141,15 +141,16 @@ class AnySocket extends EventEmitter {
     listen(scheme, options) {
         // server
         this._started = true;
+        options = options || {};
         if(typeof options == 'number'){
             options = { port: options };
         }
 
         options.ip = options.ip || "0.0.0.0";
-        if(scheme.toLowerCase() !== "http" && !options.port)
+        if(["http", "wss"].indexOf(scheme.toLowerCase()) == -1 && !options.port)
             throw new Error("Invalid port!");
 
-        if(scheme.toLowerCase == "ws" || scheme.toLowerCase == "wss") {
+        if(["wss"].indexOf(scheme.toLowerCase()) != -1) {
             options = {
                 server: this[_private.httpServer]
             };
@@ -159,11 +160,6 @@ class AnySocket extends EventEmitter {
         transport = new transport("server", options);
         this[_private.transports][transport.id] = transport;
 
-        if(scheme == "http") {
-            this[_private.httpServer] = transport.http;
-        }
-
-
         // start transport
         transport.on("connected", (peer) => {
             this[_private.onPeerConnected](peer, transport.options);
@@ -171,7 +167,13 @@ class AnySocket extends EventEmitter {
         transport.on("disconnected", (peer, reason) => {
             this[_private.onPeerDisconnected](peer, reason);
         });
-        return transport.listen();
+
+        let result = transport.listen();
+        if(scheme == "http") {
+            this[_private.httpServer] = transport.server;
+        }
+
+        return result;
     }
 
     connect(scheme, ip, port, options) {

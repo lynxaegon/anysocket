@@ -8,6 +8,7 @@ class HTTP extends AbstractTransport {
     constructor(type, options) {
         super(type, options);
         this.type = AbstractTransport.TYPE.HTTP;
+        this.server = null;
     }
 
     static scheme() {
@@ -29,25 +30,25 @@ class HTTP extends AbstractTransport {
                 this.options.cert && this.options.key &&
                 fs.existsSync(this.options.cert) && fs.existsSync(this.options.key)
             ) {
-                this.http = https.createServer({
+                this.server = https.createServer({
                     key: fs.readFileSync(this.options.key).toString(),
                     cert: fs.readFileSync(this.options.cert).toString()
                 }, this._handler.bind(this));
-                this.http.listen(this.options.port, this.options.host, () => {
+                this.server.listen(this.options.port, this.options.host, () => {
                     resolve();
                 });
             } else {
-                this.http = http.createServer(this._handler.bind(this));
-                this.http.listen(this.options.port, this.options.host, () => {
+                this.server = http.createServer(this._handler.bind(this));
+                this.server.listen(this.options.port, this.options.host, () => {
                     resolve();
                 });
             }
 
-            this.http.on('connection', socket => {
+            this.server.on('connection', socket => {
                 this.addPeer(new Peer(socket));
             });
 
-            this.http.on('error', err => {
+            this.server.on('error', err => {
                 console.log("http err", err);
                 reject(err);
             });
