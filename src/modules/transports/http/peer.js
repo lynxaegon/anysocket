@@ -9,8 +9,7 @@ module.exports = class HTTPPeer extends AbstractPeer {
         });
 
         this.socket.on("error", (err) => {
-            console.log("error", err);
-            this.emit("error", this, err);
+            this.disconnect(err);
         });
     }
 
