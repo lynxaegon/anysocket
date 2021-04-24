@@ -150,7 +150,9 @@ class AnySocket extends EventEmitter {
             throw new Error("Invalid port!");
 
         if(scheme.toLowerCase == "ws" || scheme.toLowerCase == "wss") {
-            options = this[_private.httpServer];
+            options = {
+                server: this[_private.httpServer]
+            };
         }
 
         let transport = this[_private.findTransport](scheme);
