@@ -4,6 +4,7 @@ const AnyPacker = require("./libs/AnyPacker");
 AnySocket.Transport = {
     "LOCAL": require("./modules/transports/local/transport"),
     "WS": require("./modules/transports/ws/transport"),
+    "WSS": require("./modules/transports/ws/transport"),
     "HTTP": require("./modules/transports/http/transport")
 };
 AnySocket.Packer = {
