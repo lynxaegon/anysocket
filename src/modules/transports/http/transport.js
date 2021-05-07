@@ -36,12 +36,12 @@ class HTTP extends AbstractTransport {
                     cert: fs.readFileSync(this.options.cert).toString()
                 }, this._handler.bind(this));
                 this.isSecure = true;
-                this.server.listen(this.options.port, this.options.host, () => {
+                this.server.listen(this.options.port || 443, this.options.host || "0.0.0.0", () => {
                     resolve();
                 });
             } else {
                 this.server = http.createServer(this._handler.bind(this));
-                this.server.listen(this.options.port, this.options.host, () => {
+                this.server.listen(this.options.port || 80, this.options.host || "0.0.0.0", () => {
                     resolve();
                 });
             }
