@@ -20,7 +20,7 @@ module.exports = class AnyHTTPRouter {
             });
         } else {
             if(!this.routes[method])
-                this.routes[method] = [];
+                this.routes[method] = {};
 
             this.routes[method][path.toLowerCase()] = callback
         }
