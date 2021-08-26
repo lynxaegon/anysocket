@@ -119,7 +119,8 @@ module.exports = class AnyHTTPPeer {
                 let c = this[httpResult]._cookies[key];
                 cookie.push(
                     key + "=" + c.value +
-                    (c.expires ? ";" + (new Date(c.expires)).toUTCString() : "")
+                    (c.expires ? ";" + (new Date(c.expires)).toUTCString() : "") +
+                    ";Path=/"
                 );
             }
             if(cookie.length > 0) {
