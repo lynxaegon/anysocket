@@ -118,11 +118,13 @@ module.exports = class AnyHTTPPeer {
 
                 let c = this[httpResult]._cookies[key];
                 cookie.push(
-                    key + ":" + c.value +
+                    key + "=" + c.value +
                     (c.expires ? ";" + (new Date(c.expires)).toUTCString() : "")
                 );
             }
-            this.header("Cookie", cookie.join(";"));
+            if(cookie.length > 0) {
+                this.header("Set-Cookie", cookie);
+            }
         }
         this[resSymbol].writeHead(this[httpResult]._status, this[httpResult]._headers);
         this[endSymbol] = true;
