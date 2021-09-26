@@ -176,7 +176,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                                 case constants.PROTOCOL_STATES.ESTABLISHED:
                                     if (packet.type == Packet.TYPE.AUTH) {
                                         invalidPacket = false;
-                                        if (!packet.data.id || !this.anysocket.onAuth(packet)) {
+                                        if (!packet.data.id || !this.anysocket.onAuth(packet.data)) {
                                             return this.disconnect("Invalid Auth Packet!");
                                         }
                                         this.peerID = packet.data.id;
@@ -195,7 +195,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                                     if (packet.type == Packet.TYPE.AUTH) {
                                         invalidPacket = false;
                                         this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                        if (!packet.data.id || !this.anysocket.onAuth(packet)) {
+                                        if (!packet.data.id || !this.anysocket.onAuth(packet.data)) {
                                             return this.disconnect("Invalid Auth Packet!");
                                         }
                                         this.peerID = packet.data.id;

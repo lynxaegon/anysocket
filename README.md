@@ -25,15 +25,19 @@ _WIP Documentation_
 ## Features
 * Client / Server agnostic
 * Support for request/reply
+* Custom AUTH method
 * E2EE between peers with forward secrecy
 * RPC support
 * P2P using a proxy server (with support for direct E2EE between peers)
 * Binary support (_see: <a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>_)
-* **Browser support** - 30kb footprint (_see: ```/dist/anysocket.bundle.js```_)
-* Multiple transports *(implemented atm: **ws**)
+* **Browser support** - 31kb footprint (_see: ```/dist/anysocket.bundle.js```_)
+* Multiple transports *(implemented atm: **ws/wss**, **http/https**)
 * All peers have a UUIDv4 associated
 * Disconnect detection using a heartbeat
 * **Not Battle Tested** ...yet
+
+
+** _http_ transport is experimental
 
 _Info: Binary RPC arguments and responses are auto packed/unpacked (<a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer.pack</b></code></a>/<a href="#AnySocket.Packer.unpack"><code><b>AnySocket.Packer.unpack</b></code></a>)._ 
 
@@ -131,10 +135,13 @@ More in the `examples` folder.
 ## Api
 * <a href="#AnySocket.constructor"><code><b>AnySocket()</b></code></a>
     * <a href="#AnySocket.id"><code><b>id</b></code></a>
+    * <a href="#AnySocket.http"><code><b>http</b></code></a>
     * <a href="#AnySocket.server"><code><b>server()</b></code></a>
     * <a href="#AnySocket.listen"><code><b>listen()</b></code></a>
     * <a href="#AnySocket.connect"><code><b>connect()</b></code></a>
     * <a href="#AnySocket.stop"><code><b>stop()</b></code></a>
+    * <a href="#AnySocket.onAuth"><code><b>onAuth()</b></code></a>
+    * <a href="#AnySocket.authPacket"><code><b>authPacket()</b></code></a>
     * <a href="#AnySocket.broadcast"><code><b>broadcast()</b></code></a>
     * <a href="#AnySocket.setRPC"><code><b>setRPC()</b></code></a>
     * <a href="#AnySocket.canProxy"><code><b>canProxy()</b></code></a>
@@ -165,6 +172,25 @@ More in the `examples` folder.
     * <a href="#AnyPeer.on.message"><code><b>event: _message_</b></code></a>
     * <a href="#AnyPeer.on.e2e"><code><b>event: _e2e_</b></code></a>
     * <a href="#AnyPeer.on.disconnected"><code><b>event: _disconnected_</b></code></a>
+* <a href="#AnyHTTPRouter.constructor"><code><b>AnyHTTPRouter()</b></code></a>
+    * <a href="#AnyHTTPRouter.on"><code><b>on()</b></code></a>
+    * <a href="#AnyHTTPRouter.any"><code><b>any()</b></code></a>
+    * <a href="#AnyHTTPRouter.get"><code><b>get()</b></code></a>
+    * <a href="#AnyHTTPRouter.post"><code><b>post()</b></code></a>
+    * <a href="#AnyHTTPRouter.delete"><code><b>delete()</b></code></a>
+    * <a href="#AnyHTTPRouter.error"><code><b>error()</b></code></a>
+* <a href="#AnyHTTPPeer.constructor"><code><b>AnyHTTPPeer()</b></code></a>
+    * <a href="#AnyHTTPPeer.url"><code><b>url</b></code></a>
+    * <a href="#AnyHTTPPeer.query"><code><b>query</b></code></a>
+    * <a href="#AnyHTTPPeer.cookies"><code><b>cookies</b></code></a>
+    * <a href="#AnyHTTPPeer.status"><code><b>status()</b></code></a>
+    * <a href="#AnyHTTPPeer.header"><code><b>header()</b></code></a>
+    * <a href="#AnyHTTPPeer.body"><code><b>body()</b></code></a>
+    * <a href="#AnyHTTPPeer.setCookie"><code><b>setCookie()</b></code></a>
+    * <a href="#AnyHTTPPeer.deleteCookie"><code><b>deleteCookie()</b></code></a>
+    * <a href="#AnyHTTPPeer.end"><code><b>end()</b></code></a>
+    * <a href="#AnyHTTPPeer.isClosed"><code><b>isClosed()</b></code></a>
+    
 ## Documentation
 <a name="AnySocket.constructor"></a>
 ### AnySocket()
@@ -172,10 +198,16 @@ More in the `examples` folder.
 Creates a new AnySocket instance
 
 -------------------------------------------------------
-<a name="anysocket.id"></a>
+<a name="AnySocket.id"></a>
 ### AnySocket.id
 
 Unique identifier (UUIDv4) that will be used for all connections originating this instance (client/server)
+
+-------------------------------------------------------
+<a name="AnySocket.http"></a>
+### AnySocket.http
+
+See: <a href="#AnyHTTPRouter">AnyHTTPRouter</a>
 
 -------------------------------------------------------
 <a name="AnySocket.server"></a>
@@ -198,6 +230,7 @@ Attaches a new server transport based on the selected **scheme*
 {
     ip: "0.0.0.0", // listening ip
     port: 3000, // listening port
+    authTimeout: 5 * 1000, // auth timeout
     replyTimeout: 30 * 1000, // reply timeout
     heartbeatInterval: 5 * 1000 // heartbeat interval
 }
@@ -218,6 +251,7 @@ Connects to AnySocket Server
 * `options` - options json
 ```
 {
+    authTimeout: 5 * 1000, // auth timeout
     replyTimeout: 30 * 1000, // reply timeout
     heartbeatInterval: 5 * 1000 // heartbeat interval
 }
@@ -233,6 +267,28 @@ _note: you cannot take actions (ex: send) until the `connected` event has been t
 Stops all servers and disconnects all peers
 
 **Returns** a Promise that resolves/rejects when finished
+
+-------------------------------------------------------
+<a name="AnySocket.onAuth"></a>
+### AnySocket.onAuth(packet)
+
+You can overwrite this function to implement a custom auth validation.
+**Arguments:**
+* `packet` - A JSON containing the Peer <a href="#AnySocket.id">AnySocket.id</a> and the custom <a href="#AnySocket.authPacket">AnySocket.authPacket</a>
+
+**Returns** _true/false_ if validation passed or not
+
+_note: onAuth must be implemented in both server & client_
+
+-------------------------------------------------------
+<a name="AnySocket.authPacket"></a>
+### AnySocket.authPacket()
+
+You can overwrite this function to implement a custom auth packet.
+
+**Returns** a JSON containing the AUTH packet that will be validated in <a href="#AnySocket.onAuth">AnySocket.onAuth()</a>
+
+_note: auth packet must be implemented in both server & client_
 
 -------------------------------------------------------
 <a name="AnySocket.broadcast"></a>
@@ -405,7 +461,7 @@ Unpacks the bytes
 **Returns** a Buffer/TypedArray
 
 -------------------------------------------------------
-<a name="AnyPeer"></a>
+<a name="AnyPeer.constructor"></a>
 ### AnyPeer()
 
 Constructor should not be used directly
@@ -521,12 +577,237 @@ Emitted when the peer has disconnected
 * `peer` - <a href="#AnyPeer">AnyPeer</a> instance
 * `reason` - a string detailing the disconnect reason
 
+-------------------------------------------------------
+<a name="AnyHTTPRouter.constructor"></a>
+### AnyHTTPRouter()
+
+Constructor should not be used directly
+
+-------------------------------------------------------
+<a name="AnyHTTPRouter.on"></a>
+### AnyHTTPRouter.on(method, path, callback)
+
+Raw method to link to a HTTP query.
+
+Example:
+```javascript
+AnySocket.on("GET", "/index", (peer) => {
+    peer
+        .status(200)
+        .body("hello world")
+        .end();
+});
+```
+
+**Arguments:**
+* `method` - GET/POST/DELETE/Any Custom Method. _Use "\_" for any method_
+* `path` - HTTP path, can be a string or RegExp instance
+* `callback` - executed when the path matches a HTTP Path (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>)
+
+-------------------------------------------------------
+<a name="AnyHTTPRouter.any"></a>
+### AnyHTTPRouter.any(path, callback)
+
+Matches a path with any method
+
+Example:
+```javascript
+AnySocket.any("/index", (peer) => {
+    peer
+        .status(200)
+        .body("hello world")
+        .end();
+});
+```
+
+**Arguments:**
+* `path` - HTTP path, can be a string or RegExp instance
+* `callback` - executed when the path matches a HTTP Path (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>)
+
+-------------------------------------------------------
+<a name="AnyHTTPRouter.get"></a>
+### AnyHTTPRouter.get(path, callback)
+
+Matches a path with GET method
+
+Example:
+```javascript
+AnySocket.get("/index", (peer) => {
+    peer
+        .status(200)
+        .body("hello world")
+        .end();
+});
+```
+
+**Arguments:**
+* `path` - HTTP path, can be a string or RegExp instance
+* `callback` - executed when the path matches a HTTP Path (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>)
+
+-------------------------------------------------------
+<a name="AnyHTTPRouter.post"></a>
+### AnyHTTPRouter.post(path, callback)
+
+Matches a path with POST method
+
+Example:
+```javascript
+AnySocket.post("/index", (peer) => {
+    peer
+        .status(200)
+        .body("hello world")
+        .end();
+});
+```
+
+**Arguments:**
+* `path` - HTTP path, can be a string or RegExp instance
+* `callback` - executed when the path matches a HTTP Path (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>)
+
+-------------------------------------------------------
+<a name="AnyHTTPRouter.delete"></a>
+### AnyHTTPRouter.delete(path, callback)
+
+Matches a path with DELETE method
+
+Example:
+```javascript
+AnySocket.delete("/index", (peer) => {
+    peer
+        .status(200)
+        .body("hello world")
+        .end();
+});
+```
+
+**Arguments:**
+* `path` - HTTP path, can be a string or RegExp instance
+* `callback` - executed when the path matches a HTTP Path (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>)
+
+-------------------------------------------------------
+<a name="AnyHTTPRouter.error"></a>
+### AnyHTTPRouter.error(callback)
+
+Executes when a HTTP error is catched.
+
+**Arguments:**
+* `callback` - an error callback (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>, error)
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.constructor"></a>
+### AnyHTTPPeer()
+
+Constructor should not be used directly
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.url"></a>
+### AnyHTTPPeer.url
+
+**Returns** the HTTP Path without query string
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.query"></a>
+### AnyHTTPPeer.query
+
+**Returns** an object like 
+```javascript 
+{
+    headers: req.headers, // headers
+    cookies: req.headers.cookie, // cookies
+    method: req.method.toLowerCase(), // method lowercased
+    body: req.body, // post body
+    qs: qs.query // query string
+}
+```
+
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.cookies"></a>
+### AnyHTTPPeer.cookies
+
+**Returns** the HTTP Cookies
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.status"></a>
+### AnyHTTPPeer.status(code)
+
+Sets the return status code
+
+**Arguments:**
+* `code` - HTTP Status code (int)
+
+
+**Returns** <a name="AnyHTTPPeer.constructor">AnyHTTPPeer</a> for chaining
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.header"></a>
+### AnyHTTPPeer.header(name, value)
+
+Sets a header
+
+**Arguments:**
+* `name` - header name (string)
+* `value` - header value (string)
+
+**Returns** <a name="AnyHTTPPeer.constructor">AnyHTTPPeer</a> for chaining
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.body"></a>
+### AnyHTTPPeer.body(chunk)
+
+Appends a chunk(part) of the return body 
+
+**Arguments:**
+* `chunk` - HTTP Body (string)
+
+**Returns** <a name="AnyHTTPPeer.constructor">AnyHTTPPeer</a> for chaining
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.setCookie"></a>
+### AnyHTTPPeer.setCookie(key, value, [expires])
+
+Sets a cookie with key, value and expires.
+
+Cookies are set on the same domain and path "/"
+
+**Arguments:**
+* `key` - cookie name (string)
+* `value` - cookie value (string)
+* `expires` - cookie expire time (UnixTimestamp in millis). If not set, expires = 1
+
+**Returns** <a name="AnyHTTPPeer.constructor">AnyHTTPPeer</a> for chaining
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.deleteCookie"></a>
+### AnyHTTPPeer.deleteCookie(key)
+
+Sets a cookie with key and expires = 1
+
+**Arguments:**
+* `key` - cookie name (string)
+
+**Returns** <a name="AnyHTTPPeer.constructor">AnyHTTPPeer</a> for chaining
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.end"></a>
+### AnyHTTPPeer.end()
+
+Flush data and close the connection
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.isClosed"></a>
+### AnyHTTPPeer.isClosed()
+
+Check if the connection has already been ended / closed.
+
+-------------------------------------------------------
+
+
 <a name="future"></a>
 ## Upcoming Features
 * Mesh Network
-* Multiple transports: **wss**, **tcp**, **http**, **udp***, **ipc**
+* Multiple transports: **wss**, **tcp**, **udp***, **ipc**
 * Client reconnection
-* Custom AUTH method
 
 _* this will require a change in the protocol, as the protocol assumes the packets are sent using a reliable, ordered connection_
 

@@ -15,7 +15,7 @@ server.authPacket = () => {
 };
 // packet received for auth validation
 server.onAuth = (packet => {
-    return packet.data.auth == PASSWORD;
+    return packet.auth == PASSWORD;
 });
 
 server.listen("ws", 3000);
@@ -35,7 +35,7 @@ client.authPacket = () => {
 };
 // packet received for auth validation
 client.onAuth = (packet => {
-    return packet.data.auth == PASSWORD;
+    return packet.auth == PASSWORD;
 });
 
 client.connect("ws", "127.0.0.1", 3000);

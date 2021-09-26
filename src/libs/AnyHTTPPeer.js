@@ -68,13 +68,13 @@ module.exports = class AnyHTTPPeer {
         return this;
     }
 
-    header(name, body) {
+    header(name, value) {
         if (this.isClosed()) {
             debug("Connection already ended!");
             return this;
         }
 
-        this[httpResult]._headers[name] = body;
+        this[httpResult]._headers[name] = value;
         return this;
     }
 
