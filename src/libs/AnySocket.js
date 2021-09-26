@@ -227,6 +227,14 @@ class AnySocket extends EventEmitter {
         });
     }
 
+    onAuth(packet) {
+        return true;
+    }
+
+    authPacket() {
+        return undefined;
+    }
+
     //endregion
 
     //region Private Functions
@@ -346,6 +354,8 @@ class AnySocket extends EventEmitter {
 
             anypeer.disconnect();
             this.emit("disconnected", anypeer, reason);
+        } else {
+            peer.disconnect();
         }
     }
 

@@ -11,6 +11,7 @@ const ENCRYPTION_NONCE = Symbol("nonce");
 const heartbeatTimer = Symbol("heartbeat timer");
 const heartbeatsMissed = Symbol("heartbeats missed");
 const heartbeatPonged = Symbol("heartbeat ponged");
+const authTimeout = Symbol("authTimeout");
 
 module.exports = class AnyProtocol extends EventEmitter {
     constructor(anysocket, peer, options) {
@@ -24,10 +25,12 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[heartbeatTimer] = 0;
         this[heartbeatsMissed] = 0;
         this[heartbeatPonged] = true;
+        this[authTimeout] = false;
 
         this.peerID = peer.id;
         this.peer = peer;
         this.options = Object.assign({
+            authTimeout: 5 * 1000,
             replyTimeout: 30 * 1000,
             heartbeatInterval: 5 * 1000
         }, options);
@@ -54,7 +57,8 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (this.peer.isClient() && !this.peerID) {
             this.changeState(constants.PROTOCOL_STATES.AUTHING);
             this.send(Packet.data({
-                id: this.anysocket.id
+                id: this.anysocket.id,
+                auth: this.anysocket.authPacket()
             }).setType(Packet.TYPE.AUTH));
         }
         if (this.peerID) {
@@ -172,13 +176,14 @@ module.exports = class AnyProtocol extends EventEmitter {
                                 case constants.PROTOCOL_STATES.ESTABLISHED:
                                     if (packet.type == Packet.TYPE.AUTH) {
                                         invalidPacket = false;
-                                        if (!packet.data.id) {
+                                        if (!packet.data.id || !this.anysocket.onAuth(packet)) {
                                             return this.disconnect("Invalid Auth Packet!");
                                         }
                                         this.peerID = packet.data.id;
 
                                         this.send(Packet.data({
-                                            id: this.anysocket.id
+                                            id: this.anysocket.id,
+                                            auth: this.anysocket.authPacket()
                                         }).setType(Packet.TYPE.AUTH)).then(() => {
                                             this.changeState(constants.PROTOCOL_STATES.CONNECTED);
                                             this.emit("ready", this);
@@ -190,7 +195,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                                     if (packet.type == Packet.TYPE.AUTH) {
                                         invalidPacket = false;
                                         this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                        if (!packet.data.id) {
+                                        if (!packet.data.id || !this.anysocket.onAuth(packet)) {
                                             return this.disconnect("Invalid Auth Packet!");
                                         }
                                         this.peerID = packet.data.id;
@@ -292,14 +297,25 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.state = state;
         switch (this.state) {
             case constants.PROTOCOL_STATES.ESTABLISHED:
+                this[authTimeout] = setTimeout(() => {
+                    this.disconnect("auth timed out");
+                }, this.options.authTimeout);
                 this._linkPacketQueue.pause();
                 this._recvLinkPacketQueue.pause();
                 break;
             case constants.PROTOCOL_STATES.AUTHING:
+                // clear for client
+                clearTimeout(this[authTimeout]);
+                this[authTimeout] = false;
+
                 this._linkPacketQueue.pause();
                 this._recvLinkPacketQueue.pause();
                 break;
             case constants.PROTOCOL_STATES.CONNECTED:
+                // clear for server
+                clearTimeout(this[authTimeout]);
+                this[authTimeout] = false;
+
                 this._linkPacketQueue.resume();
                 this._recvLinkPacketQueue.resume();
                 break;
@@ -448,7 +464,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             return;
 
         clearTimeout(this[heartbeatTimer]);
-        if(this.state == constants.PROTOCOL_STATES.DISCONNECTED)
+        if(this.state == constants.PROTOCOL_STATES.AUTHING || this.state == constants.PROTOCOL_STATES.DISCONNECTED)
             return;
 
         this[heartbeatTimer] = setTimeout(() => {

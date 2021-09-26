@@ -29,6 +29,7 @@ module.exports = class WSPeer extends AbstractPeer {
     onDisconnect() {
         if (this.socket) {
             this.socket.close();
+            this.socket.terminate();
             this.socket = null;
         }
     }
