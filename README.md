@@ -806,7 +806,7 @@ Check if the connection has already been ended / closed.
 <a name="future"></a>
 ## Upcoming Features
 * Mesh Network
-* Multiple transports: **wss**, **tcp**, **udp***, **ipc**
+* Multiple transports: **tcp**, **udp***, **ipc**
 * Client reconnection
 
 _* this will require a change in the protocol, as the protocol assumes the packets are sent using a reliable, ordered connection_
