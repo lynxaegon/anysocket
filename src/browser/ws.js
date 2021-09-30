@@ -31,4 +31,8 @@ module.exports = class BrowserWS {
     close() {
         this.ws.close();
     }
+
+    terminate() {
+        // do nothing
+    }
 };
