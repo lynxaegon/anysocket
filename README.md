@@ -71,6 +71,10 @@ or
 ```html
 <script src="/dist/anysocket.bundle.js"></script>
 ```
+or _(if using AnySocketHTTP)_
+```html
+<script src="@anysocket"></script>
+```
 
 
 <a name="usage"></a>
