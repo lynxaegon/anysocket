@@ -235,6 +235,7 @@ Attaches a new server transport based on the selected **scheme*
     ip: "0.0.0.0", // listening ip
     port: 3000, // listening port
     authTimeout: 5 * 1000, // auth timeout
+    e2eTimeout: 5 * 1000, // e2e timeout
     replyTimeout: 30 * 1000, // reply timeout
     heartbeatInterval: 5 * 1000 // heartbeat interval
 }
@@ -256,6 +257,7 @@ Connects to AnySocket Server
 ```
 {
     authTimeout: 5 * 1000, // auth timeout
+    e2eTimeout: 5 * 1000, // e2e timeout
     replyTimeout: 30 * 1000, // reply timeout
     heartbeatInterval: 5 * 1000 // heartbeat interval
 }

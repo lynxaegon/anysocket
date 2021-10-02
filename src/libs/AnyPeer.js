@@ -206,7 +206,11 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     _recvForward(packet) {
-        this[_protocol].onPacket(this[_protocol].peer, packet.msg);
+        this[_protocol]._recvPacketQueue.push({
+            peer: this[_protocol].peer,
+            recv: packet.msg,
+            state: this[_protocol].ENCRYPTION_STATE
+        });
     }
 
     _resolveReply(message) {

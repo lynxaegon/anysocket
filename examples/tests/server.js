@@ -12,7 +12,7 @@ server.on("connected", (peer) => {
     peer.send({
         type: "test"
     }, true).then((packet) => {
-        console.log("Replied:", packet.data);
+        console.log("Replied:", packet.msg);
     }).catch((err) => {
         console.log("Reply failed:", err);
     });
@@ -27,7 +27,7 @@ server.on("e2e", (peer) => {
 });
 
 server.on("message", (packet) => {
-    log("message", packet.data);
+    log("message", packet.msg);
 });
 
 server.server("ws", {

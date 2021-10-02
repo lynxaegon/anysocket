@@ -11,7 +11,7 @@ function create() {
     });
 
     client.on("message", (packet) => {
-        if (packet.data.type == "test") {
+        if (packet.msg.type == "test") {
             packet.reply({
                 type: "test",
                 result: "ok"

@@ -12,6 +12,7 @@ const heartbeatTimer = Symbol("heartbeat timer");
 const heartbeatsMissed = Symbol("heartbeats missed");
 const heartbeatPonged = Symbol("heartbeat ponged");
 const authTimeout = Symbol("authTimeout");
+const e2eTimeout = Symbol("e2eTimeout");
 
 module.exports = class AnyProtocol extends EventEmitter {
     constructor(anysocket, peer, options) {
@@ -26,11 +27,13 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[heartbeatsMissed] = 0;
         this[heartbeatPonged] = true;
         this[authTimeout] = false;
+        this[e2eTimeout] = false;
 
         this.peerID = peer.id;
         this.peer = peer;
         this.options = Object.assign({
             authTimeout: 5 * 1000,
+            e2eTimeout: 5 * 1000,
             replyTimeout: 30 * 1000,
             heartbeatInterval: 5 * 1000
         }, options);
@@ -282,7 +285,7 @@ module.exports = class AnyProtocol extends EventEmitter {
 
                             if (invalidPacket) {
                                 console.log("Invalid packet received! RECV:", packet);
-                                resolve();
+                                return this.disconnect("Invalid Packet!");
                             }
                         } else {
                             // continue processing data
@@ -316,10 +319,17 @@ module.exports = class AnyProtocol extends EventEmitter {
                 clearTimeout(this[authTimeout]);
                 this[authTimeout] = false;
 
+                clearTimeout(this[e2eTimeout]);
+                this[e2eTimeout] = false;
+
                 this._linkPacketQueue.resume();
                 this._recvLinkPacketQueue.resume();
                 break;
             case constants.PROTOCOL_STATES.SWITCHING_PROTOCOL:
+                this[e2eTimeout] = setTimeout(() => {
+                    this.disconnect("e2e timed out");
+                }, this.options.e2eTimeout);
+
                 this._linkPacketQueue.pause();
                 this._recvLinkPacketQueue.pause();
                 break;
@@ -406,7 +416,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                     });
                     break;
                 default:
-                    throw new Error("Encryption state '" + this.ENCRYPTION_STATE + "' not implemented!");
+                    throw new Error("[encrypt] Encryption state '" + this.ENCRYPTION_STATE + "' not implemented!");
             }
         });
     }
@@ -426,7 +436,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                     });
                     break;
                 default:
-                    throw new Error("Encryption state '" + this.ENCRYPTION_STATE + "' not implemented!");
+                    throw new Error("[decrypt] Encryption state '" + encryptionState + "' not implemented!");
             }
         });
     }

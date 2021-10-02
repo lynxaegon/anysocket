@@ -36,18 +36,23 @@ const client2 = new AnySocket();
 client2.on("connected", (peer) => {
     console.log("[CLIENT2][" + peer.id + "] Connected");
     if(peer.isProxy()) {
-        peer.send({
-            "hello": "world"
-        }, true).then((packet) => {
-            console.log("got reply", packet.msg);
-            client2.stop();
-            client1.stop();
-            server.stop();
-        });
+        peer.e2e();
     } else {
         client2.proxy(client1.id, peer.id);
     }
 });
+client2.on("e2e", (peer) => {
+    console.log("e2e");
+    peer.send({
+        "hello": "world"
+    }, true).then((packet) => {
+        console.log("got reply", packet.msg);
+        client2.stop();
+        client1.stop();
+        server.stop();
+    });
+})
+
 client2.on("message", (packet) => {
     console.log("[CLIENT2][" + packet.peer.id + "] Got Message", packet.msg);
 });
