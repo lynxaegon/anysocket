@@ -30,7 +30,7 @@ _WIP Documentation_
 * RPC support
 * P2P using a proxy server (with support for direct E2EE between peers)
 * Binary support (_see: <a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>_)
-* **Browser support** - 31kb footprint (_see: ```/dist/anysocket.bundle.js```_)
+* **Browser support** - 31kb footprint (_see: ```/dist/anysocket.browser.js```_)
 * Multiple transports *(implemented atm: **ws/wss**, **http/https**)
 * All peers have a UUIDv4 associated
 * Disconnect detection using a heartbeat
@@ -69,7 +69,7 @@ npm install --save anysocket
 ```
 or
 ```html
-<script src="/dist/anysocket.bundle.js"></script>
+<script src="/dist/anysocket.browser.js"></script>
 ```
 or _(if using AnySocketHTTP)_
 ```html
