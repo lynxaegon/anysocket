@@ -449,8 +449,8 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _getSeq() {
-        // max 2 bytes
-        if (this._seq >= 32767) {
+        // max 4 bytes
+        if (this._seq >= 2147483647) {
             this._seq = 0;
         }
         this._seq++;

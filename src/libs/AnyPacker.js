@@ -1,21 +1,21 @@
 const BufferUtils = require("./utils_buffer");
 
 class AnyPacker {
-    packInt16(int) {
-        const arr = new ArrayBuffer(2);
+    packInt32(int) {
+        const arr = new ArrayBuffer(4);
         const view = new DataView(arr);
-        view.setInt16(0, int, false);
+        view.setInt32(0, int, false);
         return String.fromCharCode.apply(String, new Uint8Array(arr));
     }
 
-    unpackInt16(bytes) {
-        const arr = new ArrayBuffer(2);
+    unpackInt32(bytes) {
+        const arr = new ArrayBuffer(4);
         const bufView = new Uint8Array(arr);
         for (let i in bytes) {
             bufView[i] = bytes.charCodeAt(i);
         }
         const view = new DataView(arr);
-        return view.getInt16(0);
+        return view.getInt32(0);
     }
 
     packHex(hex) {

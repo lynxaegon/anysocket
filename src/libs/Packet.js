@@ -2,7 +2,7 @@ const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
 
 const getSeq = (buf) => {
-    return AnyPacker.unpackInt16(buf.substr(2, 2));
+    return AnyPacker.unpackInt32(buf.substr(2, 4));
 };
 
 const getType = (buf) => {
@@ -50,7 +50,7 @@ class Packet {
             packet[i] =
                 (i == packet.length - 1 ? constants.PACKET_LENGTH.FULL : constants.PACKET_LENGTH.PARTIAL).toString() +
                 this.type.toString() +
-                AnyPacker.packInt16(this.seq) +
+                AnyPacker.packInt32(this.seq) +
                 await encryptFnc(packet[i], Math.abs(this.seq))
         }
 
@@ -63,7 +63,7 @@ class Packet {
         this.type = getType(buf);
         this.seq = getSeq(buf);
 
-        this.buffer.push(await decryptFnc(encryptionState, buf.substr(4), Math.abs(this.seq)));
+        this.buffer.push(await decryptFnc(encryptionState, buf.substr(6), Math.abs(this.seq)));
 
         if (eol) {
             try {
