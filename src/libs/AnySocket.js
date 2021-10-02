@@ -44,7 +44,7 @@ class AnySocket extends EventEmitter {
         this[_private.anymesh] = null;
         if (typeof window === 'undefined') {
             // nodejs
-            this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.bundle.js");
+            this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.browser.js");
         }
 
         return this;
