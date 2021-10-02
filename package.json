@@ -1,7 +1,7 @@
 {
   "name": "anysocket",
-  "version": "0.4.1",
-  "description": "An abstract networking layer over multiple transports, agnostic of client/server with support for E2EE",
+  "version": "0.4.2",
+  "description": "An abstract networking layer over multiple transports, client/server agnostic with support for E2EE",
   "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -22,6 +22,7 @@
     "http",
     "https",
     "udp",
+    "binary",
     "end-to-end",
     "encrypted",
     "json",
