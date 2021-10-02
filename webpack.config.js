@@ -8,7 +8,7 @@ module.exports = {
     output: {
         library: "AnySocket",
         path: path.resolve(__dirname, 'dist'),
-        filename: 'anysocket.bundle.js'
+        filename: 'anysocket.browser.js'
     },
     module: {
         rules: [
