@@ -292,10 +292,7 @@ class AnySocket extends EventEmitter {
         // register protocol messages
         anyprotocol.on("forward", this[_private.onForward].bind(this));
         anyprotocol.once("ready", (protocol) => {
-            let peer = this[_private.onProtocolReady](protocol);
-            if(resolve) {
-                resolve(peer);
-            }
+            this[_private.onProtocolReady](protocol, resolve)
         });
     }
 
@@ -315,7 +312,7 @@ class AnySocket extends EventEmitter {
         }
     }
 
-    [_private.onProtocolReady](protocol) {
+    [_private.onProtocolReady](protocol, resolve) {
         debug("Peer ready");
         const anypeer = new AnyPeer(protocol);
         this[_private.peers][protocol.peerID] = anypeer;
@@ -327,6 +324,10 @@ class AnySocket extends EventEmitter {
             this.emit("e2e", peer);
         });
         anypeer.on("internal",this[_private.onPeerInternalMessage].bind(this));
+
+        if(resolve) {
+            resolve(anypeer);
+        }
 
         this.emit("connected", anypeer);
 
