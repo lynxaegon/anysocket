@@ -1,6 +1,6 @@
 {
   "name": "anysocket",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "An abstract networking layer over multiple transports, client/server agnostic with support for E2EE",
   "main": "src/index.js",
   "scripts": {
@@ -37,7 +37,7 @@
   },
   "homepage": "https://github.com/lynxaegon/anysocket#readme",
   "dependencies": {
-    "debug": "^4.3.1",
+    "debug": "^4.3.2",
     "fastq": "^1.11.0",
     "ws": "^7.4.1"
   },

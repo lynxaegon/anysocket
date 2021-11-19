@@ -264,7 +264,14 @@ Connects to AnySocket Server
 ```
 
 **Returns** a Promise that resolves/rejects when a connection has been established
-_note: you cannot take actions (ex: send) until the `connected` event has been triggered_
+```
+client.connect("ws", "127.0.0.1", 3000).then(peer => {
+    console.log("Connection established to peer", peer.id);
+    peer.send("Hello World");
+}).catch(reason => {
+    console.log("Couldn't connect! Reason:", reason);
+});
+```
 
 -------------------------------------------------------
 <a name="AnySocket.stop"></a>

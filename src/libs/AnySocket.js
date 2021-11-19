@@ -180,29 +180,36 @@ class AnySocket extends EventEmitter {
     }
 
     connect(scheme, ip, port, options) {
-        this._started = true;
-        options = Object.assign(options || {}, {
-            ip: ip,
-            port: port
-        });
+        return new Promise((resolve, reject) => {
+            this._started = true;
+            options = Object.assign(options || {}, {
+                ip: ip,
+                port: port
+            });
 
-        // client
-        let transport = this[_private.findTransport](scheme);
-        transport = new transport("client", options);
+            // client
+            let transport = this[_private.findTransport](scheme);
+            transport = new transport("client", options);
 
-        // start transport
-        transport.on("connected", (peer) => {
-            this[_private.transports][transport.id] = transport;
-            this[_private.onPeerConnected](peer, transport.options);
-            debug("Transports Added", transport.id, Object.keys(this[_private.transports]).length);
+            // start transport
+            transport.on("connected", (peer) => {
+                this[_private.transports][transport.id] = transport;
+                this[_private.onPeerConnected](peer, transport.options, resolve);
+                debug("Transports Added", transport.id, Object.keys(this[_private.transports]).length);
+            });
+            transport.on("disconnected", (peer, reason) => {
+                this[_private.transports][transport.id].stop();
+                delete this[_private.transports][transport.id];
+                this[_private.onPeerDisconnected](peer, reason);
+                debug("Transports left", transport.id, Object.keys(this[_private.transports]).length);
+
+                // protocol was never ready
+                if(!this[_private.peers][peer.id]) {
+                    reject(reason);
+                }
+            });
+            transport.connect().catch(reject);
         });
-        transport.on("disconnected", (peer, reason) => {
-            this[_private.transports][transport.id].stop();
-            delete this[_private.transports][transport.id];
-            this[_private.onPeerDisconnected](peer, reason);
-            debug("Transports left", transport.id, Object.keys(this[_private.transports]).length);
-        });
-        return transport.connect();
     }
 
     stop() {
@@ -251,7 +258,7 @@ class AnySocket extends EventEmitter {
         throw new Error("Invalid scheme '"+ scheme +"'");
     }
 
-    [_private.onPeerConnected](peer, options) {
+    [_private.onPeerConnected](peer, options, resolve) {
         debug("Peer connected");
         if(peer.type == "http") {
             peer.on("message", (req, res) => {
@@ -285,7 +292,10 @@ class AnySocket extends EventEmitter {
         // register protocol messages
         anyprotocol.on("forward", this[_private.onForward].bind(this));
         anyprotocol.once("ready", (protocol) => {
-            this[_private.onProtocolReady](protocol);
+            let peer = this[_private.onProtocolReady](protocol);
+            if(resolve) {
+                resolve(peer);
+            }
         });
     }
 
@@ -319,6 +329,8 @@ class AnySocket extends EventEmitter {
         anypeer.on("internal",this[_private.onPeerInternalMessage].bind(this));
 
         this.emit("connected", anypeer);
+
+        return anypeer;
     }
 
     [_private.onPeerDisconnected](peer, reason) {
