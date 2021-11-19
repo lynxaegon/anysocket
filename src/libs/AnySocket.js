@@ -329,7 +329,10 @@ class AnySocket extends EventEmitter {
             resolve(anypeer);
         }
 
-        this.emit("connected", anypeer);
+        // allow resolve to run before emitting event
+        setTimeout(() => {
+            this.emit("connected", anypeer);
+        }, 0);
 
         return anypeer;
     }
