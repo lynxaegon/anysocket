@@ -313,6 +313,12 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onProtocolReady](protocol, resolve) {
+        if(this[_private.peers][protocol.peerID]) {
+            protocol.peerID = null;
+            protocol.disconnect("Duplicated AnySocket ID found!");
+            return;
+        }
+
         debug("Peer ready");
         const anypeer = new AnyPeer(protocol);
         this[_private.peers][protocol.peerID] = anypeer;
