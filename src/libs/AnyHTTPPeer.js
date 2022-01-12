@@ -22,7 +22,7 @@ module.exports = class AnyHTTPPeer {
             _headers: {},
             _body: [],
             _cookies: [],
-            _url: qs.pathname.toLowerCase(),
+            _url: qs.pathname,
             _query: {
                 headers: req.headers,
                 cookies: req.headers.cookie,

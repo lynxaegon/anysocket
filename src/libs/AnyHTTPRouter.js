@@ -22,7 +22,7 @@ module.exports = class AnyHTTPRouter {
             if(!this.routes[method])
                 this.routes[method] = {};
 
-            this.routes[method][path.toLowerCase()] = callback
+            this.routes[method][path] = callback
         }
 
         return this;
