@@ -1,11 +1,8 @@
 # AnySocket
 An abstract networking layer over multiple transports, client/server agnostic with support for E2EE
 
-[![Dependency Status](https://david-dm.org/lynxaegon/anysocket.svg)](https://david-dm.org/lynxaegon/anysocket)
-[![devDependency Status](https://david-dm.org/lynxaegon/anysocket/dev-status.svg)](https://david-dm.org/lynxaegon/anysocket/?type=dev)
 [![NPM version](https://badge.fury.io/js/anysocket.svg)](https://www.npmjs.com/package/anysocket)
 ![Downloads](https://img.shields.io/npm/dm/anysocket.svg?style=flat)
-[![HitCount](http://hits.dwyl.com/lynxaegon/anysocket.svg)](http://hits.dwyl.com/lynxaegon/anysocket)
 
 * <a href="#features">Features</a>
 * <a href="benchmarks">Benchmarks</a>
