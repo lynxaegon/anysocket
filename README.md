@@ -115,7 +115,7 @@ More in the `examples` folder.
 
 ## Documentation
 
-See [documentation](docs#api)
+See [documentation](docs#api) and [examples](examples) folder
 
 <a name="future"></a>
 ## Upcoming Features
