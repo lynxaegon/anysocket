@@ -11,15 +11,13 @@ An abstract networking layer over multiple transports, client/server agnostic wi
 * <a href="benchmarks">Benchmarks</a>
 * <a href="#installation">Installation</a>
 * <a href="#usage">Usage</a>
-* <a href="#api">API</a>
+* <a href="docs">Documentation / API</a>
 * <a href="#future">Upcoming Features</a>
 * <a href="#license">License</a>
 
 #### Important
 
-This is a work in progress and API is subject to change.
-
-_WIP Documentation_
+This is a work in progress and [API](docs) is subject to change.
 
 <a name="features"></a>
 ## Features
