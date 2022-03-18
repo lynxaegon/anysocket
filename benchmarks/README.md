@@ -16,3 +16,7 @@
   * __http__: _120k req/s_
   * __anysocket__: _100k req/s_
   * __express__: _63k req/s_
+
+* ### WS Server (_[link](ws/)_)
+    * __ws__: _61K req/s_
+    * __anysocket__: _24k req/s_

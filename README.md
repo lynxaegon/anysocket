@@ -8,7 +8,7 @@ An abstract networking layer over multiple transports, client/server agnostic wi
 [![HitCount](http://hits.dwyl.com/lynxaegon/anysocket.svg)](http://hits.dwyl.com/lynxaegon/anysocket)
 
 * <a href="#features">Features</a>
-* <a href="#benchmark">Benchmark</a>
+* <a href="benchmarks">Benchmarks</a>
 * <a href="#installation">Installation</a>
 * <a href="#usage">Usage</a>
 * <a href="#api">API</a>
@@ -41,25 +41,8 @@ _WIP Documentation_
 
 _Info: Binary RPC arguments and responses are auto packed/unpacked (<a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer.pack</b></code></a>/<a href="#AnySocket.Packer.unpack"><code><b>AnySocket.Packer.unpack</b></code></a>)._ 
 
+## <a href="benchmarks">Benchmarks</a>
 
-<a name="benchmark"></a>
-## Benchmark
-#### nodejs - browser
-```
-Running PLAIN TEXT benchmark: 5518.838ms  (test duration)
-Latency: 0.86 ms
-Running E2EE benchmark: 5986.633ms        (test duration)
-Latency: 1.06 ms
-```
-
-#### nodejs - nodejs
-```
-Running PLAIN TEXT benchmark: 5010.484ms  (test duration)
-Latency: 0.67 ms
-Running E2EE benchmark: 5003.755ms        (test duration)
-Latency: 0.92 ms
-```
-_You can run the benchmarks from: ```/examples/benchmark```_
 
 <a name="installation"></a>
 ## Installation
