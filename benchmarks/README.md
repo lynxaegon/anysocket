@@ -7,6 +7,7 @@
 
 * ### WS Server (_[link](ws/)_)
     * __ws__: _61K req/s_
+    * __socket.io__: _28K req/s_ (high latency) 
     * __anysocket__: _24k req/s_
 
 ## Benchmark Hardware:
