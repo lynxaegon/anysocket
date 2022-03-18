@@ -91,7 +91,6 @@ const client = new AnySocket();
 const PORT = 3000;
 client.connect("ws", "127.0.0.1", PORT)
     .then(() => {
-        // note: you cannot send messages from here, you need to wait for the "connected" event
         console.log("Connected to server");
     })
     .catch((err) => {
