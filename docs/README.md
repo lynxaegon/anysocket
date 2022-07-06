@@ -45,6 +45,7 @@
     * <a href="#AnyHTTPRouter.get"><code><b>get()</b></code></a>
     * <a href="#AnyHTTPRouter.post"><code><b>post()</b></code></a>
     * <a href="#AnyHTTPRouter.delete"><code><b>delete()</b></code></a>
+    * <a href="#AnyHTTPRouter.upgrade"><code><b>upgrade()</b></code></a>
     * <a href="#AnyHTTPRouter.error"><code><b>error()</b></code></a>
 * <a href="#AnyHTTPPeer.constructor"><code><b>AnyHTTPPeer()</b></code></a>
     * <a href="#AnyHTTPPeer.url"><code><b>url</b></code></a>
@@ -139,6 +140,20 @@ Connects to AnySocket Server
 **Returns** a Promise that resolves/rejects when a connection has been established
 ```
 client.connect("ws", "127.0.0.1", 3000).then(peer => {
+    console.log("Connection established to peer", peer.id);
+    peer.send("Hello World");
+}).catch(reason => {
+    console.log("Couldn't connect! Reason:", reason);
+});
+```
+
+With cookies support: _(WebSocket only)_
+```
+client.connect("ws", "127.0.0.1", 3000, {
+    cookies: {
+        "hello": "world"
+    }
+}).then(peer => {
     console.log("Connection established to peer", peer.id);
     peer.send("Hello World");
 }).catch(reason => {
@@ -543,7 +558,7 @@ Raw method to link to a HTTP query.
 
 Example:
 ```javascript
-AnySocket.on("GET", "/index", (peer) => {
+AnySocket.http.on("GET", "/index", (peer) => {
     peer
         .status(200)
         .body("hello world")
@@ -566,7 +581,7 @@ Matches a path with any method
 
 Example:
 ```javascript
-AnySocket.any("/index", (peer) => {
+AnySocket.http.any("/index", (peer) => {
     peer
         .status(200)
         .body("hello world")
@@ -588,7 +603,7 @@ Matches a path with GET method
 
 Example:
 ```javascript
-AnySocket.get("/index", (peer) => {
+AnySocket.http.get("/index", (peer) => {
     peer
         .status(200)
         .body("hello world")
@@ -610,7 +625,7 @@ Matches a path with POST method
 
 Example:
 ```javascript
-AnySocket.post("/index", (peer) => {
+AnySocket.http.post("/index", (peer) => {
     peer
         .status(200)
         .body("hello world")
@@ -632,7 +647,7 @@ Matches a path with DELETE method
 
 Example:
 ```javascript
-AnySocket.delete("/index", (peer) => {
+AnySocket.http.delete("/index", (peer) => {
     peer
         .status(200)
         .body("hello world")
@@ -645,6 +660,26 @@ AnySocket.delete("/index", (peer) => {
 * `callback` - executed when the path matches a HTTP Path (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>)
 
 [back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyHTTPRouter.upgrade"></a>
+### AnyHTTPRouter.upgrade(callback)
+
+Matches connection upgrade
+
+Example:
+```javascript
+AnySocket.http.upgrade((peer) => {
+    if(peer.cookies.hello != "world")
+        peer.end(); // denies connection upgrade
+});
+```
+
+**Arguments:**
+* `callback` - executed when the connection is upgraded to WS (arguments: <a href="#AnyHTTPPeer.constructor">AnyHTTPPeer</a>)
+
+[back to top](#api)
+
 
 -------------------------------------------------------
 <a name="AnyHTTPRouter.error"></a>

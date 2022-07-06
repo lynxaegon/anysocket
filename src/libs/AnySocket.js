@@ -261,6 +261,13 @@ class AnySocket extends EventEmitter {
     [_private.onPeerConnected](peer, options, resolve) {
         debug("Peer connected");
         if(peer.type == "http") {
+            peer.on("upgrade", (req, socket) => {
+                let httpPeer = new AnyHTTPPeer(req, socket);
+                httpPeer.header("ANYSOCKET-ID", this.id);
+                this.http._processUpgrade(httpPeer);
+                this.emit("http_upgrade", httpPeer, req, socket);
+            });
+
             peer.on("message", (req, res) => {
                 let httpPeer = new AnyHTTPPeer(req, res);
                 if(httpPeer.url == "/@anysocket") {

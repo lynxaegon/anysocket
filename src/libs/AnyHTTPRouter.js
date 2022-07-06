@@ -6,8 +6,10 @@ module.exports = class AnyHTTPRouter {
         this.routesRegexp = {
             _: []  // default ANY route
         };
+        this._upgradeCallback = null;
 
         this._process = this._process.bind(this);
+        this._processUpgrade = this._processUpgrade.bind(this);
     }
 
     on(method, path, callback) {
@@ -25,6 +27,11 @@ module.exports = class AnyHTTPRouter {
             this.routes[method][path] = callback
         }
 
+        return this;
+    }
+
+    upgrade(callback) {
+        this._upgradeCallback = callback;
         return this;
     }
 
@@ -46,6 +53,18 @@ module.exports = class AnyHTTPRouter {
 
     error(callback) {
         this.onError = callback;
+    }
+
+    _processUpgrade(peer) {
+        try {
+            if(!this._upgradeCallback)
+                return;
+
+            this._upgradeCallback(peer);
+        }
+        catch (e) {
+            return this._finish(peer, e);
+        }
     }
 
     _process(peer) {

@@ -28,7 +28,8 @@ module.exports = class AnyHTTPPeer {
                 cookies: req.headers.cookie,
                 method: req.method.toLowerCase(),
                 body: req.body,
-                qs: qs.query
+                qs: qs.query,
+                upgrade: req.upgrade
             },
             _status: 200
         };
@@ -52,6 +53,10 @@ module.exports = class AnyHTTPPeer {
 
     get query() {
         return this[httpResult]._query;
+    }
+
+    get upgrade() {
+        return this[httpResult]._query.upgrade;
     }
 
     get cookies() {
@@ -127,7 +132,9 @@ module.exports = class AnyHTTPPeer {
                 this.header("Set-Cookie", cookie);
             }
         }
-        this[resSymbol].writeHead(this[httpResult]._status, this[httpResult]._headers);
+        if(this[resSymbol].writeHead) {
+            this[resSymbol].writeHead(this[httpResult]._status, this[httpResult]._headers);
+        }
         this[endSymbol] = true;
 
         if (this[httpResult]._body.length > 0)

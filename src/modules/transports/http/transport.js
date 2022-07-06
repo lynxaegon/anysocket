@@ -50,6 +50,10 @@ class HTTP extends AbstractTransport {
                 this.addPeer(new Peer(socket));
             });
 
+            this.server.on("upgrade", (req, socket) => {
+                this.peers.get(socket.connectionID).emit("upgrade", req, socket);
+            });
+
             this.server.on('error', err => {
                 console.log("http err", err);
                 reject(err);

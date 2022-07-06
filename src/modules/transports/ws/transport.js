@@ -33,7 +33,15 @@ class WS extends AbstractTransport {
     onConnect(plain) {
         return new Promise((resolve, reject) => {
             let connected = false;
-            let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/');
+            let opts = null;
+            if(this.options.cookies) {
+                opts = {
+                    headers: {
+                        Cookie: this._formatCookies(this.options.cookies)
+                    }
+                }
+            }
+            let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
             ws.on('open', socket => {
                 connected = true;
                 this.addPeer(new Peer(ws));
@@ -60,6 +68,14 @@ class WS extends AbstractTransport {
             }
             resolve();
         });
+    }
+
+    _formatCookies(cookies) {
+        let cookieString = [];
+        for(let key in cookies) {
+            cookieString.push(key+"="+cookies[key]);
+        }
+        return cookieString.join("; ");
     }
 }
 module.exports = WS;
