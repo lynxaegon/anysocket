@@ -16,13 +16,16 @@ class HTTP extends AbstractTransport {
         return "http";
     }
 
-    _handler(req, res) {
+    _getSocket(req) {
         let socket = req.socket._parent;
         if(!socket){
             socket = req.socket;
         }
+        return socket
+    }
 
-        this.peers.get(socket.connectionID).emit("message", req, res);
+    _handler(req, res) {
+        this.peers.get(this._getSocket(req).connectionID).emit("message", req, res);
     }
 
     onListen() {
@@ -51,7 +54,7 @@ class HTTP extends AbstractTransport {
             });
 
             this.server.on("upgrade", (req, socket) => {
-                this.peers.get(socket.connectionID).emit("upgrade", req, socket);
+                this.peers.get(this._getSocket(req).connectionID).emit("upgrade", req, socket);
             });
 
             this.server.on('error', err => {
