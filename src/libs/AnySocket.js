@@ -70,10 +70,21 @@ class AnySocket extends EventEmitter {
     }
 
     mesh() {
-        if(this._started)
+        if (this._started)
             throw new Error("Cannot enable Mesh while AnySocket is running. You must first stop AnySocket!");
 
-        this[_private.anymesh] = new AnyMesh(this);
+        this[_private.anymesh] = new AnyMesh(this, this[_private.peers], this[_private.transports]);
+    }
+
+    emit(event, ...args) {
+        if (this[_private.anymesh]) {
+            return this[_private.anymesh].handleEmit(event, ...args);
+        }
+        super.emit(event, ...args);
+    }
+
+    meshEmit(...args) {
+        super.emit(...args);
     }
 
     setRPC(rpc) {
@@ -86,12 +97,11 @@ class AnySocket extends EventEmitter {
 
     proxy(peerID, throughPeerID) {
         return new Promise((resolve, reject) => {
-            if(peerID == throughPeerID || peerID == this.id) {
+            if (peerID == throughPeerID || peerID == this.id) {
                 reject("Cannot proxy loopback!");
                 return;
             }
-            if(this[_private.peers][throughPeerID].isProxy())
-            {
+            if (this[_private.peers][throughPeerID].isProxy()) {
                 // TODO: this requires to implement a full network graph (map)
                 // TODO: this will enable to send messages without having multiple forward headers
                 reject("Cannot proxy via a proxy! atm... :)");
@@ -102,7 +112,7 @@ class AnySocket extends EventEmitter {
                 action: "proxy",
                 id: peerID
             }, true).then((packet) => {
-                if(packet.msg.ok && !this[_private.peers][peerID]) {
+                if (packet.msg.ok && !this[_private.peers][peerID]) {
                     let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]), this[_private.peers][throughPeerID].options);
                     this[_private.onProtocolReady](protocol);
                     resolve(this[_private.peers][peerID]);
@@ -115,7 +125,7 @@ class AnySocket extends EventEmitter {
 
     unproxy(peerID, throughPeerID, reason) {
         reason = reason || "Proxy Connection Closed";
-        if(this[_private.peers][peerID] && this[_private.peers][peerID].isProxy() ) {
+        if (this[_private.peers][peerID] && this[_private.peers][peerID].isProxy()) {
             this[_private.peers][throughPeerID].sendInternal({
                 type: constants.INTERNAL_PACKET_TYPE.PROXY,
                 action: "unproxy",
@@ -142,21 +152,21 @@ class AnySocket extends EventEmitter {
         // server
         this._started = true;
         options = options || {};
-        if(typeof options == 'number'){
-            options = { port: options };
+        if (typeof options == 'number') {
+            options = {port: options};
         }
 
-        options.ip = options.ip || "0.0.0.0";
-        if(["http", "ws"].indexOf(scheme.toLowerCase()) == -1 && !options.port)
+        options.host = options.host || "0.0.0.0";
+        if (["http", "ws"].indexOf(scheme.toLowerCase()) == -1 && !options.port)
             throw new Error("Invalid port!");
 
-        if(["ws"].indexOf(scheme.toLowerCase()) != -1) {
-            if(!this[_private.httpServer]) {
+        if (["ws"].indexOf(scheme.toLowerCase()) != -1) {
+            if (!this[_private.httpServer]) {
                 this.listen("http", options);
             }
 
             options = {
-                server: this[_private.httpServer]
+                transport: this[_private.httpServer]
             };
         }
 
@@ -173,17 +183,17 @@ class AnySocket extends EventEmitter {
         });
 
         let result = transport.listen();
-        if(scheme == "http") {
-            this[_private.httpServer] = transport.server;
+        if (scheme == "http") {
+            this[_private.httpServer] = transport;
         }
         return result;
     }
 
-    connect(scheme, ip, port, options) {
+    connect(scheme, host, port, options) {
         return new Promise((resolve, reject) => {
             this._started = true;
             options = Object.assign(options || {}, {
-                ip: ip,
+                host: host,
                 port: port
             });
 
@@ -204,7 +214,7 @@ class AnySocket extends EventEmitter {
                 debug("Transports left", transport.id, Object.keys(this[_private.transports]).length);
 
                 // protocol was never ready
-                if(!this[_private.peers][peer.id]) {
+                if (!this[_private.peers][peer.id]) {
                     reject(reason);
                 }
             });
@@ -247,20 +257,20 @@ class AnySocket extends EventEmitter {
     //region Private Functions
     [_private.findTransport](scheme) {
         for (let name in AnySocket.Transport) {
-            if(!AnySocket.Transport.hasOwnProperty(name))
+            if (!AnySocket.Transport.hasOwnProperty(name))
                 continue;
 
-            if(AnySocket.Transport[name].scheme() == scheme) {
+            if (AnySocket.Transport[name].scheme() == scheme) {
                 return AnySocket.Transport[name];
             }
         }
 
-        throw new Error("Invalid scheme '"+ scheme +"'");
+        throw new Error("Invalid scheme '" + scheme + "'");
     }
 
     [_private.onPeerConnected](peer, options, resolve) {
         debug("Peer connected");
-        if(peer.type == "http") {
+        if (peer.type == "http") {
             peer.on("upgrade", (req, socket) => {
                 let httpPeer = new AnyHTTPPeer(req, socket);
                 httpPeer.header("ANYSOCKET-ID", this.id);
@@ -270,7 +280,7 @@ class AnySocket extends EventEmitter {
 
             peer.on("message", (req, res) => {
                 let httpPeer = new AnyHTTPPeer(req, res);
-                if(httpPeer.url == "/@anysocket") {
+                if (httpPeer.url == "/@anysocket") {
                     httpPeer.body(this[_private.httpBundle]);
                     httpPeer.end();
                     return;
@@ -304,15 +314,14 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onForward](peerID, packet) {
-        if(this.id == packet.to) {
-            if(!this[_private.peers][packet.from]) {
+        if (this.id == packet.to) {
+            if (!this[_private.peers][packet.from]) {
                 this[_private.peers][peerID].disconnect("Invalid forward packet! Client doesn't exist!");
                 return;
             }
 
             this[_private.peers][packet.from]._recvForward(packet);
-        }
-        else if(this.hasDirectPeer(packet.to)) {
+        } else if (this.hasDirectPeer(packet.to)) {
             this[_private.peers][packet.to].forward(packet);
         } else {
             console.error("FORWARD ERROR! We do not have the peer", packet.to);
@@ -320,7 +329,7 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onProtocolReady](protocol, resolve) {
-        if(this[_private.peers][protocol.peerID]) {
+        if (this[_private.peers][protocol.peerID]) {
             protocol.peerID = null;
             protocol.disconnect("Duplicated AnySocket ID found!");
             return;
@@ -336,9 +345,9 @@ class AnySocket extends EventEmitter {
         anypeer.on("e2e", (peer) => {
             this.emit("e2e", peer);
         });
-        anypeer.on("internal",this[_private.onPeerInternalMessage].bind(this));
+        anypeer.on("internal", this[_private.onPeerInternalMessage].bind(this));
 
-        if(resolve) {
+        if (resolve) {
             resolve(anypeer);
         }
 
@@ -358,7 +367,7 @@ class AnySocket extends EventEmitter {
             delete this[_private.peersConnected][peer.connectionID];
         }
 
-        if(this[_private.peers][peer.id]) {
+        if (this[_private.peers][peer.id]) {
             anypeerID = peer.id;
         }
 
@@ -367,7 +376,7 @@ class AnySocket extends EventEmitter {
             delete this[_private.peers][anypeerID];
 
             const links = anypeer.getLinks();
-            for(let peerID in links) {
+            for (let peerID in links) {
                 links[peerID].sendInternal({
                     type: constants.INTERNAL_PACKET_TYPE.NETWORK,
                     action: "disconnected",
@@ -376,7 +385,7 @@ class AnySocket extends EventEmitter {
                     // ignore, peer maybe already disconnected
                 });
                 anypeer.removeLink(links[peerID]);
-                if(this[_private.peers][peerID]) {
+                if (this[_private.peers][peerID]) {
                     this[_private.peers][peerID].removeLink(anypeer);
                 }
             }
@@ -389,32 +398,29 @@ class AnySocket extends EventEmitter {
     }
 
     [_private.onPeerInternalMessage](packet) {
-        if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.NETWORK) {
-            if(packet.msg.action == "connected") {
-                if(!this[_private.peers][packet.msg.id]) {
+        if (packet.msg.type == constants.INTERNAL_PACKET_TYPE.NETWORK) {
+            if (packet.msg.action == "connected") {
+                if (!this[_private.peers][packet.msg.id]) {
                     let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, packet.msg.id, this[_private.peers][packet.peer.id]));
                     this[_private.onProtocolReady](protocol);
                 }
-            }
-            else if(packet.msg.action == "disconnected") {
-                if(!this[_private.peers][packet.msg.id]) {
+            } else if (packet.msg.action == "disconnected") {
+                if (!this[_private.peers][packet.msg.id]) {
                     packet.peer.disconnect("Invalid proxy request!");
                     return;
                 }
 
                 this[_private.onPeerDisconnected](this[_private.peers][packet.msg.id], "Proxy Connection Closed");
             }
-        }
-        else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.PROXY) {
-            if(packet.msg.action == "proxy") {
+        } else if (packet.msg.type == constants.INTERNAL_PACKET_TYPE.PROXY) {
+            if (packet.msg.action == "proxy") {
                 // initialize mesh
-                if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
+                if (!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
                     packet.peer.disconnect("Invalid proxy request!");
                     return;
                 }
 
-                if(this[_private.peers][packet.msg.id].isProxy())
-                {
+                if (this[_private.peers][packet.msg.id].isProxy()) {
                     packet.reply({
                         ok: false
                     });
@@ -434,10 +440,9 @@ class AnySocket extends EventEmitter {
                 packet.reply({
                     ok: true
                 });
-            }
-            else if(packet.msg.action == "unproxy") {
+            } else if (packet.msg.action == "unproxy") {
                 // destroy mesh
-                if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
+                if (!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
                     packet.peer.disconnect("Invalid proxy request!");
                     return;
                 }
@@ -451,34 +456,33 @@ class AnySocket extends EventEmitter {
                     id: packet.peer.id
                 });
             }
-        }
-        else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC) {
+        } else if (packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC) {
             // RUN RPC, send reply
             let parent = false;
             let tmp = this.rpc;
-            for(let key in packet.msg.method){
+            for (let key in packet.msg.method) {
                 parent = tmp;
                 tmp = tmp[packet.msg.method[key]];
-                if(!tmp)
+                if (!tmp)
                     break;
             }
 
             // method not found
-            if(!parent || !tmp || typeof tmp != "function") {
+            if (!parent || !tmp || typeof tmp != "function") {
                 packet.reply({
                     error: "Method not found",
                     code: 404
                 });
             } else {
                 try {
-                    for(let item of packet.msg.bin) {
+                    for (let item of packet.msg.bin) {
                         packet.msg.params[item] = AnySocket.Packer.unpack(packet.msg.params[item]);
                     }
 
                     Promise.resolve(tmp.apply(parent, packet.msg.params))
                         .then((result) => {
                             let binary = false;
-                            if(BufferUtils.isBuffer(result)) {
+                            if (BufferUtils.isBuffer(result)) {
                                 result = AnySocket.Packer.pack(result)
                                 binary = true;
                             }
@@ -493,23 +497,23 @@ class AnySocket extends EventEmitter {
                                 code: 500
                             });
                         });
-                }
-                catch(e) {
+                } catch (e) {
                     packet.reply({
                         error: e.message,
                         code: 500
                     });
                 }
             }
-        }
-        else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC_NOTIFY) {
+        } else if (packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC_NOTIFY) {
             // RUN RPC, don't reply
             console.log("RPC_NOTIFY", packet.msg);
-        }
-        else {
+        } else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.MESH) {
+            this[_private.anymesh].onInternalPacket(packet);
+        } else {
             packet.peer.disconnect("Invalid internal message");
         }
     }
+
     //endregion
 }
 

@@ -13,6 +13,10 @@ class AbstractTransport extends EventEmitter {
         this.started = false;
     }
 
+    connectionInfo() {
+        throw new Error("connectionInfo() must be implemented");
+    }
+
     listen() {
         return new Promise((resolve, reject) => {
             if (this.started) {
@@ -93,6 +97,10 @@ class AbstractTransport extends EventEmitter {
 
     static scheme = () => {
         throw new Error("static scheme() must be implemented");
+    }
+
+    static meshSupport = () => {
+        throw new Error("static meshSupport() must be implemented");
     }
 }
 

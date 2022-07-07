@@ -11,10 +11,25 @@ class WS extends AbstractTransport {
         return "ws";
     }
 
+    static meshSupport() {
+        return true;
+    }
+
+    connectionInfo() {
+        if(!this.started)
+            return null;
+
+        let httpTransport = this.options.transport.connectionInfo();
+        return {
+            host: httpTransport.host,
+            port: httpTransport.port
+        }
+    }
+
     onListen() {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket.Server({
-                server: this.options.server
+                server: this.options.transport.server
             });
             this.ws.on('connection', socket => {
                 this.addPeer(new Peer(socket));
@@ -41,7 +56,7 @@ class WS extends AbstractTransport {
                     }
                 }
             }
-            let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
+            let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.host + ':' + this.options.port + '/', opts);
             ws.on('open', socket => {
                 connected = true;
                 this.addPeer(new Peer(ws));

@@ -16,6 +16,20 @@ class HTTP extends AbstractTransport {
         return "http";
     }
 
+    static meshSupport() {
+        return false;
+    }
+
+    connectionInfo() {
+        if(!this.started)
+            return null;
+
+        return {
+            host: this.options.host,
+            port: this.options.port
+        }
+    }
+
     _getSocket(req) {
         let socket = req.socket._parent;
         if(!socket){
@@ -39,12 +53,14 @@ class HTTP extends AbstractTransport {
                     cert: fs.readFileSync(this.options.cert).toString()
                 }, this._handler.bind(this));
                 this.isSecure = true;
-                this.server.listen(this.options.port || 443, this.options.host || "0.0.0.0", () => {
+                this.options.port = this.options.port || 443
+                this.server.listen(this.options.port, this.options.host, () => {
                     resolve();
                 });
             } else {
                 this.server = http.createServer(this._handler.bind(this));
-                this.server.listen(this.options.port || 80, this.options.host || "0.0.0.0", () => {
+                this.options.port = this.options.port || 80
+                this.server.listen(this.options.port, this.options.host, () => {
                     resolve();
                 });
             }
