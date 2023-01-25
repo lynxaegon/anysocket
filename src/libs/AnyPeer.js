@@ -9,7 +9,7 @@ const _packets = Symbol("packets");
 const _links = Symbol("links");
 const BufferUtils = require("./utils_buffer");
 
-const isBoolean = function(obj) {
+const isBoolean = function (obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
 };
 
@@ -23,14 +23,17 @@ module.exports = class AnyPeer extends EventEmitter {
 
         this.id = protocol.peerID;
         this.connectionID = protocol.connectionID;
+        this.syncedTime = null;
         this.options = protocol.options;
 
         const handlers = {
             get: (target, name) => {
                 const prop = target[name];
-                if (prop != null) { return prop; }
+                if (prop != null) {
+                    return prop;
+                }
 
-                if(!target.path)
+                if (!target.path)
                     target.path = [];
 
                 target.path.push(name);
@@ -41,8 +44,8 @@ module.exports = class AnyPeer extends EventEmitter {
                         target.path = [];
                         return new Promise((resolve, reject) => {
                             let binary = [];
-                            for(let item in args) {
-                                if(BufferUtils.isBuffer(args[item])) {
+                            for (let item in args) {
+                                if (BufferUtils.isBuffer(args[item])) {
                                     args[item] = AnyPacker.packBytes(args[item]);
                                     binary.push(item);
                                 }
@@ -58,11 +61,11 @@ module.exports = class AnyPeer extends EventEmitter {
 
                             this._send(packet, true)
                                 .then((packet) => {
-                                    if(packet.msg.error) {
+                                    if (packet.msg.error) {
                                         reject(packet.msg);
                                     } else {
                                         let result = packet.msg.result;
-                                        if(packet.msg.bin)
+                                        if (packet.msg.bin)
                                             result = AnyPacker.unpackBytes(result);
                                         resolve(result);
                                     }
@@ -102,6 +105,40 @@ module.exports = class AnyPeer extends EventEmitter {
 
     getLinks() {
         return this[_links];
+    }
+
+    getSyncedTime(refresh) {
+        refresh = refresh || false;
+        return new Promise((resolve, reject) => {
+            if(!refresh && this.syncedTime) {
+                resolve(
+                    Object.assign({
+                        time: Date.now() + this.syncedTime.offset
+                    }, this.syncedTime)
+                );
+            } else {
+                let clientTimestamp = Date.now();
+                this.sendInternal({
+                    type: constants.INTERNAL_PACKET_TYPE.SYNCED_TIME,
+                    time: clientTimestamp
+                }, true).then(packet => {
+                    const T1 = packet.msg.o;
+                    const T2 = packet.msg.t;
+                    const T3 = packet.msg.t;
+                    const T4 = Date.now();
+
+                    this.syncedTime = {
+                        rtt: (T4 - T1) - (T3 - T2),
+                        offset: ((T2 - T1) + (T3 - T4)) / 2
+                    };
+                    resolve(
+                        Object.assign({
+                            time: Date.now() + this.syncedTime.offset
+                        }, this.syncedTime)
+                    );
+                }).catch(reject);
+            }
+        });
     }
 
     e2e() {
@@ -158,8 +195,7 @@ module.exports = class AnyPeer extends EventEmitter {
 
         if (message.type == constants.PACKET_TYPE.INTERNAL) {
             this.emit("internal", new AnyPacket(this, message, this.sendInternal.bind(this)));
-        }
-        else {
+        } else {
             debug("Dropped internal packet!", message);
         }
     }
@@ -176,7 +212,7 @@ module.exports = class AnyPeer extends EventEmitter {
 
     _send(packet, awaitReply, timeout) {
         return new Promise((resolve, reject) => {
-            if(!this[_protocol].isConnected()) {
+            if (!this[_protocol].isConnected()) {
                 reject("Cannot send message. Peer is disconnected");
                 return;
             }
@@ -196,7 +232,7 @@ module.exports = class AnyPeer extends EventEmitter {
                         if (this[_packets][packet.seq]) {
                             let msg = this[_packets][packet.seq];
                             delete this[_packets][packet.seq];
-                            this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " +  packet.seq);
+                            this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " + packet.seq);
                             msg.reject("Timeout!");
                         }
                     }, timeout || this[_protocol].options.replyTimeout)

@@ -15,7 +15,8 @@ const constants = {
         NETWORK: 1,
         PROXY: 2,
         RPC: 3,
-        RPC_NOTIFY: 4
+        RPC_NOTIFY: 4,
+        SYNCED_TIME: 5
     },
     PROTOCOL_STATES: {
         ESTABLISHED: 0,

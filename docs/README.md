@@ -33,6 +33,7 @@
     * <a href="#AnyPeer.rpc"><code><b>rpc</b></code></a>
     * <a href="#AnyPeer.e2e"><code><b>e2e()</b></code></a>
     * <a href="#AnyPeer.send"><code><b>send()</b></code></a>
+    * <a href="#AnyPeer.getSyncedTime"><code><b>getSyncedTime</b></code></a>
     * <a href="#AnyPeer.disconnect"><code><b>disconnect()</b></code></a>
     * <a href="#AnyPeer.isProxy"><code><b>isProxy()</b></code></a>
     * <a href="#AnyPeer.isE2EEnabled"><code><b>isE2EEnabled()</b></code></a>
@@ -480,6 +481,30 @@ _note: it doesn't resolve if awaitReply is not set_
 _note: you can only reply to a normal message, you **cannot** reply to a **reply packet**. It fails silently_ 
 
 [back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.getSyncedTime"></a>
+### AnyPeer.getSyncedTime([refresh])
+
+Uses NTP to sync the time between peers. 
+
+* First call runs a RPC on the peer and caches the rtt and offset.
+* Subsequent calls are returned from cache.
+
+**Arguments:**
+* `refresh` - force a refresh
+
+**Returns** a Promise that resolves with an object like
+```javascript
+{ 
+    time: 1674671482109, // current time: Date.now() + offset  
+    rtt: 2, // round-trip time
+    offset: 0 // clock offset
+}
+```
+
+[back to top](#api)
+
 
 -------------------------------------------------------
 <a name="AnyPeer.disconnect"></a>

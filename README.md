@@ -23,6 +23,7 @@ This is a work in progress and [API](docs) is subject to change.
 * Custom AUTH method
 * E2EE between peers with forward secrecy
 * RPC support
+* NTP Sync between peers support 
 * P2P using a proxy server (with support for direct E2EE between peers)
 * Binary support (_see: <a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>_)
 * **Browser support** - 31kb footprint (_see: ```/dist/anysocket.browser.js```_)
@@ -70,8 +71,9 @@ server.listen("ws", PORT)
     .catch((err) => {
         console.error("Failed to start server:", err);
     });
-server.on("connected", (peer) => {
-    console.log("Connected", peer.id);    
+server.on("connected", async (peer) => {
+    console.log("Connected", peer.id);
+    console.log(await peer.getSyncedTime()) // { time: 1674671482107, rtt: 2, offset: 0 }
     peer.send({
         hello: "world"
     });
@@ -98,8 +100,9 @@ client.connect("ws", "127.0.0.1", PORT)
     });
 
 // after negotiating the AUTH packet, it will trigger the connect event
-client.on("connected", (peer) => {
-    console.log("Connected", peer.id);    
+client.on("connected", async (peer) => {
+    console.log("Connected", peer.id);
+    console.log(await peer.getSyncedTime()) // { time: 1674671482107, rtt: 2, offset: 0 }
     peer.send({
         hello: "world"
     });

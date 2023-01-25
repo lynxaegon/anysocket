@@ -506,6 +506,12 @@ class AnySocket extends EventEmitter {
             // RUN RPC, don't reply
             console.log("RPC_NOTIFY", packet.msg);
         }
+        else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.SYNCED_TIME) {
+            packet.reply({
+                o: packet.msg.time,
+                t: Date.now()
+            });
+        }
         else {
             packet.peer.disconnect("Invalid internal message");
         }
