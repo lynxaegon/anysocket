@@ -1,5 +1,5 @@
-const constants = require("./_constants");
-const AnySocket = require("./AnySocket");
+const constants = require("../_constants");
+const AnySocket = require("../../index");
 const os = require('os');
 
 class AnyMesh {

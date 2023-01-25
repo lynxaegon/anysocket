@@ -3,11 +3,7 @@ const constants = require("./_constants");
 const EventEmitter = require("events");
 const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
-const AnyPacker = require("./AnyPacker");
-const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
-const _links = Symbol("links");
-const BufferUtils = require("./utils_buffer");
 
 const isBoolean = function(obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
@@ -17,66 +13,12 @@ module.exports = class AnyPeer extends EventEmitter {
     constructor(protocol) {
         super();
 
-        this[_links] = {};
-        this[_protocol] = protocol;
+        this.protocol = protocol;
         this[_packets] = {};
 
         this.id = protocol.peerID;
         this.connectionID = protocol.connectionID;
         this.options = protocol.options;
-
-        const handlers = {
-            get: (target, name) => {
-                const prop = target[name];
-                if (prop != null) { return prop; }
-
-                if(!target.path)
-                    target.path = [];
-
-                target.path.push(name);
-                return new Proxy(target, {
-                    get: handlers.get,
-                    apply: (target, name, args) => {
-                        let path = target.path;
-                        target.path = [];
-                        return new Promise((resolve, reject) => {
-                            let binary = [];
-                            for(let item in args) {
-                                if(BufferUtils.isBuffer(args[item])) {
-                                    args[item] = AnyPacker.packBytes(args[item]);
-                                    binary.push(item);
-                                }
-                            }
-                            const packet = Packet
-                                .data({
-                                    type: constants.INTERNAL_PACKET_TYPE.RPC,
-                                    method: path,
-                                    params: args || null,
-                                    bin: binary
-                                })
-                                .setType(constants.PACKET_TYPE.INTERNAL);
-
-                            this._send(packet, true)
-                                .then((packet) => {
-                                    if(packet.msg.error) {
-                                        reject(packet.msg);
-                                    } else {
-                                        let result = packet.msg.result;
-                                        if(packet.msg.bin)
-                                            result = AnyPacker.unpackBytes(result);
-                                        resolve(result);
-                                    }
-                                })
-                                .catch((e) => {
-                                    reject(packet.msg)
-                                });
-                        });
-                    }
-                });
-            }
-        };
-
-        this.rpc = new Proxy(() => {}, handlers);
 
         protocol.on("internal", this.onInternalComs.bind(this));
         protocol.on("message", this.onMessage.bind(this));
@@ -88,28 +30,14 @@ module.exports = class AnyPeer extends EventEmitter {
         });
     }
 
-    isProxy() {
-        return this[_protocol].isProxy();
-    }
 
-    addLink(peer) {
-        this[_links][peer.id] = peer;
-    }
-
-    removeLink(peer) {
-        delete this[_links][peer.id];
-    }
-
-    getLinks() {
-        return this[_links];
-    }
 
     e2e() {
-        this[_protocol].e2e();
+        this.protocol.e2e();
     }
 
     isE2EEnabled() {
-        return this[_protocol].hasE2EEnabled();
+        return this.protocol.hasE2EEnabled();
     }
 
     send(message, awaitReply, timeout) {
@@ -121,7 +49,7 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     forward(packet) {
-        this[_protocol].forward(packet);
+        this.protocol.forward(packet);
     }
 
     sendInternal(message, awaitReply, timeout) {
@@ -148,6 +76,10 @@ module.exports = class AnyPeer extends EventEmitter {
         this.emit("e2e", this);
     }
 
+    isProxy() {
+        return this.protocol.isProxy();
+    }
+
     onInternalComs(peer, message) {
         if (message.seq < 0) {
             if (!this._resolveReply(message)) {
@@ -171,12 +103,12 @@ module.exports = class AnyPeer extends EventEmitter {
         }
         this[_packets] = {};
 
-        this[_protocol].disconnect(reason);
+        this.protocol.disconnect(reason);
     }
 
     _send(packet, awaitReply, timeout) {
         return new Promise((resolve, reject) => {
-            if(!this[_protocol].isConnected()) {
+            if(!this.protocol.isConnected()) {
                 reject("Cannot send message. Peer is disconnected");
                 return;
             }
@@ -185,7 +117,7 @@ module.exports = class AnyPeer extends EventEmitter {
                 packet.setReplyTo(awaitReply);
             }
 
-            this[_protocol].send(packet);
+            this.protocol.send(packet);
 
             if (isBoolean(awaitReply) && awaitReply === true) {
                 this[_packets][packet.seq] = {
@@ -199,17 +131,17 @@ module.exports = class AnyPeer extends EventEmitter {
                             this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " +  packet.seq);
                             msg.reject("Timeout!");
                         }
-                    }, timeout || this[_protocol].options.replyTimeout)
+                    }, timeout || this.protocol.options.replyTimeout)
                 };
             }
         });
     }
 
     _recvForward(packet) {
-        this[_protocol]._recvPacketQueue.push({
-            peer: this[_protocol].peer,
+        this.protocol._recvPacketQueue.push({
+            peer: this.protocol.peer,
             recv: packet.msg,
-            state: this[_protocol].ENCRYPTION_STATE
+            state: this.protocol.ENCRYPTION_STATE
         });
     }
 

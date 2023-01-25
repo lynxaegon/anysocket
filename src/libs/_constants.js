@@ -11,13 +11,6 @@ const constants = {
         FULL: 1,
         PARTIAL: 2
     },
-    INTERNAL_PACKET_TYPE: {
-        NETWORK: 1,
-        PROXY: 2,
-        RPC: 3,
-        RPC_NOTIFY: 4,
-        MESH: 5
-    },
     PROTOCOL_STATES: {
         ESTABLISHED: 0,
         AUTHING: 1,
