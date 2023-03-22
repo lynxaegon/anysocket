@@ -36,18 +36,18 @@ class Test {
 // world & user methods have "this" set as "hello" object (method parent is always "this")
 client.setRPC({
     hello: {
-        world: () => {
+        world: (peer) => {
             if(!this._user) {
                 return "Hello World";
             }
 
             return "Hello World and Hello " + this._user;
         },
-        user: (user) => {
+        user: (user, peer) => {
             this._user = user;
             return "Hello " + user;
         },
-        binary(bytes) {
+        binary(bytes, peer) {
             console.log(bytes);
             return bytes;
         }

@@ -221,7 +221,8 @@ _note: it doesn't resolve if awaitReply is not set_
 ### AnySocket.setRPC(rpc)
 
 This sets the RPC functions on the AnySocket object so they can be called using <a href="#AnyPeer.rpc">AnyPeer.rpc</a>
-RPC object can be nested indefinitely, but the "this" object will always be the called method's parent
+RPC object can be nested indefinitely, but the "this" object will always be the called method's parent.
+The last param of the RPC function will always be an <a href="#AnyPeer.constructor">AnyPeer<a/> object.
 
 Each RPC function can return a value, object, Buffer/TypedArray or a Promise (awaits the promise to be resolved)
 
@@ -236,6 +237,7 @@ Any  throwed error / reject will be sent back to the client in the form:
 ```javascript
 {
     error: "error message",
+    details: "details",
     code: 500
 }
 ```
@@ -431,7 +433,8 @@ Unique connection identifier (UUIDv4), used internally before getting a <a href=
 <a name="AnyPeer.rpc"></a>
 ### AnyPeer.rpc(...args)
 
-This is a special Proxy Object that can indefinitely nested and have any number of arguments
+This is a special Proxy Object that can indefinitely nested and have any number of arguments, 
+but the last param of the RPC function will always be an <a href="#AnyPeer.constructor">AnyPeer<a/> object. (the current peer than ran the RPC)
 
 Example: `peer.rpc.hello.world.user("LynxAegon")`
 * This will try to run a RPC on the peer and the RPC object should look like this:
@@ -439,7 +442,7 @@ Example: `peer.rpc.hello.world.user("LynxAegon")`
 AnySocket.setRPC({
     hello: {
         world: {
-            user: (name) => {
+            user: (name, peer) => {
                 return new Promise((resolve, reject) => {
                     resolve("Hello World, " + name);
                 });

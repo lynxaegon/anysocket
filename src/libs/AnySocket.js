@@ -466,7 +466,8 @@ class AnySocket extends EventEmitter {
             // method not found
             if(!parent || !tmp || typeof tmp != "function") {
                 packet.reply({
-                    error: "Method not found",
+                    error: "Method not found!",
+                    details: "method: '" + packet.msg.method + "'",
                     code: 404
                 });
             } else {
@@ -475,7 +476,7 @@ class AnySocket extends EventEmitter {
                         packet.msg.params[item] = AnySocket.Packer.unpack(packet.msg.params[item]);
                     }
 
-                    Promise.resolve(tmp.apply(parent, packet.msg.params))
+                    Promise.resolve(tmp.apply(parent, [...packet.msg.params, packet.peer]))
                         .then((result) => {
                             let binary = false;
                             if(BufferUtils.isBuffer(result)) {
@@ -490,6 +491,7 @@ class AnySocket extends EventEmitter {
                         .catch((e) => {
                             packet.reply({
                                 error: e,
+                                details: "method: '" + packet.msg.method + "'",
                                 code: 500
                             });
                         });
@@ -497,6 +499,7 @@ class AnySocket extends EventEmitter {
                 catch(e) {
                     packet.reply({
                         error: e.message,
+                        details: "method: '" + packet.msg.method + "'",
                         code: 500
                     });
                 }
