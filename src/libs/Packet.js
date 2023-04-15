@@ -40,21 +40,26 @@ class Packet {
 
     async serialize(max_packet_size, encryptFnc) {
         max_packet_size = max_packet_size || Number.MAX_SAFE_INTEGER;
-        let packet = [JSON.stringify(this.data)];
-        if (packet[0].length > max_packet_size) {
-            regex[max_packet_size] = regex[max_packet_size] || new RegExp("(.{1," + max_packet_size + "})","g");
-            packet = packet[0].match(regex[max_packet_size]);
+        let packet = JSON.stringify(this.data);
+        const count = Math.ceil(packet.length / max_packet_size);
+        const chunks = new Array(count);
+
+        for (let i = 0, o = 0; i < count; ++i, o += max_packet_size) {
+            chunks[i] = await this.encode(
+                (i == count - 1) ? constants.PACKET_LENGTH.FULL.toString(): constants.PACKET_LENGTH.PARTIAL.toString(),
+                packet.substr(o, max_packet_size),
+                encryptFnc
+            );
         }
 
-        for (let i = 0; i < packet.length; i++) {
-            packet[i] =
-                (i == packet.length - 1 ? constants.PACKET_LENGTH.FULL : constants.PACKET_LENGTH.PARTIAL).toString() +
-                this.type.toString() +
-                AnyPacker.packInt32(this.seq) +
-                await encryptFnc(packet[i], Math.abs(this.seq))
-        }
+        return chunks;
+    }
 
-        return packet;
+    async encode(eol, packet, encryptFnc) {
+        return eol +
+            this.type.toString() +
+            AnyPacker.packInt32(this.seq) +
+            await encryptFnc(packet, Math.abs(this.seq))
     }
 
     async deserialize(buf, encryptionState, decryptFnc) {

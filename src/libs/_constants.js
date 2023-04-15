@@ -29,7 +29,7 @@ const constants = {
         PLAIN: 1,
         E2EE: 2
     },
-    MAX_PACKET_SIZE: 1024 * 512
+    MAX_PACKET_SIZE: 1024 * 1024
 };
 
 for(let item in constants) {

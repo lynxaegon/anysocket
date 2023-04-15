@@ -20,10 +20,11 @@ server.on("connected", (peer) => {
 server.on("e2e", (peer) => {
     console.timeEnd("e2e enabling");
     console.log("E2E enabled!");
+    let bytes = crypto.randomBytes(1024 * 1024 * 100);
     console.time("send binary");
     peer.send({
         hello: "world",
-        bin: AnySocket.Packer.pack(crypto.randomBytes(1024 * 1024 * 100))
+        bin: AnySocket.Packer.pack(bytes)
     });
 });
 server.on("disconnected", (peer, reason) => {
