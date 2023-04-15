@@ -122,14 +122,14 @@ module.exports = class AnyPeer extends EventEmitter {
                     type: constants.INTERNAL_PACKET_TYPE.SYNCED_TIME,
                     time: clientTimestamp
                 }, true).then(packet => {
-                    const T1 = packet.msg.o;
-                    const T2 = packet.msg.t;
-                    const T3 = packet.msg.t;
-                    const T4 = Date.now();
+                    const T1 = packet.msg.o; // origin time
+                    const T2 = packet.msg.t; // receive time
+                    const T3 = packet.msg.t; // transmit time
+                    const T4 = Date.now(); // now
 
                     this.syncedTime = {
                         rtt: (T4 - T1) - (T3 - T2),
-                        offset: ((T2 - T1) + (T3 - T4)) / 2
+                        offset: ((T2 - T1) - (T4 - T3)) / 2
                     };
                     resolve(
                         Object.assign({
