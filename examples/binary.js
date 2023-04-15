@@ -1,31 +1,23 @@
 const AnySocket = require("../src/index");
 const crypto = require('crypto');
 
+let ORIGINAL_BYTES = crypto.randomBytes(1024 * 1024 * 100);
+
 // SERVER
 const server = new AnySocket();
 server.listen("ws", 3000);
 server.on("connected", (peer) => {
     console.log("[SERVER][" + peer.id + "] Connected");
 
-    // peer.send({
-    //     hello: "world",
-    //     bin: AnySocket.Packer.pack(str2ab("Hello World"))
-    // });
     console.time("e2e enabling");
-
     peer.e2e();
-
-    console.log("[SERVER][" + peer.id + "] Sent Hello Message");
+    // testSendBytes(peer, ORIGINAL_BYTES)
 });
 server.on("e2e", (peer) => {
     console.timeEnd("e2e enabling");
     console.log("E2E enabled!");
-    let bytes = crypto.randomBytes(1024 * 1024 * 100);
-    console.time("send binary");
-    peer.send({
-        hello: "world",
-        bin: AnySocket.Packer.pack(bytes)
-    });
+
+    testSendBytes(peer, ORIGINAL_BYTES);
 });
 server.on("disconnected", (peer, reason) => {
     console.log("[SERVER][" + peer.id + "] Disconnected. Reason:", reason);
@@ -39,12 +31,12 @@ client.on("connected", (peer) => {
     console.log("[CLIENT][" + peer.id + "] Connected");
 });
 client.on("message", (packet) => {
-    // console.log("[CLIENT][" + packet.peer.id + "]",
-    //     ab2str(AnySocket.Packer.unpack(packet.msg.bin)) == "Hello World" ? "Received Binary" : "Failed Binary"
-    // );
-
+    let recvBytes = AnySocket.Packer.unpack(packet.msg.bin);
     console.timeEnd("send binary");
-    console.log("Received", packet.msg.bin.length);
+    console.log(
+        "Received", recvBytes.length,
+        Buffer.compare(recvBytes, ORIGINAL_BYTES) === 0 ? "buffers are identical" : "buffers are different"
+    );
     server.stop();
     client.stop();
 });
@@ -52,16 +44,12 @@ client.on("disconnected", (peer, reason) => {
     console.log("[CLIENT][" + peer.id + "] Disconnected. Reason:", reason);
 });
 
-function ab2str(bytes) {
-    return String.fromCharCode.apply(null, new Uint8Array(bytes));
-}
 
-function str2ab(str) {
-    let buf = new ArrayBuffer(str.length);
-    let bufView = new Uint8Array(buf);
-    for (let i = 0, strLen = str.length; i < strLen; i++) {
-        bufView[i] = str.charCodeAt(i);
-    }
-
-    return new Uint8Array(buf);
+function testSendBytes(peer, bytes) {
+    console.time("send binary");
+    console.log("sending...", ORIGINAL_BYTES.length)
+    peer.send({
+        hello: "world",
+        bin: AnySocket.Packer.pack(ORIGINAL_BYTES)
+    });
 }
