@@ -33,14 +33,7 @@ class WS extends AbstractTransport {
     onConnect(plain) {
         return new Promise((resolve, reject) => {
             let connected = false;
-            let opts = null;
-            if(this.options.cookies) {
-                opts = {
-                    headers: {
-                        Cookie: this._formatCookies(this.options.cookies)
-                    }
-                }
-            }
+            let opts = this.getOptions();
             let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
             ws.on('open', socket => {
                 connected = true;
@@ -68,6 +61,24 @@ class WS extends AbstractTransport {
             }
             resolve();
         });
+    }
+
+    getOptions() {
+        let opts = {};
+        if(this.options.cookies) {
+            opts = Object.assign(opts, {
+                headers: {
+                    Cookie: this._formatCookies(this.options.cookies)
+                }
+            });
+        }
+        if(this.options.handshakeTimeout) {
+            opts = Object.assign(opts, {
+                handshakeTimeout: this.options.handshakeTimeout
+            });
+        }
+
+        return opts;
     }
 
     _formatCookies(cookies) {
