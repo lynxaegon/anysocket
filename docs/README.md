@@ -904,7 +904,6 @@ Serves a static file. Content-Type is autodetected from the extension
     bz2: "application/x-bzip2",
     xz: "application/x-xz",
     zst: "application/zst",
-}
 ```
 
 [back to top](#api)
