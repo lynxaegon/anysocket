@@ -1,3 +1,4 @@
+const constants = require("./_constants");
 const httpResult = Symbol("httpResult");
 const reqSymbol = Symbol("req");
 const resSymbol = Symbol("res");
@@ -6,6 +7,7 @@ const parseCookies = Symbol("parseCookies");
 const debug = require('debug')('AnyHTTPPeer');
 
 const url = require('url');
+const fs = require("fs");
 //////////////////////////////////////////////////////////////
 // TODO: implement `formidable` package for parsing requests
 // https://www.npmjs.com/package/formidable
@@ -61,6 +63,26 @@ module.exports = class AnyHTTPPeer {
 
     get cookies() {
         return this[parseCookies](this.query.cookies);
+    }
+
+    serveFile(path, contentType) {
+        fs.readFile(path, "utf8", (err,data) => {
+            if (err) {
+                this
+                    .status(404)
+                    .end();
+                return false;
+            }
+
+            if(!contentType) {
+                contentType = constants.HTTP_CONTENT_TYPES[path.split(".").pop().toLowerCase()] || "application/octet-stream";
+            }
+            this
+                .status(200)
+                .header("Content-Type", contentType)
+                .body(data)
+                .end();
+        });
     }
 
     status(code) {

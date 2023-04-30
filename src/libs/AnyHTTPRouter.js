@@ -35,6 +35,22 @@ module.exports = class AnyHTTPRouter {
         return this;
     }
 
+    static(url, directory) {
+        if(url[0] != "/") {
+            url = "/" + url;
+        }
+        if(!directory) {
+            directory = url;
+            if(directory[0] == "/") {
+                directory = "." + directory;
+            }
+        }
+
+        return this.on("get", new RegExp("^" + url + "/(.*)$"), (peer) => {
+            peer.serveFile(directory + peer.url.split(url).splice(1).join(url));
+        });
+    }
+
     any(path, callback) {
         return this.on("_", path, callback);
     }

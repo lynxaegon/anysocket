@@ -29,7 +29,35 @@ const constants = {
         PLAIN: 1,
         E2EE: 2
     },
-    MAX_PACKET_SIZE: 1024 * 1024
+    MAX_PACKET_SIZE: 1024 * 1024,
+    HTTP_CONTENT_TYPES: {
+        txt: "text/plain;charset=utf-8",
+        html: "text/html;charset=utf-8",
+        htm: "text/html;charset=utf-8",
+        css: "text/css;charset=utf-8",
+        js: "text/javascript;charset=utf-8",
+        md: "text/markdown;charset=utf-8",
+        sh: "application/x-shellscript;charset=utf-8",
+        svg: "image/svg+xml;charset=utf-8",
+        xml: "text/xml;charset=utf-8",
+
+        png: "image/png",
+        jpeg: "image/jpeg",
+        jpg: "image/jpeg",
+        jpe: "image/jpeg",
+        gif: "image/gif",
+
+        ttf: "font/ttf",
+        woff: "font/woff",
+        woff2: "font/woff2",
+        eot: "application/vnd.ms-fontobject",
+
+        gz: "application/gzip",
+        bz: "application/x-bzip",
+        bz2: "application/x-bzip2",
+        xz: "application/x-xz",
+        zst: "application/zst",
+    }
 };
 
 for(let item in constants) {

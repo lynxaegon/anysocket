@@ -42,6 +42,7 @@
     * <a href="#AnyPeer.on.disconnected"><code><b>event: _disconnected_</b></code></a>
 * <a href="#AnyHTTPRouter.constructor"><code><b>AnyHTTPRouter()</b></code></a>
     * <a href="#AnyHTTPRouter.on"><code><b>on()</b></code></a>
+    * <a href="#AnyHTTPRouter.static"><code><b>static()</b></code></a>
     * <a href="#AnyHTTPRouter.any"><code><b>any()</b></code></a>
     * <a href="#AnyHTTPRouter.get"><code><b>get()</b></code></a>
     * <a href="#AnyHTTPRouter.post"><code><b>post()</b></code></a>
@@ -57,6 +58,7 @@
     * <a href="#AnyHTTPPeer.body"><code><b>body()</b></code></a>
     * <a href="#AnyHTTPPeer.setCookie"><code><b>setCookie()</b></code></a>
     * <a href="#AnyHTTPPeer.deleteCookie"><code><b>deleteCookie()</b></code></a>
+    * <a href="#AnyHTTPPeer.serveFile"><code><b>serveFile()</b></code></a>
     * <a href="#AnyHTTPPeer.end"><code><b>end()</b></code></a>
     * <a href="#AnyHTTPPeer.isClosed"><code><b>isClosed()</b></code></a>
     
@@ -602,6 +604,38 @@ AnySocket.http.on("GET", "/index", (peer) => {
 [back to top](#api)
 
 -------------------------------------------------------
+<a name="AnyHTTPRouter.static"></a>
+### AnyHTTPRouter.static(url, [directory])
+
+Serves static files with Content-Type based on the extension of the file.
+
+**Arguments:**
+* `url` - url path 
+* `directory` - optional directory to serve from, if not set it will use the url (adding ./)
+
+Example:
+```javascript
+// http://localhost/static_files/index.html
+server.http.static("/static_files"); // resolves to ./static_files/*
+
+// http://localhost/static_files/index.html
+server.http.static("static_files"); // resolves to ./static_files/*
+
+// http://localhost/static/index.html
+server.http.static("/static", "./static_files"); // resolves to ./static_files/*
+
+// http://localhost/hello
+server.http.get("/hello", (peer) => {
+    // serves a single static file
+    peer.serveFile("./static_files/index.html");
+})
+```
+
+See supported <a href="#AnyHTTPPeer.serveFile.supportedContentTypes">Content-Types</a>
+
+[back to top](#api)
+
+-------------------------------------------------------
 <a name="AnyHTTPRouter.any"></a>
 ### AnyHTTPRouter.any(path, callback)
 
@@ -829,6 +863,49 @@ Sets a cookie with key and expires = 1
 * `key` - cookie name (string)
 
 **Returns** <a name="AnyHTTPPeer.constructor">AnyHTTPPeer</a> for chaining
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyHTTPPeer.serveFile"></a>
+### AnyHTTPPeer.serveFile(path, [contentType])
+
+Serves a static file. Content-Type is autodetected from the extension
+
+**Arguments:**
+* `path` - path to file
+* `contentType` - optional custom Content-Type
+
+<a name="AnyHTTPPeer.serveFile.supportedContentTypes"></a>Supported Content-Types:
+```javascript
+    txt: "text/plain;charset=utf-8",
+    html: "text/html;charset=utf-8",
+    htm: "text/html;charset=utf-8",
+    css: "text/css;charset=utf-8",
+    js: "text/javascript;charset=utf-8",
+    md: "text/markdown;charset=utf-8",
+    sh: "application/x-shellscript;charset=utf-8",
+    svg: "image/svg+xml;charset=utf-8",
+    xml: "text/xml;charset=utf-8",
+
+    png: "image/png",
+    jpeg: "image/jpeg",
+    jpg: "image/jpeg",
+    jpe: "image/jpeg",
+    gif: "image/gif",
+
+    ttf: "font/ttf",
+    woff: "font/woff",
+    woff2: "font/woff2",
+    eot: "application/vnd.ms-fontobject",
+
+    gz: "application/gzip",
+    bz: "application/x-bzip",
+    bz2: "application/x-bzip2",
+    xz: "application/x-xz",
+    zst: "application/zst",
+}
+```
 
 [back to top](#api)
 
