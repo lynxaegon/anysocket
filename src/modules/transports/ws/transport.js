@@ -1,6 +1,13 @@
+let WebSocket;
+if (typeof window !== 'undefined' && typeof window.document !== 'undefined') {
+    WebSocket = require("../../../browser/ws");
+}
+else {
+    WebSocket = require("ws");
+}
+
 const AbstractTransport = require("../abstract/AbstractTransport");
 const Peer = require("./peer.js");
-const WebSocket = require("ws");
 
 class WS extends AbstractTransport {
     constructor(type, options) {
