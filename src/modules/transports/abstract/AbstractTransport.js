@@ -1,5 +1,5 @@
-const EventEmitter = require("events");
-const Utils = require("../../../libs/utils");
+const EventEmitter = require("../../../wrappers/events-wrapper");
+const Utils = require("../../../wrappers/utils");
 
 class AbstractTransport extends EventEmitter {
     constructor(type, options) {

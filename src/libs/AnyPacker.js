@@ -1,4 +1,4 @@
-const BufferUtils = require("./utils_buffer");
+const BufferUtils = require("../wrappers/utils_buffer");
 
 class AnyPacker {
     packInt32(int) {

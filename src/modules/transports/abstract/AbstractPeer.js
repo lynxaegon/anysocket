@@ -1,5 +1,5 @@
-const EventEmitter = require('events');
-const Utils = require("../../../libs/utils");
+const EventEmitter = require('../../../wrappers/events-wrapper');
+const Utils = require("../../../wrappers/utils");
 const AbstractTransport = require("./AbstractTransport");
 
 class AbstractPeer extends EventEmitter {

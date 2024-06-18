@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const BufferUtils = require("./utils_buffer");
+const BufferUtils = require("../wrappers/utils_buffer");
 
 module.exports = new (class Utils {
     uuidv4() {

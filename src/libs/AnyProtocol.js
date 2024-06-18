@@ -1,8 +1,8 @@
 const debug = require('debug')('AnyProtocol');
-const EventEmitter = require("events");
+const EventEmitter = require("../wrappers/events-wrapper");
 const FastQ = require('fastq');
 const Packet = require("./Packet");
-const Utils = require("./utils");
+const Utils = require("../wrappers/utils");
 const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
 const ENCRYPTION_SECRET = Symbol("secret key");

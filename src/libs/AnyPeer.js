@@ -1,13 +1,13 @@
 const debug = require('debug')('AnyPeer');
 const constants = require("./_constants");
-const EventEmitter = require("events");
+const EventEmitter = require("../wrappers/events-wrapper");
 const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
 const AnyPacker = require("./AnyPacker");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
-const BufferUtils = require("./utils_buffer");
+const BufferUtils = require("../wrappers/utils_buffer");
 
 const isBoolean = function (obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
