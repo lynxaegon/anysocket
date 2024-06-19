@@ -1,5 +1,7 @@
 const crypto = require("./crypto");
 const BufferUtils = require("./utils_buffer");
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 module.exports = new (class Utils {
     uuidv4() {
@@ -15,7 +17,7 @@ module.exports = new (class Utils {
             let publicKey = await ecdh.generateKeys();
             resolve({
                 private: ecdh,
-                public: BufferUtils.bufferToString(publicKey),
+                public: BufferUtils.bufferToBase64(publicKey),
                 nonce: BufferUtils.bufferToHex(crypto.randomBytes(32))
             });
         });
@@ -23,7 +25,7 @@ module.exports = new (class Utils {
 
     computeAESsecret(privateECDHKey, publicECDHKey) {
         return new Promise(async (resolve, reject) => {
-            let result = await privateECDHKey.computeSecret(BufferUtils.bufferFromString(publicECDHKey), null, 'hex');
+            let result = await privateECDHKey.computeSecret(BufferUtils.bufferFromBase64(publicECDHKey), null, 'hex');
             result = result.substr(0, 128);
             resolve(result);
         });
@@ -56,7 +58,7 @@ module.exports = new (class Utils {
                         iv: iv,
                     },
                     key,
-                    BufferUtils.bufferFromString(data)
+                    encoder.encode(data)
                 )
                     .then(function(encrypted) {
                         resolve(BufferUtils.bufferToHex(iv) + BufferUtils.bufferToHex(new Uint8Array(encrypted)));
@@ -88,7 +90,7 @@ module.exports = new (class Utils {
                     BufferUtils.bufferFromHex(data.substr(32))
                 )
                     .then(function(encrypted) {
-                        resolve(BufferUtils.bufferToString(new Uint8Array(encrypted)));
+                        resolve(decoder.decode(encrypted));
                     })
                     .catch((e) => {
                         reject(e);

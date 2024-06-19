@@ -39,11 +39,11 @@ class AnyPacker {
         if (!(bytes instanceof ArrayBuffer || bytes instanceof Uint8Array))
             throw new Error("packBytes requires ArrayBuffer or UInt8Array");
 
-        return BufferUtils.bufferToString(bytes);
+        return BufferUtils.bufferToBase64(bytes);
     }
 
     unpackBytes(bytes) {
-        return BufferUtils.bufferFromString(bytes);
+        return BufferUtils.bufferFromBase64(bytes);
     }
 }
 

@@ -15,7 +15,7 @@ module.exports = new (class Utils {
             let publicKey = await ecdh.generateKeys();
             resolve({
                 private: ecdh,
-                public: BufferUtils.bufferToString(publicKey),
+                public: BufferUtils.bufferToBase64(publicKey),
                 nonce: BufferUtils.bufferToHex(crypto.randomBytes(32))
             });
         });
@@ -23,7 +23,7 @@ module.exports = new (class Utils {
 
     computeAESsecret(privateECDHKey, publicECDHKey) {
         return new Promise(async (resolve, reject) => {
-            let result = await privateECDHKey.computeSecret(BufferUtils.bufferFromString(publicECDHKey), null, 'hex');
+            let result = await privateECDHKey.computeSecret(BufferUtils.bufferFromBase64(publicECDHKey), null, 'hex');
             result = result.substr(0, 128);
             resolve(result);
         });

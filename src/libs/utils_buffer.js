@@ -1,9 +1,9 @@
 module.exports = {
-    bufferFromString(buf) {
-        return Buffer.from(buf, 'binary');
+    bufferFromBase64: (str) => {
+        return Buffer.from(str, 'base64');
     },
-    bufferToString(buf) {
-        return buf.toString('binary');
+    bufferToBase64: (buf) => {
+        return buf.toString('base64');
     },
     bufferToHex(buf) {
         return buf.toString('hex');

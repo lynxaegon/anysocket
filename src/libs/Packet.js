@@ -78,6 +78,7 @@ class Packet {
                 this.data = packet;
             }
             catch(e) {
+                console.log("packet error", e);
                 // ignored
                 this.data = null;
             }

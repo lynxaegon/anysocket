@@ -5,6 +5,7 @@ if (!crypto)
 const BufferUtils = require("./utils_buffer");
 
 const ECDH_ALGORITHM = "P-521";
+const encoder = new TextEncoder();
 
 class Crypto {
     randomBytes(size) {
@@ -93,7 +94,7 @@ class Crypto {
             if (!(secret instanceof CryptoKey)) {
                 secret = await window.crypto.subtle.importKey(
                     "raw",
-                    BufferUtils.utf8Encode(secret),
+                    encoder.encode(secret),
                     {
                         name: "PBKDF2",
                     },
@@ -104,7 +105,7 @@ class Crypto {
             window.crypto.subtle.deriveBits(
                 {
                     name: "PBKDF2",
-                    salt: BufferUtils.utf8Encode(salt),
+                    salt: encoder.encode(salt),
                     iterations: iterations,
                     hash: {
                         name: algorithm
