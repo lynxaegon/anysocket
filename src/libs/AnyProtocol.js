@@ -168,7 +168,6 @@ module.exports = class AnyProtocol extends EventEmitter {
                     this._packets[seq] = Packet.buffer();
                 }
                 let packet = this._packets[seq];
-
                 packet.deserialize(recv, encryptionState, this._decrypt.bind(this))
                     .then(result => {
                         debug(this.peerID, "<<<<", Packet.TYPE._string(packet.type), packet.seq);
@@ -385,6 +384,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             cb(null, null);
         } else {
             if(this.isLINKMessage(Packet.getType(item.recv))) {
+                item.state = this.ENCRYPTION_STATE;
                 this._recvLinkPacketQueue.push(item);
                 cb(null, null);
             } else {
