@@ -34,4 +34,7 @@ module.exports = window._x = {
 
         return view;
     },
+    isBuffer(buf) {
+        return !!(buf.buffer instanceof ArrayBuffer && buf.BYTES_PER_ELEMENT);
+    }
 };
