@@ -36,6 +36,9 @@ class AnyPacker {
     }
 
     packBytes(bytes) {
+        if(bytes == null) {
+            return null;
+        }
         if (!(bytes instanceof ArrayBuffer || bytes instanceof Uint8Array))
             throw new Error("packBytes requires ArrayBuffer or UInt8Array");
 
@@ -43,6 +46,9 @@ class AnyPacker {
     }
 
     unpackBytes(bytes) {
+        if(bytes == null) {
+            return null;
+        }
         return BufferUtils.bufferFromBase64(bytes);
     }
 }
