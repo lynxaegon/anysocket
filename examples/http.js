@@ -14,6 +14,16 @@ server.http.get("/", (peer) => {
         .body("hello world")
         .end();
 });
+
+server.http.post("/post", (peer) => {
+    console.log("Post Data:", peer.query.body);
+    peer
+        .status(200)
+        .header('Content-Type', 'text/javascript')
+        .body(JSON.stringify({}))
+        .end();
+});
+
 server.http.error((peer, error) => {
     console.log(peer.url, error);
     // uncomment if you want to override the default response / status code

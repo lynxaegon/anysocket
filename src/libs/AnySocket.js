@@ -269,8 +269,8 @@ class AnySocket extends EventEmitter {
             });
 
             peer.on("message", (req, res) => {
-                let httpPeer = new AnyHTTPPeer(req, res);
-                if(httpPeer.url == "/@anysocket") {
+                if(req.url == "/@anysocket") {
+                    let httpPeer = new AnyHTTPPeer(req, res);
                     httpPeer.body(this[_private.httpBundle]);
                     httpPeer.end();
                     return;
@@ -287,6 +287,7 @@ class AnySocket extends EventEmitter {
                         req.connection.destroy();
                 }).on('end', () => {
                     req.body = req.body.toString();
+                    let httpPeer = new AnyHTTPPeer(req, res);
                     httpPeer.header("ANYSOCKET-ID", this.id);
                     this.http._process(httpPeer);
                     this.emit("http", httpPeer, req, res);
