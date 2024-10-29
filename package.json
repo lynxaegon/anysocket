@@ -1,6 +1,6 @@
 {
   "name": "anysocket",
-  "version": "0.4.26",
+  "version": "0.4.27",
   "description": "An abstract networking layer over multiple transports, client/server agnostic with support for E2EE",
   "main": "src/index.js",
   "scripts": {
