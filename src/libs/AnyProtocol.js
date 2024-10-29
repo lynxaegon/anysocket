@@ -50,6 +50,8 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.PLAIN;
 
         this.peer.on("message", (peer, recv) => {
+            this._heartbeat(true);
+
             this._recvPacketQueue.push({
                 peer: peer,
                 recv: recv,
@@ -153,8 +155,6 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     onPacket(peer, recv, encryptionState) {
-        this._heartbeat();
-
         return new Promise((resolve, reject) => {
             let invalidPacket = true;
 
@@ -468,12 +468,17 @@ module.exports = class AnyProtocol extends EventEmitter {
         return this._seq;
     }
 
-    _heartbeat() {
+    _heartbeat(ponged) {
+        ponged = ponged || false;
         // proxies are notified by peers if they disconnect
         if(this.isProxy())
             return;
 
         clearTimeout(this[heartbeatTimer]);
+        if(ponged) {
+            this._heartbeatPong();
+        }
+
         if(this.state == constants.PROTOCOL_STATES.AUTHING || this.state == constants.PROTOCOL_STATES.DISCONNECTED)
             return;
 
@@ -503,8 +508,8 @@ module.exports = class AnyProtocol extends EventEmitter {
         }, this.options.heartbeatInterval)
     }
 
-    _heartbeatPong(type) {
-        if(type == 1) {
+    _heartbeatPong(data) {
+        if(data == 1) {
             const packet = Packet
                 .data(2)
                 .setType(Packet.TYPE.HEARTBEAT);
@@ -516,6 +521,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         } else {
             // reply received
             this[heartbeatPonged] = true;
+            this[heartbeatsMissed] = 0;
         }
     }
 
