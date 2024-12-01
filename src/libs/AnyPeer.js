@@ -26,22 +26,14 @@ module.exports = class AnyPeer extends EventEmitter {
         this.syncedTime = null;
         this.options = protocol.options;
 
-        const handlers = {
-            get: (target, name) => {
-                const prop = target[name];
-                if (prop != null) {
-                    return prop;
-                }
-
-                if (!target.path)
-                    target.path = [];
-
-                target.path.push(name);
-                return new Proxy(target, {
-                    get: handlers.get,
-                    apply: (target, name, args) => {
-                        let path = target.path;
-                        target.path = [];
+        const makeRPC = (rpc = {}, base = "") => {
+            return new Proxy(() => {},
+                {
+                    get: (target, name) => {
+                        return makeRPC(rpc, base + "/" + name);
+                    },
+                    apply: (target, thisArg, args) => {
+                        let path = base.split("/").slice(1);
                         return new Promise((resolve, reject) => {
                             let binary = [];
                             for (let item in args) {
@@ -75,11 +67,10 @@ module.exports = class AnyPeer extends EventEmitter {
                                 });
                         });
                     }
-                });
-            }
+                }
+            );
         };
-
-        this.rpc = new Proxy(() => {}, handlers);
+        this.rpc = makeRPC();
 
         protocol.on("internal", this.onInternalComs.bind(this));
         protocol.on("message", this.onMessage.bind(this));
