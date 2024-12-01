@@ -30,6 +30,8 @@ module.exports = class AnyPeer extends EventEmitter {
             return new Proxy(() => {},
                 {
                     get: (target, name) => {
+                        const prop = target[name];
+                        if (prop != null) { return prop; }
                         return makeRPC(rpc, base + "/" + name);
                     },
                     apply: (target, thisArg, args) => {
