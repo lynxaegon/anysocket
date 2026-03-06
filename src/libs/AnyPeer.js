@@ -65,7 +65,7 @@ module.exports = class AnyPeer extends EventEmitter {
                                     }
                                 })
                                 .catch((e) => {
-                                    reject(packet.msg)
+                                    reject(packet.data)
                                 });
                         });
                     }

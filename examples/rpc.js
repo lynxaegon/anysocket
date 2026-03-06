@@ -43,8 +43,11 @@ client.setRPC({
 
             return "Hello World and Hello " + this._user;
         },
-        user: (user, peer) => {
+        user: async (user, peer) => {
             this._user = user;
+            await new Promise((resolve) => {
+                setTimeout(resolve, 2000);
+            });
             return "Hello " + user;
         },
         binary(bytes, peer) {
