@@ -83,10 +83,6 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (packet.seq == 0)
             packet.setSeq(this._getSeq());
 
-        if (packet.type != Packet.TYPE.HEARTBEAT) {
-            this._heartbeat();
-        }
-
         return new Promise((resolve, reject) => {
             const rejectFnc = (e) => {
                 this.disconnect(e);
