@@ -24,6 +24,7 @@ class WS extends AbstractTransport {
                 server: this.options.server
             });
             this.ws.on('connection', socket => {
+                this._applyTcpKeepAlive(socket);
                 this.addPeer(new Peer(socket));
             });
 
@@ -51,6 +52,7 @@ class WS extends AbstractTransport {
             let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
             ws.on('open', socket => {
                 connected = true;
+                this._applyTcpKeepAlive(ws);
                 this.addPeer(new Peer(ws));
                 resolve();
             });
@@ -65,6 +67,26 @@ class WS extends AbstractTransport {
             });
 
         });
+    }
+
+    // Enable SO_KEEPALIVE on the underlying TCP socket when the embedder
+    // opts in via `tcpKeepAlive: true`. Lets the kernel detect dead peers
+    // without any app-level heartbeat — essential when `heartbeatEnabled`
+    // is disabled on the AnyProtocol side, or as a backstop on flaky links.
+    //
+    // Node only exposes the initial-idle time via `setKeepAlive(enable, ms)`.
+    // The probe interval and probe count come from system sysctls
+    // (`net.ipv4.tcp_keepalive_intvl`, `net.ipv4.tcp_keepalive_probes`).
+    // Defaults to 30s idle if not specified.
+    _applyTcpKeepAlive(ws) {
+        if (!this.options.tcpKeepAlive) return;
+        const delay = this.options.tcpKeepAliveInitialDelay || 30000;
+        try {
+            const sock = (ws && ws._socket) ? ws._socket : ws;
+            if (sock && typeof sock.setKeepAlive === 'function') {
+                sock.setKeepAlive(true, delay);
+            }
+        } catch (_) { /* best effort — no-op if the socket doesn't expose it */ }
     }
 
     onStop() {

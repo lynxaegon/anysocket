@@ -35,7 +35,20 @@ module.exports = class AnyProtocol extends EventEmitter {
             authTimeout: 5 * 1000,
             e2eTimeout: 5 * 1000,
             replyTimeout: 30 * 1000,
-            heartbeatInterval: 5 * 1000
+            heartbeatInterval: 5 * 1000,
+            // How many consecutive missed heartbeats before disconnecting.
+            // Default 2 preserves legacy behaviour (disconnect after
+            // ~2 * heartbeatInterval of silence). Embedders on flaky links
+            // (WiFi+BT coexistence, cellular, etc.) can bump this to tolerate
+            // longer transient stalls without tearing down the TCP socket.
+            heartbeatsMaxMissed: 2,
+            // Disable app-level heartbeats entirely. Useful when the transport
+            // itself already provides liveness (SO_KEEPALIVE, WebSocket
+            // ping/pong, or the application layer has its own heartbeat like
+            // raft AppendEntries). With this off, a dead peer is detected
+            // only via TCP close / socket errors — pair with `tcpKeepAlive`
+            // on the transport for reliable detection.
+            heartbeatEnabled: true
         }, options);
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
@@ -471,6 +484,14 @@ module.exports = class AnyProtocol extends EventEmitter {
             return;
 
         clearTimeout(this[heartbeatTimer]);
+
+        // Heartbeats disabled — rely on transport-level liveness (TCP
+        // keepalive / WebSocket ping / app-level signals). Any still-pending
+        // timer is cleared above so state stays consistent if the option is
+        // flipped off after startup.
+        if(!this.options.heartbeatEnabled)
+            return;
+
         if(ponged) {
             this._heartbeatPong();
         }
@@ -482,10 +503,22 @@ module.exports = class AnyProtocol extends EventEmitter {
             if (!this[heartbeatPonged]) {
                 this[heartbeatsMissed]++;
 
-                if(this[heartbeatsMissed] >= 2) {
+                if(this[heartbeatsMissed] >= this.options.heartbeatsMaxMissed) {
                     this.disconnect("Missed Heartbeats");
                     return;
                 }
+
+                // Resend a fresh probe in case the original heartbeat was lost
+                // in transit (common on lossy wifi). Any incoming packet —
+                // including a late pong for the original — will still reset
+                // state via peer.on("message") → _heartbeat(true).
+                const probe = Packet
+                    .data(1)
+                    .setType(Packet.TYPE.HEARTBEAT);
+                this.send(probe).catch((e) => {
+                    debug("Heartbeat Error:", e);
+                    this.disconnect(e);
+                });
 
                 this._heartbeat();
                 return;
