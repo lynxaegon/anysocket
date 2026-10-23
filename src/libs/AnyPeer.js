@@ -147,6 +147,32 @@ module.exports = class AnyPeer extends EventEmitter {
         });
     }
 
+    /**
+     * The frame format and handshake this connection settled on: 1 when both
+     * ends speak 1.0, 0 against a 0.4.x peer.
+     */
+    protocolVersion() {
+        return this[_protocol].protocolVersion;
+    }
+
+    /** The optional features both ends announced. */
+    capabilities() {
+        return this[_protocol].capabilities.slice();
+    }
+
+    /**
+     * Did we dial this peer? Reportable metadata only — everything about how a
+     * peer is used is identical either way, and nothing in the protocol may
+     * depend on this.
+     */
+    isOutbound() {
+        try {
+            return !!this[_protocol].peer.isClient();
+        } catch (_) {
+            return undefined;
+        }
+    }
+
     e2e() {
         this[_protocol].e2e();
     }

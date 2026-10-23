@@ -25,6 +25,12 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[ENCRYPTION_PRIVATE] = null;
         this[ENCRYPTION_NONCE] = null;
         this[ENCRYPTION_STARTING] = false;
+
+        // Negotiated in the AUTH exchange (see _negotiate). 0 until then, and
+        // 0 for good against a 0.4.x peer.
+        this.protocolVersion = constants.PROTOCOL_VERSION_LEGACY;
+        this.remoteProtocolVersion = null;
+        this.capabilities = [];
         this[heartbeatTimer] = 0;
         this[heartbeatsMissed] = 0;
         this[heartbeatPonged] = true;
@@ -61,7 +67,10 @@ module.exports = class AnyProtocol extends EventEmitter {
             // ceiling there is far lower than for live traffic.
             maxPartialPackets: 64,
             maxMessageSize: 64 * 1024 * 1024,
-            maxHandshakeMessageSize: 64 * 1024
+            maxHandshakeMessageSize: 64 * 1024,
+            // What we announce in the handshake. Narrow it to opt out of a
+            // feature; the peer is then never sent it.
+            capabilities: constants.CAPABILITIES
         }, options);
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
@@ -87,10 +96,7 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         if (this.peer.isClient() && !this.peerID) {
             this.changeState(constants.PROTOCOL_STATES.AUTHING);
-            this.send(Packet.data({
-                id: this.anysocket.id,
-                auth: this.anysocket.authPacket()
-            }).setType(Packet.TYPE.AUTH));
+            this.send(this._authPacket());
         }
         if (this.peerID) {
             this.changeState(constants.PROTOCOL_STATES.CONNECTED);
@@ -341,6 +347,41 @@ module.exports = class AnyProtocol extends EventEmitter {
         });
     }
 
+    /** Our AUTH packet. Identical whichever end sends it. */
+    _authPacket() {
+        return Packet.data({
+            id: this.anysocket.id,
+            auth: this.anysocket.authPacket(),
+            pv: constants.PROTOCOL_VERSION,
+            caps: this.options.capabilities
+        }).setType(Packet.TYPE.AUTH);
+    }
+
+    /**
+     * Settle what this connection speaks, from the peer's announcement.
+     *
+     * Both ends announce and the result is the intersection, so neither side
+     * decides for the other and both compute the same answer from the same two
+     * inputs — nothing here depends on who dialled. The intersection is sorted
+     * so the order each side happened to declare cannot change the outcome,
+     * which matters once the result is folded into a transcript hash.
+     *
+     * A 0.4.x peer sends no `pv`, which reads as legacy and keeps the whole
+     * connection on the old frame format.
+     */
+    _negotiate(data) {
+        const remote = Number.isInteger(data && data.pv) ? data.pv : constants.PROTOCOL_VERSION_LEGACY;
+        const remoteCaps = Array.isArray(data && data.caps) ? data.caps : [];
+
+        this.remoteProtocolVersion = remote;
+        this.protocolVersion = Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
+        this.capabilities = (this.options.capabilities || [])
+            .filter((cap) => remoteCaps.indexOf(cap) != -1)
+            .sort();
+
+        debug(this.peerID, "negotiated pv", this.protocolVersion, "caps", this.capabilities);
+    }
+
     /**
      * Validate a received AUTH packet and advance the handshake.
      *
@@ -368,6 +409,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             return this.disconnect("Invalid Auth Packet!");
         }
         this.peerID = packet.data.id;
+        this._negotiate(packet.data);
 
         if (isReply) {
             this.changeState(constants.PROTOCOL_STATES.CONNECTED);
@@ -379,10 +421,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         // peer is validated before the state change, so the link queues never
         // resume for a connection that is about to be dropped.
         try {
-            await this.send(Packet.data({
-                id: this.anysocket.id,
-                auth: this.anysocket.authPacket()
-            }).setType(Packet.TYPE.AUTH));
+            await this.send(this._authPacket());
         } catch (e) {
             // send() already tore the connection down.
             return;

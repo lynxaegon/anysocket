@@ -49,6 +49,7 @@
     "babel-loader": "^8.2.2",
     "null-loader": "^4.0.1",
     "webpack": "^5.105.4",
-    "webpack-cli": "^6.0.1"
+    "webpack-cli": "^6.0.1",
+    "anysocket-legacy": "npm:anysocket@0.4.32"
   }
 }

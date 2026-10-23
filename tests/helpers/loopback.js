@@ -89,11 +89,15 @@ async function stop(...instances) {
  * The transport socket behind an AnyPeer, for tests that need to put bytes on
  * the wire by hand. AnyPeer keeps its protocol on a private Symbol.
  */
-function rawSocket(peer) {
+function protocolOf(peer) {
     const sym = Object.getOwnPropertySymbols(peer).find((s) => s.description === "private protocol");
-    return peer[sym].peer.socket;
+    return peer[sym];
+}
+
+function rawSocket(peer) {
+    return protocolOf(peer).peer.socket;
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-module.exports = { pair, expectRefused, stop, listen, rawSocket, wait, nextPort, AnySocket };
+module.exports = { pair, expectRefused, stop, listen, rawSocket, protocolOf, wait, nextPort, AnySocket };
