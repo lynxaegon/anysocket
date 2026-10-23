@@ -173,8 +173,30 @@ module.exports = class AnyPeer extends EventEmitter {
         }
     }
 
+    /**
+     * Encrypt this connection. Resolves once it is live.
+     *
+     * Either end may call it, and both may call it at once — the exchange is
+     * symmetric, so no caller has to work out which end it is.
+     */
     e2e() {
-        this[_protocol].e2e();
+        return this[_protocol].e2e();
+    }
+
+    /**
+     * A value unique to this encrypted channel, identical on both ends. An
+     * application can mix it into its own authentication so a proof is only
+     * good on the channel it was made for, which is what stops an on-path
+     * attacker from carrying a captured proof onto a channel of its own.
+     * Null until e2e is up.
+     */
+    getChannelBinding() {
+        return this[_protocol].getChannelBinding();
+    }
+
+    /** Which exchange and cipher this connection settled on, or null. */
+    e2eInfo() {
+        return this[_protocol].e2eInfo();
     }
 
     isE2EEnabled() {

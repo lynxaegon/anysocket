@@ -44,6 +44,27 @@ const asBytes = (value) => {
     return encoder.encode(String(value));
 };
 
+// Base64 for the handshake, which travels as JSON. The shared buffer helpers
+// mishandle a Uint8Array on node (toString ignores the encoding argument and
+// yields "1,2,3"), and Buffer does not exist in the browser bundle at all.
+const toBase64 = (bytes) => {
+    const view = asBytes(bytes);
+    if (typeof Buffer != "undefined") return Buffer.from(view).toString("base64");
+
+    let binary = "";
+    for (let i = 0; i < view.length; i++) binary += String.fromCharCode(view[i]);
+    return btoa(binary);
+};
+
+const fromBase64 = (value) => {
+    if (typeof Buffer != "undefined") return new Uint8Array(Buffer.from(value, "base64"));
+
+    const binary = atob(value);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+};
+
 const concat = (parts) => {
     let total = 0;
     for (const part of parts) total += part.length;
@@ -131,6 +152,8 @@ module.exports = {
     getSeq,
     asBytes,
     concat,
+    toBase64,
+    fromBase64,
     text: (bytes) => decoder.decode(asBytes(bytes)),
     bytes: (text) => encoder.encode(text)
 };

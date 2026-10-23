@@ -5,10 +5,15 @@ const Packet = require("./Packet");
 const Utils = require("../wrappers/utils");
 const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
+const Frame = require("./Frame");
+const E2E = require("./E2E");
 const ENCRYPTION_SECRET = Symbol("secret key");
 const ENCRYPTION_PRIVATE = Symbol("private key");
 const ENCRYPTION_NONCE = Symbol("nonce");
 const ENCRYPTION_STARTING = Symbol("e2e starting");
+const E2E_OFFER = Symbol("our e2e offer");
+const E2E_SESSION = Symbol("e2e session");
+const E2E_PENDING = Symbol("e2e promise");
 const heartbeatTimer = Symbol("heartbeat timer");
 const heartbeatsMissed = Symbol("heartbeats missed");
 const heartbeatPonged = Symbol("heartbeat ponged");
@@ -25,6 +30,9 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[ENCRYPTION_PRIVATE] = null;
         this[ENCRYPTION_NONCE] = null;
         this[ENCRYPTION_STARTING] = false;
+        this[E2E_OFFER] = null;
+        this[E2E_SESSION] = null;
+        this[E2E_PENDING] = null;
 
         // Negotiated in the AUTH exchange (see _negotiate). 0 until then, and
         // 0 for good against a 0.4.x peer.
@@ -163,10 +171,121 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     hasE2EEnabled() {
-        return !!this[ENCRYPTION_PRIVATE];
+        return !!this[ENCRYPTION_PRIVATE] || !!(this[E2E_SESSION] && this[E2E_SESSION].ready);
     }
 
+    /**
+     * The channel this connection ended up on, for an application that
+     * wants to pin its own auth to it. Equal on both ends, and different if
+     * anything in the handshake differed — including a forced downgrade.
+     */
+    getChannelBinding() {
+        const session = this[E2E_SESSION];
+        return session && session.ready ? session.binding.slice() : null;
+    }
+
+    e2eInfo() {
+        const session = this[E2E_SESSION];
+        if (!session || !session.ready) {
+            return this[ENCRYPTION_PRIVATE]
+                ? { protocolVersion: 0, kex: "secp521r1", cipher: "aes-256-cbc" }
+                : null;
+        }
+        return { protocolVersion: 1, kex: session.kex, cipher: session.cipher };
+    }
+
+    /**
+     * Encrypt this connection, resolving once it is live.
+     *
+     * Either end may call it and both may call it at once: the 1.0 exchange
+     * is symmetric, so the two offers simply cross and each side derives the
+     * same keys from them. There is no initiator to elect, which is what the
+     * caller used to have to do for itself.
+     */
     e2e() {
+        if (this[E2E_PENDING]) return this[E2E_PENDING].promise;
+
+        let settle;
+        const promise = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+        this[E2E_PENDING] = { promise: promise, resolve: settle.resolve, reject: settle.reject };
+
+        if (this.hasE2EEnabled()) {
+            this._e2eSettled();
+            return promise;
+        }
+
+        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
+            this._offerE2E().catch((e) => this.disconnect(e));
+        } else {
+            this._legacyE2E();
+        }
+
+        return promise;
+    }
+
+    _e2eSettled() {
+        const pending = this[E2E_PENDING];
+        if (pending) pending.resolve(this);
+    }
+
+    /** Send our half of the exchange. The same message whichever end sends it. */
+    async _offerE2E() {
+        if (this[E2E_OFFER]) return;
+
+        this[E2E_OFFER] = await E2E.createOffer();
+        if (this.state != constants.PROTOCOL_STATES.SWITCHING_PROTOCOL) {
+            this.changeState(constants.PROTOCOL_STATES.SWITCHING_PROTOCOL);
+        }
+        await this.send(Packet.data(this[E2E_OFFER].wire).setType(Packet.TYPE.SWITCH));
+    }
+
+    /**
+     * The peer's half. Derives the keys and turns encryption on.
+     *
+     * Runs to completion before the next received frame is processed, because
+     * the receive queue takes one frame at a time — so there is no window
+     * where the peer is encrypting and we are not yet ready to decrypt.
+     */
+    async _acceptE2E(offer) {
+        await this._offerE2E();
+
+        const mine = this[E2E_OFFER];
+        const kex = E2E.chooseKex(mine.wire.kex, offer.kex);
+        const cipher = E2E.chooseCipher(mine.wire.ciphers, offer.ciphers);
+        if (!kex || !cipher) {
+            throw new Error("no e2e suite in common with " + this.peerID);
+        }
+        if (!offer.keys || !offer.keys[kex] || !offer.nonce) {
+            throw new Error("malformed e2e offer from " + this.peerID);
+        }
+
+        const session = await E2E.derive({
+            kex: kex,
+            cipher: cipher,
+            protocolVersion: this.protocolVersion,
+            capabilities: this.capabilities,
+            localID: this.anysocket.id,
+            remoteID: this.peerID,
+            localPrivateKey: mine.privates[kex],
+            localPublicKey: Frame.fromBase64(mine.wire.keys[kex]),
+            localNonce: mine.nonce,
+            remotePublicKey: Frame.fromBase64(offer.keys[kex]),
+            remoteNonce: Frame.fromBase64(offer.nonce)
+        });
+
+        session.sendCounter = 0;
+        session.recvCounter = 0;
+        session.ready = true;
+        this[E2E_SESSION] = session;
+
+        this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2EE;
+        this.changeState(constants.PROTOCOL_STATES.CONNECTED);
+        debug(this.peerID, "e2e up:", session.kex, session.cipher);
+        this.emit("e2e", this);
+        this._e2eSettled();
+    }
+
+    _legacyE2E() {
         // Idempotent. A second call while a switch is in flight — or after one
         // finished — used to start a second key exchange and desync the two
         // ends. Both sides calling e2e() at once is still the caller's problem
@@ -277,6 +396,13 @@ module.exports = class AnyProtocol extends EventEmitter {
                                     } else if (packet.type == Packet.TYPE.SWITCH) {
                                         invalidPacket = false;
 
+                                        if (this._isE2EOffer(packet.data)) {
+                                            this._acceptE2E(packet.data)
+                                                .then(resolve)
+                                                .catch((e) => { this._e2eFailed(e); resolve(); });
+                                            break;
+                                        }
+
                                         Utils.generateAESKey().then((result) => {
                                             this[ENCRYPTION_PRIVATE] = result.private;
                                             this[ENCRYPTION_NONCE] = packet.data.nonce + result.nonce;
@@ -310,6 +436,14 @@ module.exports = class AnyProtocol extends EventEmitter {
                                 case constants.PROTOCOL_STATES.SWITCHING_PROTOCOL:
                                     if (packet.type == Packet.TYPE.SWITCH) {
                                         invalidPacket = false;
+
+                                        if (this._isE2EOffer(packet.data)) {
+                                            this._acceptE2E(packet.data)
+                                                .then(resolve)
+                                                .catch((e) => { this._e2eFailed(e); resolve(); });
+                                            break;
+                                        }
+
                                         this[ENCRYPTION_NONCE] = this[ENCRYPTION_NONCE] + packet.data.nonce;
                                         Utils.getAESSessionKey(this[ENCRYPTION_NONCE], this.anysocket.id, 0)
                                             .then((nonce) => {
@@ -347,6 +481,16 @@ module.exports = class AnyProtocol extends EventEmitter {
         });
     }
 
+    _isE2EOffer(data) {
+        return this.protocolVersion >= constants.PROTOCOL_VERSION && !!data && data.v === 1;
+    }
+
+    _e2eFailed(reason) {
+        const pending = this[E2E_PENDING];
+        if (pending) pending.reject(reason);
+        this.disconnect(reason);
+    }
+
     /** Our AUTH packet. Identical whichever end sends it. */
     _authPacket() {
         return Packet.data({
@@ -374,15 +518,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         const remoteCaps = Array.isArray(data && data.caps) ? data.caps : [];
 
         this.remoteProtocolVersion = remote;
-        // A relayed link keeps the legacy format. Its frames are opaque
-        // bytes to the relay, which re-wraps them for each hop, so the
-        // format would have to be the lowest version along the whole
-        // route — and the version of a further hop is not visible from
-        // here. Direct links get the 1.0 format; proxying is revisited
-        // once a route can report the versions along it.
-        this.protocolVersion = this.isProxy()
-            ? constants.PROTOCOL_VERSION_LEGACY
-            : Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
+        this.protocolVersion = Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
         this.capabilities = (this.options.capabilities || [])
             .filter((cap) => remoteCaps.indexOf(cap) != -1)
             .sort();
@@ -494,6 +630,12 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     disconnect(reason) {
+        const pending = this[E2E_PENDING];
+        if (pending && !this.hasE2EEnabled()) {
+            this[E2E_PENDING] = null;
+            pending.reject(reason instanceof Error ? reason : new Error(String(reason)));
+        }
+
         this.changeState(constants.PROTOCOL_STATES.DISCONNECTED);
         this._heartbeat();
 
@@ -505,16 +647,18 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processPacketQueue(item, cb) {
-        this.peer.send(item.packet).then(() => {
-            if (item.resolve)
-                item.resolve();
+        this._sealFrame(item.packet)
+            .then((payload) => this.peer.send(payload))
+            .then(() => {
+                if (item.resolve)
+                    item.resolve();
 
-            cb(null, null);
-        }).catch((e) => {
-            item.reject(e);
-            this._packetQueue.kill();
-            cb(null, null);
-        });
+                cb(null, null);
+            }).catch((e) => {
+                item.reject(e);
+                this._packetQueue.kill();
+                cb(null, null);
+            });
     }
 
     processLinkPacketQueue(item, cb) {
@@ -523,6 +667,19 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processRecvPacketQueue(item, cb) {
+        this._openFrame(item.recv)
+            .then((recv) => {
+                item.recv = recv;
+                this._routeRecvPacket(item, cb);
+            })
+            .catch((e) => {
+                debug(this.peerID, "frame rejected:", e && e.message);
+                this.disconnect("Invalid encrypted frame");
+                cb(null, null);
+            });
+    }
+
+    _routeRecvPacket(item, cb) {
         if(Packet.isForwardPacket(item.recv)) {
             this._acceptForward(item.recv);
             cb(null, null);
@@ -546,6 +703,12 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _encrypt(packet, seq) {
+        // On a 1.0 connection the frame is sealed as a whole further down, in
+        // wire order; the per-chunk hook is only the 0.4.x path.
+        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
+            return Promise.resolve(packet);
+        }
+
         return new Promise(resolve => {
             switch (this.ENCRYPTION_STATE) {
                 case constants.PROTOCOL_ENCRYPTION.PLAIN:
@@ -571,6 +734,10 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _decrypt(encryptionState, packet, seq) {
+        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
+            return Promise.resolve(packet);
+        }
+
         return new Promise(resolve => {
             switch (encryptionState) {
                 case constants.PROTOCOL_ENCRYPTION.PLAIN:
@@ -613,6 +780,61 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         this.emit("forward", this.peerID, this._decodeForwardPacket(recv));
         return true;
+    }
+
+    /**
+     * Encrypt a 1.0 frame on its way out.
+     *
+     * Done here, in the queue that feeds the socket, because this is the only
+     * point where frames are in their final order — two messages serialising
+     * at once would otherwise take counters in one order and reach the wire in
+     * another. The counter is therefore implied by position in the stream and
+     * never sent. The header travels authenticated but in clear, so a frame
+     * that was altered, replayed or reordered simply fails to open.
+     */
+    async _sealFrame(packet) {
+        const session = this[E2E_SESSION];
+        if (!session || !session.ready || !Frame.isFrame(packet)) return packet;
+
+        const bytes = Frame.asBytes(packet);
+        const header = bytes.slice(0, Frame.HEADER_SIZE);
+        header[0] |= Frame.FLAGS.ENCRYPTED;
+
+        const sealed = await E2E.seal(
+            session.sendKey, session.sendCounter++, header, bytes.subarray(Frame.HEADER_SIZE)
+        );
+        return Frame.concat([header, sealed]);
+    }
+
+    /**
+     * Decrypt a 1.0 frame on the way in, in arrival order.
+     *
+     * Once encryption is up every frame must be encrypted, and before it is up
+     * none may be: either mismatch is a downgrade attempt and drops the
+     * connection rather than being quietly tolerated.
+     */
+    async _openFrame(recv) {
+        if (!Frame.isFrame(recv)) return recv;
+
+        const bytes = Frame.asBytes(recv);
+        const encrypted = !!(bytes[0] & Frame.FLAGS.ENCRYPTED);
+        const session = this[E2E_SESSION];
+
+        if (!session || !session.ready) {
+            if (encrypted) throw new Error("encrypted frame before e2e was established");
+            return recv;
+        }
+        if (!encrypted) throw new Error("plaintext frame after e2e was established");
+
+        const header = bytes.subarray(0, Frame.HEADER_SIZE);
+        const plaintext = await E2E.open(
+            session.recvKey, session.recvCounter, header, bytes.subarray(Frame.HEADER_SIZE)
+        );
+        session.recvCounter++;
+
+        const out = Frame.concat([header, plaintext]);
+        out[0] &= ~Frame.FLAGS.ENCRYPTED;
+        return out;
     }
 
     _encodeForwardPacket(to, from, msg) {
@@ -661,7 +883,13 @@ module.exports = class AnyProtocol extends EventEmitter {
             this._heartbeatPong();
         }
 
-        if(this.state == constants.PROTOCOL_STATES.AUTHING || this.state == constants.PROTOCOL_STATES.DISCONNECTED)
+        // Nothing may go out in clear once the peer has turned encryption on,
+        // and the peer turns it on as soon as it sees our offer. Link traffic
+        // is already paused while switching; this keeps heartbeats from
+        // slipping out in the same window.
+        if(this.state == constants.PROTOCOL_STATES.AUTHING ||
+            this.state == constants.PROTOCOL_STATES.SWITCHING_PROTOCOL ||
+            this.state == constants.PROTOCOL_STATES.DISCONNECTED)
             return;
 
         this[heartbeatTimer] = setTimeout(() => {
@@ -703,6 +931,9 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _heartbeatPong(data) {
+        if(this.state == constants.PROTOCOL_STATES.SWITCHING_PROTOCOL)
+            return;
+
         if(data == 1) {
             const packet = Packet
                 .data(2)
