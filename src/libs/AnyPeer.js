@@ -199,6 +199,15 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].supportsRelay();
     }
 
+    /**
+     * Did this connection complete the built-in mutual auth? False when the
+     * instance has no secret, or when auth is optional and this peer did not
+     * offer it.
+     */
+    isAuthenticated() {
+        return !!this[_protocol].authenticated;
+    }
+
     /** The optional features both ends announced. */
     capabilities() {
         return this[_protocol].capabilities.slice();

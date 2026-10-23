@@ -155,3 +155,12 @@ test("ipc needs a path", (t) => {
     const server = new AnySocket();
     assert.throws(() => server.listen("ipc", {}), /path/);
 });
+
+test("ws: connectTimeout bounds a dial that never answers, as on tcp", async (t) => {
+    const client = new AnySocket();
+    t.after(() => stop(client));
+
+    const started = Date.now();
+    await assert.rejects(client.connect("ws", "10.255.255.1", 9, { connectTimeout: 300 }));
+    assert.ok(Date.now() - started < 5000, "the dial should have been abandoned near the timeout");
+});

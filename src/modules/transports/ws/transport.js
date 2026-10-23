@@ -63,6 +63,11 @@ class WS extends AbstractTransport {
                     }
                 }
             }
+            // connectTimeout means the same here as on tcp: a dial that never
+            // answers is abandoned rather than left to the OS's own timeout.
+            if(this.options.connectTimeout) {
+                opts = Object.assign(opts || {}, { handshakeTimeout: this.options.connectTimeout });
+            }
             let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
             ws.on('open', socket => {
                 connected = true;

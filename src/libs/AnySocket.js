@@ -307,6 +307,17 @@ class AnySocket extends EventEmitter {
         return (this.options.auth && this.options.auth.secret) || null;
     }
 
+    /**
+     * `auth: { secret, optional: true }` offers the built-in auth to every peer
+     * but still accepts one that does not offer it back — for moving a live
+     * fleet onto it a peer at a time, where requiring it at once would split
+     * the fleet in two. peer.isAuthenticated() says which way each connection
+     * went; gate on that until the last peer has moved, then drop optional.
+     */
+    authOptional() {
+        return !!(this.options.auth && this.options.auth.optional);
+    }
+
     authPacket() {
         return undefined;
     }

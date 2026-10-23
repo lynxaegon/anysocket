@@ -76,3 +76,26 @@ test("a 0.4.x listener cannot pull a 1.0 dialler onto the old exchange either", 
     const peer = await client.connect("ws", "127.0.0.1", port, { allowLegacyE2E: false });
     await assert.rejects(peer.e2e(), (e) => e.code === AnySocket.ERRORS.REFUSED);
 });
+
+// e2e() returns a promise in 1.0, and the old exchange never settled it, so
+// awaiting it against a 0.4.x peer hung for good — from either end.
+test("awaiting e2e() against a 0.4.x peer resolves, when we start it", async (t) => {
+    const link = await legacyLink(t);
+
+    const outcome = await Promise.race([
+        link.serverPeer().e2e().then(() => "resolved"),
+        wait(3000).then(() => "HUNG")
+    ]);
+    assert.equal(outcome, "resolved");
+    assert.equal(link.serverPeer().e2eInfo().cipher, "aes-256-cbc");
+});
+
+test("awaiting e2e() against a 0.4.x peer resolves, when it starts it", async (t) => {
+    const link = await legacyLink(t);
+
+    // ours is pending, then the old peer starts the exchange itself
+    const ours = link.serverPeer().e2e().then(() => "resolved");
+    link.peer.e2e();
+
+    assert.equal(await Promise.race([ours, wait(3000).then(() => "HUNG")]), "resolved");
+});

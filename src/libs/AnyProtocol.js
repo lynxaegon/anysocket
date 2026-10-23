@@ -39,6 +39,12 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[E2E_PENDING] = null;
         this[AUTH_CHALLENGE] = null;
         this[AUTH_PEER_CHALLENGE] = null;
+        // Did this connection complete the built-in auth? Only then may the
+        // secret go into its e2e keys — a peer that never proved it holds
+        // the secret would otherwise derive different keys and fail.
+        this.authenticated = false;
+        // Settled in the handshake from both ends' requireE2E.
+        this.e2eRequired = false;
 
         // Negotiated in the AUTH exchange (see _negotiate). 0 until then, and
         // 0 for good against a 0.4.x peer.
@@ -117,7 +123,13 @@ module.exports = class AnyProtocol extends EventEmitter {
             // machine ranks them by measuring which it runs faster. Setting it
             // pins a choice — the negotiation still only ever picks one both
             // ends offer.
-            e2eCiphers: null
+            e2eCiphers: null,
+            // Do not consider the connection up until it is encrypted: no
+            // "connected", and connect() does not resolve, until e2e is
+            // established — so an application never sees a peer it could talk
+            // to in clear. The requirement travels in the handshake, so either
+            // end asking for it is enough; both then wait.
+            requireE2E: false
         }, options);
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
@@ -388,7 +400,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             remoteNonce: Frame.fromBase64(offer.nonce),
             // Only ever set on a connection whose built-in auth succeeded, so the
             // peer has proved it holds the same secret.
-            psk: this.anysocket.authSecret() || null
+            psk: this.authenticated ? this.anysocket.authSecret() : null
         });
 
         session.sendCounter = 0;
@@ -547,6 +559,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                                                                 this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2EE;
                                                                 this.changeState(constants.PROTOCOL_STATES.CONNECTED);
                                                                 this.emit("e2e", this);
+                                                                this._e2eSettled();
                                                                 resolve();
                                                             });
                                                         });
@@ -586,6 +599,10 @@ module.exports = class AnyProtocol extends EventEmitter {
                                                         this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2EE;
                                                         this.changeState(constants.PROTOCOL_STATES.CONNECTED);
                                                         this.emit("e2e", this);
+                                                        // e2e() returns a promise in 1.0; the old
+                                                        // exchange never settled it, so awaiting
+                                                        // e2e() against a 0.4.x peer hung.
+                                                        this._e2eSettled();
                                                         resolve();
                                                     })
                                             })
@@ -636,6 +653,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             if (!this[AUTH_CHALLENGE]) this[AUTH_CHALLENGE] = Auth.challenge();
             data.ac = Frame.toBase64(this[AUTH_CHALLENGE]);
         }
+        if (this.options.requireE2E) data.e2e = "required";
 
         return Packet.data(Object.assign(data, extra)).setType(Packet.TYPE.AUTH);
     }
@@ -657,8 +675,8 @@ module.exports = class AnyProtocol extends EventEmitter {
             return this.disconnect("Invalid Auth Packet!");
         }
 
-        this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-        this.emit("ready", this);
+        this.authenticated = true;
+        return this._goLive();
     }
 
     /** What both ends sign: the two challenges, the two ids, the version. */
@@ -679,13 +697,13 @@ module.exports = class AnyProtocol extends EventEmitter {
      * must be offering the built-in auth too: letting a peer decline it
      * would make requiring it pointless.
      */
-    _acceptChallenge(data) {
-        if (!this.anysocket.authSecret()) return true;
-
-        if (!data || typeof data.ac != "string" || !data.ac) {
-            debug(this.peerID, "refused: peer did not offer the built-in auth");
-            return false;
-        }
+    /**
+     * Did the peer offer the built-in auth, with a well-formed challenge?
+     * Records the challenge when it did. A malformed one counts as not
+     * offered — and so is refused unless the auth is optional.
+     */
+    _peerOffersAuth(data) {
+        if (!data || typeof data.ac != "string" || !data.ac) return false;
 
         try {
             this[AUTH_PEER_CHALLENGE] = Frame.fromBase64(data.ac);
@@ -757,12 +775,21 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         this.peerID = packet.data.id;
         this._negotiate(packet.data);
+        this.e2eRequired = !!this.options.requireE2E || !!(packet.data && packet.data.e2e === "required");
 
-        const secret = this.anysocket.authSecret();
-        if (secret) {
-            if (!this._acceptChallenge(packet.data)) {
+        // Run the built-in auth on this connection when we hold a secret and
+        // the peer offered it too. When we hold one and the peer did not, that
+        // is a refusal — unless the auth is optional, in which case the
+        // connection simply goes ahead without it.
+        let secret = this.anysocket.authSecret();
+        if (secret && !this._peerOffersAuth(packet.data)) {
+            if (!this.anysocket.authOptional()) {
+                debug(this.peerID, "refused: peer did not offer the built-in auth");
                 return this.disconnect("Invalid Auth Packet!");
             }
+            secret = null;
+        }
+        if (secret) {
             // Our own challenge has to exist before anything is signed over it.
             // The listener has not sent an AUTH packet yet at this point, so
             // nothing else would have created one.
@@ -785,11 +812,10 @@ module.exports = class AnyProtocol extends EventEmitter {
                 } catch (e) {
                     return;
                 }
+                this.authenticated = true;
             }
 
-            this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-            this.emit("ready", this);
-            return;
+            return this._goLive();
         }
 
         if (secret) {
@@ -821,8 +847,33 @@ module.exports = class AnyProtocol extends EventEmitter {
             return;
         }
 
+        return this._goLive();
+    }
+
+    /**
+     * The handshake is done: become usable — after e2e, when it is required.
+     * Both ends start it themselves, so their offers simply cross. If it
+     * fails, or does not finish within e2eTimeout, the connection is dropped
+     * rather than quietly left in clear.
+     */
+    _goLive() {
         this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-        this.emit("ready", this);
+
+        if (!this.e2eRequired) {
+            this.emit("ready", this);
+            return;
+        }
+
+        // Started, not awaited. This runs inside the receive queue's handling
+        // of the AUTH packet, and the peer's e2e offer arrives on that same
+        // queue, one frame at a time — so waiting here would wait on ourselves
+        // until e2eTimeout. The peer is announced once encryption is up.
+        this.e2e().then(
+            () => {
+                if (this.isConnected()) this.emit("ready", this);
+            },
+            (e) => this.disconnect("e2e is required, and could not be established: " + (e && e.message || e))
+        );
     }
 
     changeState(state) {
@@ -925,6 +976,14 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processRecvPacketQueue(item, cb) {
+        // Whether this frame came in encrypted, decided before it is opened —
+        // after that it looks the same either way, and a frame queued during
+        // the switch is only delivered once encryption is up.
+        if (this.e2eRequired && this.isLINKMessage(Packet.getType(item.recv)) && !this._arrivedEncrypted(item)) {
+            this.disconnect("Plaintext message on a connection that requires e2e");
+            return cb(null, null);
+        }
+
         const reject = (e) => {
             debug(this.peerID, "frame rejected:", e && e.message);
             this.disconnect("Invalid encrypted frame");
@@ -943,6 +1002,15 @@ module.exports = class AnyProtocol extends EventEmitter {
         }
         if (opened && typeof opened.then === "function") opened.then(route, reject);
         else route(opened);
+    }
+
+    _arrivedEncrypted(item) {
+        if (Frame.isFrame(item.recv)) {
+            return !!(Frame.asBytes(item.recv)[0] & Frame.FLAGS.ENCRYPTED);
+        }
+        // A legacy frame carries its encryption inside the payload; what
+        // counts is the state it was received in.
+        return item.state == constants.PROTOCOL_ENCRYPTION.E2EE;
     }
 
     _routeRecvPacket(item, cb) {
