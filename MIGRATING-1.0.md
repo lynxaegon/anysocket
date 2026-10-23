@@ -49,6 +49,31 @@ client.connect("ws", ip, port, { disconnectOnReplyTimeout: true });
 It previously never settled, so `await peer.send(msg)` hung forever. If you
 worked around that with a race or a timeout, you can drop it.
 
+### Errors are `AnySocket.Error`, with a `code`
+
+The library's own failures used to be bare strings, so telling them apart
+meant matching text. They are now `AnySocket.Error` instances with a stable
+`code` — see `AnySocket.ERRORS` — and **the messages are exactly what they
+were**, so code matching on them keeps working. Test `code` from now on.
+
+```js
+try { await peer.rpc.slow(); }
+catch (e) { if (e.code === AnySocket.ERRORS.TIMEOUT) { /* ... */ } }
+```
+
+`ENOTCONNECTED`, `ETIMEOUT`, `EDISCONNECTED`, `ESUPERSEDED`, `EABORTED`, `EREFUSED`.
+
+### Two peers that dial each other keep one connection
+
+When two peers dial each other at once, both ends get two connections and have
+to retire the same one. Each used to drop whichever came up second — a race —
+so they routinely dropped *opposite* ones and **both** connections died. The
+survivor is now chosen the same way at both ends, from the two ids. A dial
+that reaches the peer but loses that choice resolves with the connection that
+was kept, and a retired connection rejects whatever was pending on it and is
+announced as `disconnected`. If you re-dialled on every drop, you no longer
+loop.
+
 ## Smaller changes
 
 - **A rejected RPC reports a readable message.** A thrown `Error` has no
@@ -62,6 +87,21 @@ worked around that with a race or a timeout, you can drop it.
   re-wraps per hop, so every hop has to be able to carry it. `proxy()` rejects
   with a reason when a hop is 0.4.x. Addresses are anysocket ids (UUIDv4).
 - **`stop()` rejects** instead of throwing inside a promise callback.
+- **A failed `listen()` no longer crashes the process.** A busy port raised a
+  second rejection nothing could catch, which killed the process even when the
+  caller handled the error. `listen()` resolves with the bound port, and port
+  `0` asks the OS for a free one.
+- **An un-awaited `send()`, `e2e()` or `broadcast()` that fails no longer
+  crashes the process**, now that they can reject; an awaiting caller still
+  sees the failure.
+- **A failed RPC rejects with the reason**, not with the call it sent — which
+  used to put its arguments, secrets included, wherever the error was logged.
+- **A connection to ourselves is refused**, rather than reaching the duplicate
+  rule with both ends being the same instance.
+- **`"connected"` is no longer emitted for a peer that already went away.**
+- **On node, a plain `Uint8Array` is treated as bytes**, as in the browser; it
+  used to go through JSON as `{"0":9,...}`. Binary RPC arguments and results
+  arrive as `Buffer`s on node.
 
 ## What is new
 
@@ -105,6 +145,79 @@ made in, and neither side's proof can be reflected back. A peer that declines it
 is refused when a secret is set. Your own `onAuth` still runs and can still
 refuse a peer that proved the secret.
 
+Moving a running fleet over to it? `auth: { secret, optional: true }` offers it
+to every peer and still accepts one that does not offer it back, and
+`peer.isAuthenticated()` says which way each connection went — gate on that
+until the last peer has moved, then drop `optional`. Optional means a peer may
+*decline* the auth, not *fail* it: offering it with the wrong secret is still
+refused.
+
+With a secret set, the secret also goes into the e2e keys, so the encrypted
+channel is authenticated and not merely private: someone in the path who
+relays the auth handshake and substitutes keys of their own cannot derive what
+either end does. `e2eInfo().authenticated` says whether a channel is.
+
+### Encrypted from the start: `requireE2E`
+
+```js
+server.listen("tcp", { port: 3000, requireE2E: true });
+```
+
+A connection is not up — no `"connected"`, and `connect()` does not resolve —
+until it is encrypted, so you are never handed a peer you could talk to in
+clear. Either end asking for it is enough; it travels in the handshake.
+
+### Ciphers
+
+AES-256-GCM everywhere, and ChaCha20-Poly1305 between node peers — the faster
+of the two on a CPU that does not accelerate AES. Each end measures which it
+runs faster and the negotiation settles on one both offer, so a browser (AES
+only) always lands both on AES. `e2eCiphers` pins a list.
+
+`allowLegacyE2E: false` refuses the old exchange a 0.4.x peer does
+(unauthenticated, AES-CBC with no integrity) once you no longer need it for an
+upgrade.
+
+### tcp and ipc
+
+```js
+server.listen("tcp", { port: 3000 });
+client.connect("tcp", "10.0.0.2", 3000);
+
+server.listen("ipc", { path: "/tmp/app.sock" });   // or \\.\pipe\app on Windows
+client.connect("ipc", "/tmp/app.sock");
+```
+
+Between processes that do not need a browser, tcp is markedly faster than ws:
+no frame header, and no masking of every byte a client sends. Neither exists in
+the browser build.
+
+### Keeping a peer connected: `maintain()`
+
+```js
+const link = anysocket.maintain("tcp", "10.0.0.2", 3000, {}, { minDelay: 500, maxDelay: 30000 });
+link.on("connected", (peer) => { /* ... */ });
+link.on("disconnected", (peer, reason) => { /* ... */ });
+```
+
+Dials, and dials again with backoff and jitter whenever the link drops. It
+remembers which peer the target turned out to be, so a connection to that peer
+from either direction satisfies it and is never dialled back; it adopts the
+connection the duplicate rule keeps when two peers maintain each other; and it
+resets the backoff only once a connection has stayed up. `fail(reason)` for a
+rejection of your own, `giveUpAfter`, `stop()`.
+
+### Per-call RPC options
+
+```js
+await peer.rpcWith({ timeout: 45000 }).reset("node-3");
+await peer.rpcWith({ signal: controller.signal }).slow();
+```
+
+A call used to have only the instance-wide `replyTimeout`, so it could not wait
+longer than that, and racing your own timer left the call registered until the
+default ran out.
+
 ### Knowing what a connection is
 
 ```js
@@ -113,6 +226,8 @@ peer.capabilities();      // what both ends announced
 peer.supportsRelay();     // can it carry a relayed link
 peer.isOutbound();        // did we dial it — reportable only; nothing in the
                           // protocol depends on it
+peer.isAuthenticated();   // did this connection complete the built-in auth
+anysocket.getPeer(id);    // the connected peer with this id, or null
 ```
 
 ### Options worth knowing
@@ -127,6 +242,10 @@ peer.isOutbound();        // did we dial it — reportable only; nothing in the
 | `maxPartialPackets` | `64` | Messages that may be mid-reassembly at once. |
 | `capabilities` | all | Narrow it to opt out of a feature. |
 | `maxPayload` | derived | Transport frame limit; follows `maxPacketSize`. |
+| `requireE2E` | `false` | Not up until encrypted. |
+| `e2eCiphers` | measured | Ciphers to offer, most preferred first. |
+| `allowLegacyE2E` | `true` | Allow the old exchange with a 0.4.x peer. |
+| `connectTimeout` | none | Abandon a dial that never answers (ws and tcp). |
 
 ## Running the tests
 

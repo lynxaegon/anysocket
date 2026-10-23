@@ -24,24 +24,29 @@ one process at a time.
 <a name="features"></a>
 ## Features
 * Client / Server agnostic — once a link is up, both ends use the same API
-* Support for request/reply
-* **Authenticated E2EE** between peers with forward secrecy — x25519 (p256 where
-  unavailable) and AES-256-GCM, with a channel binding to pin your own auth to
-* Built-in mutual authentication from a shared secret, or bring your own
-* Binary frames: a `Uint8Array`/`Buffer` travels as those bytes
+* Support for request/reply, with per-call timeouts and cancellation
+* **Authenticated E2EE** with forward secrecy — x25519 (p256 where unavailable),
+  AES-256-GCM or ChaCha20-Poly1305, and a channel binding to pin your own auth to
+* Built-in mutual authentication from a shared secret, which also binds the
+  encrypted channel to it — or bring your own; an optional mode for moving a live
+  fleet over to it
+* `requireE2E`: never be handed a peer you could talk to in clear
+* Binary frames: a `Uint8Array`/`Buffer` travels as those bytes, in messages and RPC
 * RPC support
 * NTP Sync between peers support
 * P2P using a proxy server (with support for direct E2EE between peers)
-* **Browser support** — 48kb footprint (_see: ```/dist/anysocket.browser.js```_)
-* Multiple transports *(implemented atm: **ws/wss**, **http/https**)*
+* `maintain()`: keep a peer connected, with backoff
+* **Browser support** (_see: ```/dist/anysocket.browser.js```_), tested as the built
+  bundle
+* Transports: **ws/wss**, **tcp**, **ipc** (unix socket / named pipe), **http/https**
+* Talks to 0.4.x peers on the wire, for upgrading a fleet one peer at a time
 * All peers have a UUIDv4 associated
 * Disconnect detection using a heartbeat
 * Tested: `npm test`, split into groups so iterating is quick
 
-
 ** _http_ transport is experimental
 
-_Info: Binary RPC arguments and responses are auto packed/unpacked (<a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer.pack</b></code></a>/<a href="docs/#AnySocket.Packer.unpack"><code><b>AnySocket.Packer.unpack</b></code></a>)._ 
+_Info: Binary RPC arguments and responses are sent as bytes between 1.0 peers, and auto packed/unpacked (<a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>) for a 0.4.x peer._
 
 ## Benchmarks
 
@@ -156,16 +161,13 @@ npm run bench           # 1.0 vs 0.4.32, plain and encrypted
 <a name="future"></a>
 ## Upcoming Features
 * Mesh Network
-* Multiple transports: **tcp**, **udp***, **ipc**
-* Client reconnection
-* ChaCha20-Poly1305 for peers without AES acceleration (the suite negotiation is
-  already in place; the default is pending a measurement on such a machine)
+* **udp*** transport
 
 _* this will require a change in the protocol, as the protocol assumes the packets are sent using a reliable, ordered connection_
 
-_A transport has to deliver whole messages: the ws one does, a tcp or ipc one
-would length-prefix internally. The frame format itself is byte-oriented and
-does not depend on a transport distinguishing text from binary._
+_A transport has to deliver whole messages: ws does, and tcp and ipc length-prefix
+each one. The frame format itself is byte-oriented and does not depend on a
+transport distinguishing text from binary._
 
 <a name="license"></a>
 ## License
