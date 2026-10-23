@@ -24,12 +24,18 @@ const FLAGS = {
     ENCRYPTED: 2,
     // Payload is raw bytes rather than JSON text.
     BINARY: 4,
+    // First chunk of a message. When it is not also FINAL, the payload opens
+    // with a 4-byte total length so the receiving side can allocate once
+    // instead of collecting every chunk and joining them afterwards.
+    FIRST: 16,
     // seq is a reply-to. The legacy format negated the seq to mean this, which
     // cost a bit of the range and could not be told from a decode slip.
     REPLY: 8
 };
 
 const HEADER_SIZE = 6;
+// Width of the total-length hint carried by a multi-chunk message.
+const LENGTH_HINT = 4;
 const MAX_SEQ = 0xffffffff;
 
 const encoder = new TextEncoder();
@@ -84,14 +90,16 @@ const concat = (parts) => {
  * Decided from the data, not from the negotiated version, so a frame is always
  * read the way it was written. A legacy frame starts with the ASCII digit "1"
  * or "2" (0x31/0x32); a 1.0 frame starts with a flags byte, which only uses the
- * low four bits. That keeps the two apart even when the transport hands us
- * bytes for both — ws 7 gives a string for a text message, ws 8 a Buffer.
+ * low bits. That keeps the two apart even when the transport hands us bytes
+ * for both — ws 7 gives a string for a text message, ws 8 a Buffer — and it
+ * does not rely on the transport distinguishing text from binary at all,
+ * which tcp, udp and ipc do not.
  */
 const isFrame = (recv) => {
     if (typeof recv == "string") return false;
 
     const bytes = asBytes(recv);
-    return bytes.length > 0 && bytes[0] < 0x10;
+    return bytes.length > 0 && bytes[0] < 0x30;
 };
 
 /** A legacy frame as the string the legacy codec expects. */
@@ -143,6 +151,7 @@ const getSeq = (recv) => {
 module.exports = {
     FLAGS,
     HEADER_SIZE,
+    LENGTH_HINT,
     MAX_SEQ,
     isFrame,
     legacyText,

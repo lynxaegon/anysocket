@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { pair } = require("./helpers/loopback");
+const { pair } = require("../helpers/loopback");
 
 // Regression: one unanswered call used to tear down the whole connection,
 // failing every other in-flight call and any healthy traffic with it.

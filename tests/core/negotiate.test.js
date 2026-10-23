@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const constants = require("../src/libs/_constants");
-const { pair, protocolOf, rawSocket, listen, stop, wait, AnySocket } = require("./helpers/loopback");
+const constants = require("../../src/libs/_constants");
+const { pair, protocolOf, rawSocket, listen, stop, wait, AnySocket } = require("../helpers/loopback");
 const WebSocket = require("ws");
-const AnyPacker = require("../src/libs/AnyPacker");
+const AnyPacker = require("../../src/libs/AnyPacker");
 
 const authFrame = (data) =>
     String(constants.PACKET_LENGTH.FULL) + String(constants.PACKET_TYPE.AUTH) +

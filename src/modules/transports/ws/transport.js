@@ -23,14 +23,15 @@ class WS extends AbstractTransport {
             this.ws = new WebSocket.Server({
                 server: this.options.server,
                 // `ws` allows 100MB per frame by default, which an
-                // unauthenticated peer can make us buffer. A protocol frame is
-                // at most MAX_PACKET_SIZE plus encoding overhead (hex-encoded
-                // e2e payloads double), so this is generous.
-                maxPayload: this.options.maxPayload || 8 * 1024 * 1024
+                // unauthenticated peer can make us buffer. Derived from the
+                // frame size so raising maxPacketSize does not quietly start
+                // tripping the transport limit; doubled because a 0.4.x
+                // encrypted payload is hex.
+                maxPayload: this.options.maxPayload || this._maxPayload()
             });
-            this.ws.on('connection', socket => {
+            this.ws.on("connection", socket => {
                 this._applyTcpKeepAlive(socket);
-                this.addPeer(new Peer(socket));
+                this.addPeer(this._peer(socket));
             });
 
             this.ws.on('error', err => {
@@ -58,7 +59,7 @@ class WS extends AbstractTransport {
             ws.on('open', socket => {
                 connected = true;
                 this._applyTcpKeepAlive(ws);
-                this.addPeer(new Peer(ws));
+                this.addPeer(this._peer(ws));
                 resolve();
             });
 
@@ -72,6 +73,20 @@ class WS extends AbstractTransport {
             });
 
         });
+    }
+
+    // How much may sit in the socket write buffer before a send waits for it
+    // to drain. Bounds memory on a large transfer without costing a round of
+    // latency per chunk.
+    _maxPayload() {
+        const frame = this.options.maxPacketSize || 4 * 1024 * 1024;
+        return Math.max(8 * 1024 * 1024, frame * 2 + 1024 * 1024);
+    }
+
+    _peer(socket) {
+        const peer = new Peer(socket);
+        peer.highWaterMark = this.options.sendHighWaterMark || 16 * 1024 * 1024;
+        return peer;
     }
 
     // Enable SO_KEEPALIVE on the underlying TCP socket when the embedder

@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const WebSocket = require("ws");
-const AnyPacker = require("../src/libs/AnyPacker");
-const constants = require("../src/libs/_constants");
-const { pair, listen, stop, wait, AnySocket } = require("./helpers/loopback");
+const AnyPacker = require("../../src/libs/AnyPacker");
+const constants = require("../../src/libs/_constants");
+const { pair, listen, stop, wait, AnySocket } = require("../helpers/loopback");
 
 // FORWARD frame: type + to(16 bytes) + from(16 bytes) + the relayed frame.
 // Ids go on the wire as packed hex, so only a 32-hex id survives the trip.

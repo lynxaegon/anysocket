@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const WebSocket = require("ws");
-const AnyPacker = require("../src/libs/AnyPacker");
-const constants = require("../src/libs/_constants");
-const { pair, listen, stop, rawSocket, wait, AnySocket } = require("./helpers/loopback");
+const AnyPacker = require("../../src/libs/AnyPacker");
+const constants = require("../../src/libs/_constants");
+const { pair, listen, stop, rawSocket, wait, AnySocket } = require("../helpers/loopback");
 
 const partial = (seq, payload) =>
     String(constants.PACKET_LENGTH.PARTIAL) + String(constants.PACKET_TYPE.AUTH) +

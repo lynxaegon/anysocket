@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const AnySocket = require("../src/index.js");
+const AnySocket = require("../../src/index.js");
 const LegacyAnySocket = require("anysocket-legacy");
-const constants = require("../src/libs/_constants");
-const { listen, stop, wait } = require("./helpers/loopback");
+const constants = require("../../src/libs/_constants");
+const { listen, stop, wait } = require("../helpers/loopback");
 
 /**
  * Interop with the published 0.4.32, tested against the real package rather

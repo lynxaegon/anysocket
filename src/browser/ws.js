@@ -29,11 +29,15 @@ module.exports = class BrowserWS {
         }
     }
 
-    send(data) {
+    send(data, cb) {
         // This used to forward the whole arguments array, which the browser
         // stringified — so it only ever worked by accident for a single string
         // and would have mangled binary outright.
         this.ws.send(data);
+
+        // The browser offers no completion callback, so report straight away.
+        // Backpressure there would have to come from polling bufferedAmount.
+        if (cb) cb();
     }
 
     close() {

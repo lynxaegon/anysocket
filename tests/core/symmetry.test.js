@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { pair, wait } = require("./helpers/loopback");
+const { pair, wait } = require("../helpers/loopback");
 
 /**
  * AnySocket is client/server agnostic: once a link is up, everybody

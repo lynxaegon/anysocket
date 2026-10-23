@@ -26,6 +26,9 @@ class Packet {
         this.parseError = false;
         // Set while reassembling a 1.0 message whose payload is raw bytes.
         this.binary = false;
+        // Destination for a multi-chunk message that announced its size.
+        this.assembled = null;
+        this.assembledAt = 0;
 
         if (data)
             this.data = data;
@@ -56,28 +59,42 @@ class Packet {
      * saw before.
      */
     async serialize(max_packet_size, encryptFnc, protocolVersion) {
+        const chunks = [];
+        for await (const chunk of this.chunks(max_packet_size, encryptFnc, protocolVersion)) {
+            chunks.push(chunk);
+        }
+        return chunks;
+    }
+
+    /**
+     * The chunks, produced one at a time.
+     *
+     * Materialising every chunk before sending any of them meant a copy of the
+     * whole payload on top of the payload itself, which for a large transfer is
+     * the difference between fitting in memory and not. The caller pulls these
+     * as the wire drains.
+     */
+    async *chunks(max_packet_size, encryptFnc, protocolVersion) {
         max_packet_size = max_packet_size || Number.MAX_SAFE_INTEGER;
 
         if (protocolVersion >= constants.PROTOCOL_VERSION) {
-            return this._serializeFrames(max_packet_size, encryptFnc);
+            yield* this._frameChunks(max_packet_size, encryptFnc);
+            return;
         }
 
-        let packet = JSON.stringify(this.data);
-        const count = Math.ceil(packet.length / max_packet_size);
-        const chunks = new Array(count);
+        const packet = JSON.stringify(this.data);
+        const count = Math.max(1, Math.ceil(packet.length / max_packet_size));
 
         for (let i = 0, o = 0; i < count; ++i, o += max_packet_size) {
-            chunks[i] = await this.encode(
-                (i == count - 1) ? constants.PACKET_LENGTH.FULL.toString(): constants.PACKET_LENGTH.PARTIAL.toString(),
+            yield await this.encode(
+                (i == count - 1) ? constants.PACKET_LENGTH.FULL.toString() : constants.PACKET_LENGTH.PARTIAL.toString(),
                 packet.substr(o, max_packet_size),
                 encryptFnc
             );
         }
-
-        return chunks;
     }
 
-    async _serializeFrames(max_packet_size, encryptFnc) {
+    async *_frameChunks(max_packet_size, encryptFnc) {
         // Raw bytes travel as themselves. Everything else is JSON, as before —
         // but it is chunked by byte rather than by character, so a multi-byte
         // character can no longer be split across two chunks.
@@ -85,27 +102,36 @@ class Packet {
         const payload = binary ? Frame.asBytes(this.data) : Frame.bytes(JSON.stringify(this.data));
 
         const count = Math.max(1, Math.ceil(payload.length / max_packet_size));
-        const chunks = new Array(count);
 
         for (let i = 0, o = 0; i < count; ++i, o += max_packet_size) {
-            const slice = payload.subarray(o, o + max_packet_size);
-            const body = await encryptFnc(slice, Math.abs(this.seq));
+            let slice = payload.subarray(o, o + max_packet_size);
 
             let flags = 0;
             if (i == count - 1) flags |= Frame.FLAGS.FINAL;
             if (binary) flags |= Frame.FLAGS.BINARY;
             if (this.seq < 0) flags |= Frame.FLAGS.REPLY;
+
+            if (i == 0) {
+                flags |= Frame.FLAGS.FIRST;
+                // Tell the far side how much is coming, so it can allocate once
+                // rather than hoarding chunks and joining them at the end.
+                if (count > 1) {
+                    const hint = new Uint8Array(Frame.LENGTH_HINT);
+                    new DataView(hint.buffer).setUint32(0, payload.length, false);
+                    slice = Frame.concat([hint, slice]);
+                }
+            }
+
+            const body = await encryptFnc(slice, Math.abs(this.seq));
             if (body !== slice) flags |= Frame.FLAGS.ENCRYPTED;
 
-            chunks[i] = Frame.encode({
+            yield Frame.encode({
                 flags: flags,
                 type: this.type,
                 seq: this.seq,
                 payload: body
             });
         }
-
-        return chunks;
     }
 
     async encode(eol, packet, encryptFnc) {
@@ -173,16 +199,55 @@ class Packet {
         this.seq = frame.seq;
         this.binary = frame.binary;
 
-        this.buffer.push(Frame.asBytes(
+        let body = Frame.asBytes(
             await decryptFnc(encryptionState, frame.payload, Math.abs(this.seq))
-        ));
+        );
 
-        if (!frame.final) {
-            return false;
+        // A multi-chunk message says up front how big it is, so the whole thing
+        // is allocated once and each chunk copied straight into place. Before,
+        // every chunk was kept and then joined, which meant holding the payload
+        // twice at the moment it completed.
+        if ((frame.flags & Frame.FLAGS.FIRST) && !frame.final) {
+            if (body.length < Frame.LENGTH_HINT) {
+                this.parseError = true;
+                return true;
+            }
+
+            const total = new DataView(body.buffer, body.byteOffset, body.byteLength)
+                .getUint32(0, false);
+            body = body.subarray(Frame.LENGTH_HINT);
+
+            this.assembled = new Uint8Array(total);
+            this.assembledAt = 0;
         }
 
-        const payload = Frame.concat(this.buffer);
-        this.buffer = [];
+        let payload;
+        if (this.assembled) {
+            if (this.assembledAt + body.length > this.assembled.length) {
+                // More arrived than the sender promised.
+                this.parseError = true;
+                this.assembled = null;
+                return true;
+            }
+
+            this.assembled.set(body, this.assembledAt);
+            this.assembledAt += body.length;
+
+            if (!frame.final) return false;
+
+            payload = this.assembledAt == this.assembled.length
+                ? this.assembled
+                : this.assembled.subarray(0, this.assembledAt);
+            this.assembled = null;
+        } else {
+            if (!frame.final) {
+                // No hint: a sender that chunked without announcing a total.
+                this.buffer.push(body);
+                return false;
+            }
+            payload = this.buffer.length ? Frame.concat(this.buffer.concat([body])) : body;
+            this.buffer = [];
+        }
 
         if (frame.binary) {
             this.data = payload;

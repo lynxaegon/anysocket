@@ -1,8 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const Frame = require("../src/libs/Frame");
-const Packet = require("../src/libs/Packet");
-const constants = require("../src/libs/_constants");
+const Frame = require("../../src/libs/Frame");
+const Packet = require("../../src/libs/Packet");
+const constants = require("../../src/libs/_constants");
 
 test("a frame round-trips through encode and decode", (t) => {
     const encoded = Frame.encode({

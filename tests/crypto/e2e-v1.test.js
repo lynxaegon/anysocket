@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const E2E = require("../src/libs/E2E");
-const Frame = require("../src/libs/Frame");
-const constants = require("../src/libs/_constants");
-const { pair, rawSocket, wait } = require("./helpers/loopback");
+const E2E = require("../../src/libs/E2E");
+const Frame = require("../../src/libs/Frame");
+const constants = require("../../src/libs/_constants");
+const { pair, rawSocket, wait } = require("../helpers/loopback");
 
 const hex = (bytes) => Buffer.from(bytes).toString("hex");
 
@@ -13,8 +13,10 @@ function intercept(peer) {
     const original = socket.send.bind(socket);
     const captured = [];
 
-    socket.send = (data) => {
+    socket.send = (data, cb) => {
         captured.push(data);
+        // Nothing reaches the wire, but the sender still has to be released.
+        if (cb) cb();
         return Promise.resolve();
     };
 
@@ -357,7 +359,7 @@ test("opening with a different header fails", async (t) => {
 // exchange and cipher — and says so, rather than claiming the new suite.
 test("a 0.4.x link reports the old suite and has no binding", async (t) => {
     const LegacyAnySocket = require("anysocket-legacy");
-    const { listen, stop, AnySocket } = require("./helpers/loopback");
+    const { listen, stop, AnySocket } = require("../helpers/loopback");
 
     const server = new AnySocket();
     const legacy = new LegacyAnySocket();

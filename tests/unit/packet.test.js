@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const Packet = require("../src/libs/Packet");
-const AnyPacker = require("../src/libs/AnyPacker");
-const constants = require("../src/libs/_constants");
-const { pair, rawSocket, wait } = require("./helpers/loopback");
+const Packet = require("../../src/libs/Packet");
+const AnyPacker = require("../../src/libs/AnyPacker");
+const constants = require("../../src/libs/_constants");
+const { pair, rawSocket, wait } = require("../helpers/loopback");
 
 const frame = (eol, type, seq, payload) =>
     String(eol) + String(type) + AnyPacker.packInt32(seq) + payload;

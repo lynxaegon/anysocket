@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { pair } = require("./helpers/loopback");
+const { pair } = require("../helpers/loopback");
 
 const withRPC = (t, rpc) => pair(t, { configure: (server) => server.setRPC(rpc) });
 

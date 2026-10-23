@@ -69,13 +69,34 @@ module.exports = class AnyProtocol extends EventEmitter {
             // pre-1.0 behaviour, where one missed reply tore down the whole
             // connection (and every other in-flight call with it).
             disconnectOnReplyTimeout: false,
-            // Receive limits. Reassembly was unbounded, so an unauthenticated
-            // peer could pin memory with partial packets. Before the handshake
-            // completes only a single, small AUTH packet is in play, so the
-            // ceiling there is far lower than for live traffic.
+            // Receive limits. The one that matters is the handshake ceiling:
+            // before authenticating, a peer may only be sending a single small
+            // AUTH packet, and reassembly used to be unbounded there, so it
+            // could pin memory without ever proving who it was.
+            //
+            // Live traffic is deliberately uncapped. Moving large payloads is
+            // the point of the library — a cap here is not much of a defence
+            // against a peer that has already authenticated, and a default one
+            // silently truncates exactly the transfers it exists to carry. Set
+            // maxMessageSize to bound an authenticated peer if that suits your
+            // deployment.
             maxPartialPackets: 64,
-            maxMessageSize: 64 * 1024 * 1024,
+            maxMessageSize: Infinity,
             maxHandshakeMessageSize: 64 * 1024,
+            // Chunks allowed in flight while framing a message. More overlaps
+            // framing and encryption with the writes; fewer holds less memory.
+            sendWindow: 8,
+            // Bytes per 1.0 frame. Measured: on an encrypted 128MB transfer,
+            // 1MB frames manage ~105MB/s and 4MB frames ~170MB/s, because the
+            // per-frame work stops dominating. 8MB is a little quicker again
+            // but holds noticeably more. Only applies to 1.0 frames — a 0.4.x
+            // peer keeps 1MB chunks, since its hex-encoded e2e payload would
+            // otherwise double past the frame limit.
+            maxPacketSize: 4 * 1024 * 1024,
+            // How much may sit unflushed in the socket write buffer before a
+            // send waits. Measured: 4MB costs about a quarter of the
+            // throughput of 16MB, for no real memory saving.
+            sendHighWaterMark: 16 * 1024 * 1024,
             // What we announce in the handshake. Narrow it to opt out of a
             // feature; the peer is then never sent it.
             capabilities: constants.CAPABILITIES
@@ -141,22 +162,64 @@ module.exports = class AnyProtocol extends EventEmitter {
         });
     }
 
+    /**
+     * Frame a message and feed it to the wire, a chunk at a time.
+     *
+     * Every chunk used to be built before any of them was sent, which held a
+     * second copy of the whole payload — on a large transfer that is the
+     * difference between fitting in memory and not. Chunks are produced as the
+     * wire drains instead, with a few allowed in flight so the framing and
+     * encryption of the next overlap the write of the last.
+     */
     _send(packet, resolve, reject) {
         debug(this.peerID, ">>>>", Packet.TYPE._string(packet.type), packet.seq);
-        packet.serialize(constants.MAX_PACKET_SIZE, this._encrypt.bind(this), this.protocolVersion)
-            .then((packet) => {
-                for (let i = 0; i < packet.length; i++) {
-                    const item = {
-                        packet: packet[i],
-                        reject: reject
-                    };
-                    if (i == packet.length - 1) {
-                        item.resolve = resolve;
-                    }
 
-                    this._packetQueue.push(item);
+        const window = Math.max(1, this.options.sendWindow);
+        const chunkSize = this.protocolVersion >= constants.PROTOCOL_VERSION
+            ? this.options.maxPacketSize
+            : constants.MAX_PACKET_SIZE;
+        const chunks = packet.chunks(
+            chunkSize, this._encrypt.bind(this), this.protocolVersion
+        );
+
+        let inFlight = 0;
+        let drained = null;
+        let failure = null;
+
+        const settle = () => {
+            inFlight--;
+            if (drained) {
+                const wake = drained;
+                drained = null;
+                wake();
+            }
+        };
+        const waitForRoom = () => new Promise((wake) => { drained = wake; });
+
+        (async () => {
+            for await (const chunk of chunks) {
+                if (failure) throw failure;
+                while (inFlight >= window) {
+                    await waitForRoom();
+                    if (failure) throw failure;
                 }
-            }).catch(reject);
+
+                inFlight++;
+                this._packetQueue.push({
+                    packet: chunk,
+                    resolve: settle,
+                    reject: (e) => {
+                        failure = failure || e;
+                        settle();
+                    }
+                });
+            }
+
+            while (inFlight > 0) await waitForRoom();
+            if (failure) throw failure;
+
+            resolve();
+        })().catch(reject);
     }
 
     forward(packet) {

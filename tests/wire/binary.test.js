@@ -1,9 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const LegacyAnySocket = require("anysocket-legacy");
-const Frame = require("../src/libs/Frame");
-const constants = require("../src/libs/_constants");
-const { pair, listen, stop, rawSocket, wait, AnySocket } = require("./helpers/loopback");
+const Frame = require("../../src/libs/Frame");
+const constants = require("../../src/libs/_constants");
+const { pair, listen, stop, rawSocket, wait, AnySocket } = require("../helpers/loopback");
 
 /** Record whether each outgoing message leaves as bytes or as a string. */
 function watchWire(peer) {
@@ -11,9 +11,9 @@ function watchWire(peer) {
     const sent = [];
     const original = socket.send.bind(socket);
 
-    socket.send = (data) => {
+    socket.send = (data, cb) => {
         sent.push(typeof data == "string" ? "text" : "binary");
-        return original(data);
+        return original(data, cb);
     };
 
     return sent;
@@ -80,7 +80,7 @@ test("bytes cost no more on the wire than they are", async (t) => {
 
     const socket = rawSocket(link.clientPeer);
     const original = socket.send.bind(socket);
-    socket.send = (data) => { observed += data.length; return original(data); };
+    socket.send = (data, cb) => { observed += data.length; return original(data, cb); };
 
     await link.clientPeer.send(payload);
     await wait(50);
@@ -129,7 +129,7 @@ test("an encrypted payload is no longer hex-expanded", async (t) => {
 
     const socket = rawSocket(link.clientPeer);
     const original = socket.send.bind(socket);
-    socket.send = (data) => { observed += data.length; return original(data); };
+    socket.send = (data, cb) => { observed += data.length; return original(data, cb); };
 
     await link.clientPeer.send(payload);
     await wait(50);

@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { pair, AnySocket, wait } = require("./helpers/loopback");
+const { pair, AnySocket, wait } = require("../helpers/loopback");
 
 test("a message arrives at the other side", async (t) => {
     const link = await pair(t);
