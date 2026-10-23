@@ -4,16 +4,17 @@
   "description": "A custom protocol over any transport: client/server agnostic, binary framed, with authenticated end-to-end encryption",
   "main": "src/index.js",
   "scripts": {
-    "test": "node --test --test-timeout=30000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\" \"tests/crypto/*.test.js\" \"tests/security/*.test.js\" \"tests/interop/*.test.js\"",
+    "test": "node --test --test-timeout=30000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\" \"tests/crypto/*.test.js\" \"tests/security/*.test.js\" \"tests/browser/*.test.js\" \"tests/interop/*.test.js\"",
     "test:unit": "node --test --test-timeout=10000 \"tests/unit/*.test.js\"",
     "test:core": "node --test --test-timeout=15000 \"tests/core/*.test.js\"",
     "test:wire": "node --test --test-timeout=15000 \"tests/wire/*.test.js\"",
     "test:crypto": "node --test --test-timeout=20000 \"tests/crypto/*.test.js\"",
     "test:security": "node --test --test-timeout=20000 \"tests/security/*.test.js\"",
     "test:interop": "node --test --test-timeout=30000 \"tests/interop/*.test.js\"",
-    "test:fast": "node --test --test-timeout=15000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\"",
+    "test:fast": "node --test --test-timeout=20000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\"",
     "bench": "node benchmarks/run.js",
-    "build": "webpack"
+    "build": "webpack",
+    "test:browser": "node --test --test-timeout=20000 \"tests/browser/*.test.js\""
   },
   "repository": {
     "type": "git",

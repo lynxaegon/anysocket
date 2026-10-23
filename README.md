@@ -139,7 +139,19 @@ More in the `examples` folder.
 
 ## Documentation
 
-See [documentation](docs#api) and [examples](examples) folder
+See [documentation](docs#api) and the [examples](examples) folder.
+
+Upgrading from 0.4.x? [MIGRATING-1.0.md](MIGRATING-1.0.md).
+
+## Tests
+
+```
+npm run test:unit       # no sockets, ~0.3s — the quick loop
+npm run test:fast       # everything but the 0.4.32 interop pass
+npm run test:browser    # drives the built dist/ bundle
+npm test                # all of it
+npm run bench           # 1.0 vs 0.4.32, plain and encrypted
+```
 
 <a name="future"></a>
 ## Upcoming Features

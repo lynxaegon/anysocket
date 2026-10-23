@@ -29,6 +29,7 @@ const _private = {
     onPeerDisconnected: Symbol("onPeerDisconnected"),
     onPeerInternalMessage: Symbol("onPeerInternalMessage"),
     findTransport: Symbol("findTransport"),
+    keepsExisting: Symbol("keepsExisting"),
     httpBundle: Symbol("http bundle js"),
     httpServer: Symbol("HTTPServer")
 };
@@ -368,11 +369,51 @@ class AnySocket extends EventEmitter {
         this[_private.peers][packet.to].forward(packet);
     }
 
+    /**
+     * Two peers that dial each other end up with two connections, and both ends
+     * have to retire the same one. Each end used to drop whichever became ready
+     * second, which is a local race: the two ends routinely chose opposite
+     * connections, each closed the other's keeper, and **both** connections
+     * died. An application that re-dials would then do it again, which looks
+     * like a peer that will not stay connected.
+     *
+     * So the choice is made from the two ids instead, which both ends know: the
+     * surviving connection is the one dialled by the peer whose id sorts lower.
+     * No timing involved, and nothing depending on which end is asking.
+     *
+     * Only consulted when there is actually a duplicate — a single connection is
+     * kept whichever way it was dialled.
+     */
+    [_private.keepsExisting](existing, incoming) {
+        const existingOutbound = existing.isOutbound();
+        const incomingOutbound = incoming.isOutbound();
+
+        // Can't tell a direction, or both run the same way (an application that
+        // dialled twice): keep what we have, as before.
+        if (typeof existingOutbound != "boolean" || typeof incomingOutbound != "boolean") return true;
+        if (existingOutbound === incomingOutbound) return true;
+
+        // The lower id is the designated dialler, so our keeper is outbound
+        // exactly when our own id is the lower one.
+        const weShouldDial = String(this.id) < String(incoming.peerID);
+        return existingOutbound === weShouldDial;
+    }
+
     [_private.onProtocolReady](protocol, resolve) {
-        if(this[_private.peers][protocol.peerID]) {
-            protocol.peerID = null;
-            protocol.disconnect("Duplicated AnySocket ID found!");
-            return;
+        const existing = this[_private.peers][protocol.peerID];
+        if(existing) {
+            if(this[_private.keepsExisting](existing, protocol)) {
+                protocol.peerID = null;
+                protocol.disconnect("Duplicated AnySocket ID found!");
+                return;
+            }
+
+            // The incoming connection is the one both ends will settle on, so
+            // retire ours here. Unhooked from the map first so its own
+            // disconnect cannot take the replacement down with it.
+            debug("Replacing the duplicate connection to", protocol.peerID);
+            delete this[_private.peers][existing.id];
+            existing._supersede("Superseded by the agreed connection");
         }
 
         debug("Peer ready");

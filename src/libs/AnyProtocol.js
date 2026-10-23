@@ -148,6 +148,19 @@ module.exports = class AnyProtocol extends EventEmitter {
         return !!this.peer.isProxy;
     }
 
+    /**
+     * Did we dial this connection? undefined when the transport cannot say.
+     * Reportable metadata — used to settle a duplicate deterministically, never
+     * to decide how a peer may be used.
+     */
+    isOutbound() {
+        try {
+            return !!this.peer.isClient();
+        } catch (_) {
+            return undefined;
+        }
+    }
+
     /** Can this connection carry a relayed link? */
     supportsRelay() {
         return this.protocolVersion >= constants.PROTOCOL_VERSION;

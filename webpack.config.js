@@ -6,7 +6,15 @@ module.exports = {
     mode: 'production',
     entry: './src/index.js',
     output: {
-        library: "AnySocket",
+        // UMD rather than a bare global, so the bundle works from a <script>
+        // tag (still defining window.AnySocket), from a bundler, and from a
+        // require() — which is also what lets the tests drive the real built
+        // artifact instead of only the source it was built from.
+        library: {
+            name: "AnySocket",
+            type: "umd"
+        },
+        globalObject: "typeof self !== 'undefined' ? self : this",
         path: path.resolve(__dirname, 'dist'),
         filename: 'anysocket.browser.js'
     },

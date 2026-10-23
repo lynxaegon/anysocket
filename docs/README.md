@@ -1,3 +1,12 @@
+# AnySocket API
+
+A custom protocol over any transport. Client/server agnostic: once a link is up,
+both ends use the same API, and nothing below depends on which end dialled.
+
+Unencrypted by default; <a href="#AnyPeer.e2e">peer.e2e()</a> opts in.
+
+Upgrading from 0.4.x? See [MIGRATING-1.0.md](../MIGRATING-1.0.md).
+
 <a name="api"></a>
 ## Api
 * <a href="#AnySocket.constructor"><code><b>AnySocket()</b></code></a>
@@ -71,9 +80,14 @@
     
 ## Documentation
 <a name="AnySocket.constructor"></a>
-### AnySocket()
+### AnySocket([options])
 
-Creates a new AnySocket instance
+Creates a new AnySocket instance.
+
+**Arguments:**
+* `options` - optional
+    * `auth` - `{ secret }` to use the
+      <a href="#AnySocket.auth">built-in mutual authentication</a>
 
 [back to top](#api)
 

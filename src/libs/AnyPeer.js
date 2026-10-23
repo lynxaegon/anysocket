@@ -174,11 +174,17 @@ module.exports = class AnyPeer extends EventEmitter {
      * depend on this.
      */
     isOutbound() {
-        try {
-            return !!this[_protocol].peer.isClient();
-        } catch (_) {
-            return undefined;
-        }
+        return this[_protocol].isOutbound();
+    }
+
+    /**
+     * Retire this peer in favour of another connection to the same id. Detached
+     * from its protocol first, so the resulting disconnect cannot be mistaken
+     * for the replacement going away.
+     */
+    _supersede(reason) {
+        this[_protocol].peerID = null;
+        this[_protocol].disconnect(reason);
     }
 
     /**
