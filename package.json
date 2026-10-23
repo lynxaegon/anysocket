@@ -59,5 +59,12 @@
     "webpack": "^5.105.4",
     "webpack-cli": "^6.0.1",
     "anysocket-legacy": "npm:anysocket@0.4.32"
-  }
+  },
+  "files": [
+    "src/",
+    "dist/",
+    "README.md",
+    "MIGRATING-1.0.md",
+    "LICENSE"
+  ]
 }
