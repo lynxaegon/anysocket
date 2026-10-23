@@ -1,9 +1,10 @@
 const AnySocket = require("../../src/index.js");
 
 // `node --test` runs each file in its own process, in parallel, so a shared
-// starting port would have the files fighting over it. Randomise the base and
-// still retry below, because nothing stops an unrelated process from holding one.
-let port = 19000 + Math.floor(Math.random() * 20000);
+// starting port would have the files fighting over it. Seed from the pid as well
+// as randomly, and still retry below, because nothing stops an unrelated process
+// from holding one.
+let port = 19000 + ((process.pid * 97) % 20000) + Math.floor(Math.random() * 200);
 const nextPort = () => ++port;
 
 const isPortTaken = (e) => String(e && (e.code || e.message || e)).includes("EADDRINUSE");
@@ -41,7 +42,18 @@ async function pair(t, options = {}) {
         options.configure(server, client);
     }
 
-    const serverSide = new Promise((resolve) => server.once("connected", resolve));
+    // Wait for the peer that is *our* client, not merely the first to arrive.
+    // Test files run in parallel, so another file's client can reach this port
+    // and would otherwise be handed back as the server-side peer.
+    const serverSide = new Promise((resolve) => {
+        const onConnected = (peer) => {
+            if (peer.id !== client.id) return;
+            server.off ? server.off("connected", onConnected) : server.removeListener("connected", onConnected);
+            resolve(peer);
+        };
+        server.on("connected", onConnected);
+    });
+
     const p = await listen(server, options.listen);
     const clientPeer = await client.connect("ws", "127.0.0.1", p, options.connect);
     const serverPeer = await serverSide;

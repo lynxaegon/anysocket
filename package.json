@@ -1,7 +1,7 @@
 {
   "name": "anysocket",
-  "version": "0.4.32",
-  "description": "An abstract networking layer over multiple transports, client/server agnostic with support for E2EE",
+  "version": "1.0.0",
+  "description": "A custom protocol over any transport: client/server agnostic, binary framed, with authenticated end-to-end encryption",
   "main": "src/index.js",
   "scripts": {
     "test": "node --test --test-timeout=30000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\" \"tests/crypto/*.test.js\" \"tests/security/*.test.js\" \"tests/interop/*.test.js\"",

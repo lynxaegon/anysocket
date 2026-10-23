@@ -9,6 +9,7 @@
     * <a href="#AnySocket.stop"><code><b>stop()</b></code></a>
     * <a href="#AnySocket.onAuth"><code><b>onAuth()</b></code></a>
     * <a href="#AnySocket.authPacket"><code><b>authPacket()</b></code></a>
+    * <a href="#AnySocket.auth"><code><b>options.auth (built-in auth)</b></code></a>
     * <a href="#AnySocket.broadcast"><code><b>broadcast()</b></code></a>
     * <a href="#AnySocket.setRPC"><code><b>setRPC()</b></code></a>
     * <a href="#AnySocket.canProxy"><code><b>canProxy()</b></code></a>
@@ -37,6 +38,12 @@
     * <a href="#AnyPeer.disconnect"><code><b>disconnect()</b></code></a>
     * <a href="#AnyPeer.isProxy"><code><b>isProxy()</b></code></a>
     * <a href="#AnyPeer.isE2EEnabled"><code><b>isE2EEnabled()</b></code></a>
+    * <a href="#AnyPeer.getChannelBinding"><code><b>getChannelBinding()</b></code></a>
+    * <a href="#AnyPeer.e2eInfo"><code><b>e2eInfo()</b></code></a>
+    * <a href="#AnyPeer.protocolVersion"><code><b>protocolVersion()</b></code></a>
+    * <a href="#AnyPeer.capabilities"><code><b>capabilities()</b></code></a>
+    * <a href="#AnyPeer.supportsRelay"><code><b>supportsRelay()</b></code></a>
+    * <a href="#AnyPeer.isOutbound"><code><b>isOutbound()</b></code></a>
     * <a href="#AnyPeer.on.message"><code><b>event: _message_</b></code></a>
     * <a href="#AnyPeer.on.e2e"><code><b>event: _e2e_</b></code></a>
     * <a href="#AnyPeer.on.disconnected"><code><b>event: _disconnected_</b></code></a>
@@ -112,7 +119,19 @@ Attaches a new server transport based on the selected **scheme*
     authTimeout: 5 * 1000, // auth timeout
     e2eTimeout: 5 * 1000, // e2e timeout
     replyTimeout: 30 * 1000, // reply timeout
-    heartbeatInterval: 5 * 1000 // heartbeat interval
+    heartbeatInterval: 5 * 1000, // heartbeat interval
+    heartbeatEnabled: true, // app-level heartbeats
+    heartbeatsMaxMissed: 2, // missed heartbeats before disconnecting
+    disconnectOnReplyTimeout: false, // pre-1.0: a missed reply killed the connection
+    maxPacketSize: 4 * 1024 * 1024, // bytes per 1.0 frame
+    sendWindow: 8, // frames in flight while framing a message
+    sendHighWaterMark: 16 * 1024 * 1024, // unflushed bytes before a send waits
+    maxHandshakeMessageSize: 64 * 1024, // ceiling before a peer authenticates
+    maxMessageSize: Infinity, // ceiling after it does
+    maxPartialPackets: 64, // messages mid-reassembly at once
+    capabilities: [], // narrow to opt out of a feature
+    tcpKeepAlive: false, // SO_KEEPALIVE on the socket
+    tcpKeepAliveInitialDelay: 30000
 }
 ```
 
@@ -133,10 +152,24 @@ Connects to AnySocket Server
 * `options` - options json
 ```
 {
+    ip: "0.0.0.0", // listening ip
+    port: 3000, // listening port
     authTimeout: 5 * 1000, // auth timeout
     e2eTimeout: 5 * 1000, // e2e timeout
     replyTimeout: 30 * 1000, // reply timeout
-    heartbeatInterval: 5 * 1000 // heartbeat interval
+    heartbeatInterval: 5 * 1000, // heartbeat interval
+    heartbeatEnabled: true, // app-level heartbeats
+    heartbeatsMaxMissed: 2, // missed heartbeats before disconnecting
+    disconnectOnReplyTimeout: false, // pre-1.0: a missed reply killed the connection
+    maxPacketSize: 4 * 1024 * 1024, // bytes per 1.0 frame
+    sendWindow: 8, // frames in flight while framing a message
+    sendHighWaterMark: 16 * 1024 * 1024, // unflushed bytes before a send waits
+    maxHandshakeMessageSize: 64 * 1024, // ceiling before a peer authenticates
+    maxMessageSize: Infinity, // ceiling after it does
+    maxPartialPackets: 64, // messages mid-reassembly at once
+    capabilities: [], // narrow to opt out of a feature
+    tcpKeepAlive: false, // SO_KEEPALIVE on the socket
+    tcpKeepAliveInitialDelay: 30000
 }
 ```
 
@@ -203,7 +236,36 @@ _note: auth packet must be implemented in both server & client_
 [back to top](#api)
 
 -------------------------------------------------------
-<a name="AnySocket.broadcast"></a>
+<a name="AnySocket.auth"></a>
+### new AnySocket({ auth: { secret } })
+
+Built-in mutual authentication from a shared secret, instead of building a
+challenge yourself on
+<a href="#AnySocket.authPacket">authPacket()</a>/<a href="#AnySocket.onAuth">onAuth()</a>.
+
+```javascript
+const anysocket = new AnySocket({ auth: { secret: process.env.SHARED_SECRET } });
+```
+
+Both ends send a challenge and both prove themselves, so neither needs to know
+which end it is. A proof covers both challenges, both ids and the negotiated
+version, so it is good only for the exchange it was made in — a captured proof
+will not replay — and each side's proof names itself, so neither can be
+reflected back at its author.
+
+The listener does not consider the connection live until the dialer has answered
+its challenge, so a connection never comes up with only one direction
+authenticated.
+
+_note: with a secret set, a peer that does not offer the built-in auth is
+refused — otherwise an attacker could simply decline it._
+
+_note: your own <a href="#AnySocket.onAuth">onAuth()</a> still runs and can
+still refuse a peer that proved the secret._
+
+[back to top](#api)
+
+-------------------------------------------------------<a name="AnySocket.broadcast"></a>
 ### AnySocket.broadcast(message, [awaitReply])
 
 Broadcasts a message to all connected peers
@@ -475,7 +537,9 @@ Each message is encrypted with a different key derrived from the master key
 Sends a message to the peer
 
 **Arguments:**
-* `message` - a JSON stringifiable object
+* `message` - a JSON stringifiable object, or a `Uint8Array`/`Buffer`, which
+  travels as those bytes between 1.0 peers (no base64). For a 0.4.x peer use
+  <a href="#AnySocket.Packer.pack"><code>AnySocket.Packer</code></a>.
 * `awaitReply` - set to true if a reply is expected (optional) - default: false
 * `timeout` - set a custom reply packet timeout in milliseconds (optional)
 
@@ -539,7 +603,85 @@ Disconnects the peer
 [back to top](#api)
 
 -------------------------------------------------------
-<a name="AnyPeer.on.message"></a>
+<a name="AnyPeer.getChannelBinding"></a>
+### AnyPeer.getChannelBinding()
+
+32 bytes unique to this encrypted channel and **identical on both ends**, or
+`null` before <a href="#AnyPeer.e2e">e2e()</a> completes.
+
+Mix it into your own authentication and a proof becomes good only on the
+channel it was made for, so an on-path attacker cannot carry a captured one
+onto a channel of its own. The binding covers the negotiated version and
+capabilities as well, so forcing a weaker connection changes it — which makes
+a downgrade visible to anyone comparing bindings.
+
+```javascript
+await peer.e2e();
+const proof = hmac(secret, peer.getChannelBinding());
+```
+
+_note: it is a `Uint8Array`; only ever compare it against a binding from the
+same connection._
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.e2eInfo"></a>
+### AnyPeer.e2eInfo()
+
+What the connection settled on, or `null` if it is not encrypted.
+
+```javascript
+{ protocolVersion: 1, kex: "x25519", cipher: "aes-256-gcm" }
+{ protocolVersion: 0, kex: "secp521r1", cipher: "aes-256-cbc" }   // a 0.4.x peer
+```
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.protocolVersion"></a>
+### AnyPeer.protocolVersion()
+
+`1` when both ends speak 1.0, `0` against a 0.4.x peer. Both ends announce a
+version in the handshake and the lower one wins, so an old peer is never sent a
+frame it cannot read.
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.capabilities"></a>
+### AnyPeer.capabilities()
+
+The optional features **both** ends announced, as a sorted array. Narrow your
+own with the `capabilities` option to opt out of one; the peer is then never
+sent it.
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.supportsRelay"></a>
+### AnyPeer.supportsRelay()
+
+Whether this connection can carry a relayed link. Relaying needs the 1.0 frame
+format on every hop, because a relayed frame is opaque bytes that each hop
+re-wraps — <a href="#AnySocket.proxy">proxy()</a> rejects with a reason when a
+hop is 0.4.x.
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.isOutbound"></a>
+### AnyPeer.isOutbound()
+
+`true` if we dialled this peer, `false` if it dialled us.
+
+_note: reportable metadata only. AnySocket is client/server agnostic — both
+ends use the same API and nothing in the protocol depends on direction. If you
+find yourself branching on this, there is probably a symmetric way to do it._
+
+[back to top](#api)
+
+-------------------------------------------------------<a name="AnyPeer.on.message"></a>
 ### AnyPeer event `message`
 
 Emitted when a message is received
