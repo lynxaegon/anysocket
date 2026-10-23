@@ -10,6 +10,35 @@ up, but: the browser build must keep working, the common API (`connect`/`listen`
 peers on the wire** (needed for a clean rolling upgrade inside nexus, where nodes upgrade one at a time
 and old/new coexist for the duration — a hard partition during the roll could cost raft quorum).
 
+## 0. The principle everything else answers to
+
+AnySocket is an **agnostic** abstract networking layer: you may be the server or
+the client, but once a link is up *everybody communicates the same way*, because
+that distinction is abstracted away. `send`, `reply`, `rpc`, `e2e()` and the
+events behave identically on an AnyPeer you dialled and one that dialled you.
+
+Anywhere a caller has to ask "am I the client here?" is a leak in that
+abstraction, and today there are three:
+
+- **e2e()** desyncs if both sides call it, so the app has to elect an initiator
+  (nexus does, by hand). 1.0 elects one inside the library (§4).
+- **authPacket()** is called both for the dialer's packet and for the listener's
+  reply with no way to tell them apart, so an app implementing a challenge has
+  to infer direction and pair the two calls by side effect — the reason nexus
+  hive carries a `lastIssued` slot and reads a private Symbol for the dial
+  direction. 1.0 makes auth a symmetric exchange instead (§5).
+- **The http transport** is server-only, so it is not agnostic at all. Left as
+  is for 1.0; noted so it is not mistaken for a design choice.
+
+Two rules follow for everything below. Capabilities are **announced by both
+sides and intersected**, never proposed by one and chosen by the other. And any
+value both ends must agree on — the transcript hash, the channel binding — is
+built in a **canonical order** (sorted, not dialer-first), so both ends compute
+the same bytes without knowing who dialled.
+
+`peer.isOutbound()` is still exposed, because who dialled is a real fact worth
+reporting, but nothing in the protocol may depend on it.
+
 ## 1. How 0.4.x works (what 1.0 builds on)
 
 ```
@@ -64,11 +93,12 @@ AnySocket (instance, id = random UUID)        ← peers by id, RPC table, http r
 
 ## 3. Wire protocol — negotiation & interop
 
-The AUTH packet gains `pv: 1` (protocol version) + a `caps` list; 0.4.x ignores unknown fields. If both
-sides announce `pv ≥ 1`, every later frame uses the 1.0 **binary** format; otherwise the connection stays
-on the legacy text format and legacy e2e — a 0.4.x peer never receives a binary frame. The negotiated `pv`
-and `caps` are folded into the handshake transcript (§5), so an on-path downgrade changes the channel
-binding and is detectable.
+Both sides **announce** `pv: 1` (protocol version) and a `caps` list in their AUTH packet — 0.4.x ignores
+unknown fields — and the result is the **intersection**, computed identically on each end. Neither side
+"decides" for the other (§0). If both announce `pv ≥ 1`, every later frame uses the 1.0 **binary** format;
+otherwise the connection stays on the legacy text format and legacy e2e, and a 0.4.x peer never receives a
+binary frame. The negotiated `pv` and `caps` are folded into the handshake transcript (§4), so an on-path
+downgrade changes the channel binding and is detectable.
 
 **Binary frame** (WebSocket binary message; http transport base64s the same bytes):
 ```
@@ -86,7 +116,9 @@ u32 seq
   may negotiate ChaCha20-Poly1305 when a CPU lacks AES acceleration (each advertises a startup-measured
   preference; browsers advertise AES-GCM only). Default policy to be confirmed with a Pi measurement.
 - **Keys:** HKDF-SHA256 over the transcript (`"anysocket/1" | pv+caps | suite | both public keys | both
-  nonces`) → two directional keys + the 32-byte channel binding.
+  nonces`) → two directional keys + the 32-byte channel binding. The two public keys and nonces are hashed
+  in **canonical (sorted) order**, not dialer-first, so both ends derive the same bytes without knowing who
+  dialled; the directional keys are then labelled by those same sorted positions.
 - **Per frame:** nonce = 64-bit per-direction counter (no random IV reuse risk); AAD = the frame header.
 - **Initiator election:** both sides may call `e2e()`; a deterministic tiebreak (lower `(id, random)`)
   picks one, the other joins the same switch — no app-side "who initiates" logic (nexus does this by hand).
@@ -95,10 +127,15 @@ u32 seq
 ## 5. Auth 1.0 (built-in, optional)
 
 Keep `authPacket()` / `onAuth()` for custom schemes, but `onAuth` may be **async** (awaited). Add an
-opt-in mutual challenge-response: `new AnySocket({ auth: { secret } })` — each side sends a random
-challenge, the other answers HMAC(secret, transcript incl. both challenges + both ids + the channel
-binding). Mutual, not replayable, no app nonce bookkeeping. This is what nexus hive/stargate implement by
-hand today and what we'd migrate them onto.
+opt-in mutual challenge-response: `new AnySocket({ auth: { secret } })` — **both** sides send a random
+challenge and **both** verify the answer, HMAC(secret, transcript incl. both challenges + both ids + the
+channel binding), with the challenges hashed in canonical order. Symmetric, mutual, not replayable, no app
+nonce bookkeeping.
+
+This is the fix for the second abstraction leak in §0: because the exchange is symmetric and each message
+is distinct, a caller never infers direction nor pairs two calls by side effect. nexus hive/stargate
+implement this by hand today — `configureHiveAuth`'s `lastIssued` slot, `dialNonces`, the `authV2` flag and
+`connectionIsOutbound()` reading a private Symbol — and all of it should disappear in step 7.
 
 ## 6. API changes
 
