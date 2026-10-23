@@ -214,9 +214,12 @@ module.exports = class AnyPeer extends EventEmitter {
                 packet.setReplyTo(awaitReply);
             }
 
-            this[_protocol].send(packet);
+            // Assigns packet.seq synchronously, so it is safe to key on below.
+            const sent = this[_protocol].send(packet);
 
             if (isBoolean(awaitReply) && awaitReply === true) {
+                // Resolves when the reply lands; a failed send still rejects.
+                sent.catch(reject);
                 this[_packets][packet.seq] = {
                     time: (new Date()).getTime(),
                     resolve: resolve,
@@ -225,12 +228,22 @@ module.exports = class AnyPeer extends EventEmitter {
                         if (this[_packets][packet.seq]) {
                             let msg = this[_packets][packet.seq];
                             delete this[_packets][packet.seq];
-                            this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " + packet.seq);
+                            // Only this call fails. Tearing down the connection
+                            // (pre-1.0 behaviour) also killed every other
+                            // in-flight call and any healthy traffic with it.
+                            if (this[_protocol].options.disconnectOnReplyTimeout) {
+                                this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " + packet.seq);
+                            }
                             msg.reject("Timeout!");
                         }
                     }, timeout || this[_protocol].options.replyTimeout)
                 };
+                return;
             }
+
+            // Fire and forget: resolve once the transport has taken the packet.
+            // It used to never settle, so awaiting a plain send() hung forever.
+            sent.then(() => resolve(), reject);
         });
     }
 

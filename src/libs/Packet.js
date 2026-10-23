@@ -1,3 +1,4 @@
+const debug = require('debug')('Packet');
 const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
 
@@ -16,6 +17,7 @@ class Packet {
         this.type = 0;
         this.buffer = [];
         this.data = null;
+        this.parseError = false;
 
         if (data)
             this.data = data;
@@ -63,7 +65,11 @@ class Packet {
     }
 
     async deserialize(buf, encryptionState, decryptFnc) {
-        decryptFnc = decryptFnc || ((packet) => Promise.resolve(packet));
+        // Signature is (encryptionState, payload, seq) — the old default took
+        // the payload first and so resolved to the state number, dropping the
+        // payload entirely. Harmless in practice (callers always pass one in),
+        // wrong for anyone decoding a frame on its own.
+        decryptFnc = decryptFnc || ((state, packet) => Promise.resolve(packet));
         const eol = buf.substr(0, 1) == constants.PACKET_LENGTH.FULL;
         this.type = getType(buf);
         this.seq = getSeq(buf);
@@ -78,9 +84,12 @@ class Packet {
                 this.data = packet;
             }
             catch(e) {
-                console.log("packet error", e);
-                // ignored
+                debug("packet parse error", e);
+                // Flagged, not swallowed. The caller drops the connection
+                // rather than dispatching a packet with data = null.
+                this.buffer = [];
                 this.data = null;
+                this.parseError = true;
             }
             return true;
         }

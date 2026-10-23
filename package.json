@@ -4,7 +4,9 @@
   "description": "An abstract networking layer over multiple transports, client/server agnostic with support for E2EE",
   "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test --test-timeout=30000 tests/*.test.js",
+    "test:only": "node --test",
+    "build": "webpack"
   },
   "repository": {
     "type": "git",

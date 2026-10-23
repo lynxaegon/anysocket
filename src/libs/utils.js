@@ -46,7 +46,6 @@ module.exports = new (class Utils {
                 let encrypted = cipher.update(data);
                 encrypted = Buffer.concat([encrypted, cipher.final()]);
                 let msg = iv.toString('hex') + encrypted.toString('hex');
-                this.decryptAES(secret, msg);
                 resolve(msg);
             }
             catch(e) {

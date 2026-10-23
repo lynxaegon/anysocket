@@ -8,6 +8,7 @@ const constants = require("./_constants");
 const ENCRYPTION_SECRET = Symbol("secret key");
 const ENCRYPTION_PRIVATE = Symbol("private key");
 const ENCRYPTION_NONCE = Symbol("nonce");
+const ENCRYPTION_STARTING = Symbol("e2e starting");
 const heartbeatTimer = Symbol("heartbeat timer");
 const heartbeatsMissed = Symbol("heartbeats missed");
 const heartbeatPonged = Symbol("heartbeat ponged");
@@ -23,6 +24,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[ENCRYPTION_SECRET] = null;
         this[ENCRYPTION_PRIVATE] = null;
         this[ENCRYPTION_NONCE] = null;
+        this[ENCRYPTION_STARTING] = false;
         this[heartbeatTimer] = 0;
         this[heartbeatsMissed] = 0;
         this[heartbeatPonged] = true;
@@ -48,7 +50,11 @@ module.exports = class AnyProtocol extends EventEmitter {
             // raft AppendEntries). With this off, a dead peer is detected
             // only via TCP close / socket errors — pair with `tcpKeepAlive`
             // on the transport for reliable detection.
-            heartbeatEnabled: true
+            heartbeatEnabled: true,
+            // A reply that never arrives rejects that one call. Set true for the
+            // pre-1.0 behaviour, where one missed reply tore down the whole
+            // connection (and every other in-flight call with it).
+            disconnectOnReplyTimeout: false
         }, options);
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
@@ -148,6 +154,18 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     e2e() {
+        // Idempotent. A second call while a switch is in flight — or after one
+        // finished — used to start a second key exchange and desync the two
+        // ends. Both sides calling e2e() at once is still the caller's problem
+        // until 1.0 lands initiator election.
+        if (this[ENCRYPTION_STARTING] ||
+            this[ENCRYPTION_PRIVATE] ||
+            this.state == constants.PROTOCOL_STATES.SWITCHING_PROTOCOL ||
+            this.ENCRYPTION_STATE == constants.PROTOCOL_ENCRYPTION.E2EE) {
+            return;
+        }
+        this[ENCRYPTION_STARTING] = true;
+
         Utils.generateAESKey().then((result) => {
             this[ENCRYPTION_PRIVATE] = result.private;
             this[ENCRYPTION_NONCE] = result.nonce;
@@ -183,36 +201,25 @@ module.exports = class AnyProtocol extends EventEmitter {
                         if (result) {
                             delete this._packets[seq];
 
+                            // Undecodable payload. It used to be dispatched with
+                            // data = null, so handlers saw a packet that never
+                            // existed; drop the connection instead.
+                            if (packet.parseError) {
+                                this.disconnect("Invalid Packet!");
+                                return resolve();
+                            }
+
                             switch (this.state) {
                                 case constants.PROTOCOL_STATES.ESTABLISHED:
                                     if (packet.type == Packet.TYPE.AUTH) {
                                         invalidPacket = false;
-                                        if (!packet.data.id || !this.anysocket.onAuth(packet.data)) {
-                                            return this.disconnect("Invalid Auth Packet!");
-                                        }
-                                        this.peerID = packet.data.id;
-
-                                        this.send(Packet.data({
-                                            id: this.anysocket.id,
-                                            auth: this.anysocket.authPacket()
-                                        }).setType(Packet.TYPE.AUTH)).then(() => {
-                                            this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                            this.emit("ready", this);
-                                        });
-                                        resolve();
+                                        this._handleAuth(packet, false).then(resolve);
                                     }
                                     break;
                                 case constants.PROTOCOL_STATES.AUTHING:
                                     if (packet.type == Packet.TYPE.AUTH) {
                                         invalidPacket = false;
-                                        this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                        if (!packet.data.id || !this.anysocket.onAuth(packet.data)) {
-                                            return this.disconnect("Invalid Auth Packet!");
-                                        }
-                                        this.peerID = packet.data.id;
-
-                                        this.emit("ready", this);
-                                        resolve();
+                                        this._handleAuth(packet, true).then(resolve);
                                     }
                                     break;
                                 case constants.PROTOCOL_STATES.CONNECTED:
@@ -302,6 +309,57 @@ module.exports = class AnyProtocol extends EventEmitter {
                     });
             }
         });
+    }
+
+    /**
+     * Validate a received AUTH packet and advance the handshake.
+     *
+     * `onAuth` is awaited, so an `async onAuth` is finally enforced — before
+     * 1.0 it returned a Promise, which is truthy, so every peer passed.
+     *
+     * A synchronous `onAuth` resolves on the microtask queue, and microtasks
+     * cannot let another connection's socket event run in between, so callers
+     * that pair `onAuth` with the `authPacket()` immediately after it (nexus
+     * hive issues a challenge in one and answers it in the other) keep that
+     * guarantee. A genuinely async `onAuth` does not — such callers should move
+     * to the built-in challenge-response auth.
+     *
+     * @param isReply true when we dialed and this is the listener's AUTH reply.
+     */
+    async _handleAuth(packet, isReply) {
+        let ok = false;
+        try {
+            ok = !!(packet.data && packet.data.id) && !!(await this.anysocket.onAuth(packet.data));
+        } catch (e) {
+            debug("onAuth threw", e);
+        }
+
+        if (!ok) {
+            return this.disconnect("Invalid Auth Packet!");
+        }
+        this.peerID = packet.data.id;
+
+        if (isReply) {
+            this.changeState(constants.PROTOCOL_STATES.CONNECTED);
+            this.emit("ready", this);
+            return;
+        }
+
+        // We are the listener: answer with our own AUTH, then go live. Note the
+        // peer is validated before the state change, so the link queues never
+        // resume for a connection that is about to be dropped.
+        try {
+            await this.send(Packet.data({
+                id: this.anysocket.id,
+                auth: this.anysocket.authPacket()
+            }).setType(Packet.TYPE.AUTH));
+        } catch (e) {
+            // send() already tore the connection down.
+            return;
+        }
+
+        this.changeState(constants.PROTOCOL_STATES.CONNECTED);
+        this.emit("ready", this);
     }
 
     changeState(state) {

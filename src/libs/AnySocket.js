@@ -7,6 +7,18 @@ const constants = require("./_constants");
 const AnyHTTPPeer = require("./AnyHTTPPeer");
 const AnyRouter = require("./AnyHTTPRouter");
 
+/**
+ * A thrown Error has no enumerable fields, so JSON.stringify turned every
+ * rejected RPC into {} on the wire. Reduce whatever was thrown to a string
+ * the caller can actually read.
+ */
+const errorMessage = (e) => {
+    if (e instanceof Error) return e.message || e.name || "Error";
+    if (typeof e === "string") return e;
+    if (e && typeof e.message === "string") return e.message;
+    try { return JSON.stringify(e); } catch (_) { return String(e); }
+};
+
 const _private = {
     peersConnected: Symbol("peers connected"),
     peers: Symbol("ready peers"),
@@ -18,12 +30,10 @@ const _private = {
     onPeerInternalMessage: Symbol("onPeerInternalMessage"),
     findTransport: Symbol("findTransport"),
     httpBundle: Symbol("http bundle js"),
-    anymesh: Symbol("AnyMesh"),
     httpServer: Symbol("HTTPServer")
 };
 
 const AnyPeer = require("./AnyPeer");
-const AnyMesh = require("./AnyMesh");
 const AnyProtocol = require("./AnyProtocol");
 const ProxyPeer = require("./ProxyPeer");
 
@@ -41,7 +51,6 @@ class AnySocket extends EventEmitter {
         this[_private.peers] = {};
         this[_private.transports] = {};
         this[_private.httpServer] = null;
-        this[_private.anymesh] = null;
         if (typeof window === 'undefined') {
             // nodejs
             this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.browser.js");
@@ -57,23 +66,15 @@ class AnySocket extends EventEmitter {
     broadcast(message, awaitReply) {
         awaitReply = awaitReply || false;
 
-        return new Promise((resolve, reject) => {
-            const promises = [];
-            for (let p in this[_private.peers]) {
-                p = this[_private.peers][p];
-                promises.push(
-                    p.send(message, awaitReply)
-                );
-                Promise.all(promises).then(resolve).catch(reject);
-            }
-        });
-    }
+        // Resolves with one entry per peer — including an empty array when
+        // there are none. It used to await inside the loop and never settle
+        // for an instance with no peers.
+        const promises = [];
+        for (let id in this[_private.peers]) {
+            promises.push(this[_private.peers][id].send(message, awaitReply));
+        }
 
-    mesh() {
-        if(this._started)
-            throw new Error("Cannot enable Mesh while AnySocket is running. You must first stop AnySocket!");
-
-        this[_private.anymesh] = new AnyMesh(this);
+        return Promise.all(promises);
     }
 
     setRPC(rpc) {
@@ -228,9 +229,7 @@ class AnySocket extends EventEmitter {
                 this[_private.transports] = {};
 
                 resolve();
-            }).catch(err => {
-                throw err;
-            });
+            }).catch(reject);
         });
     }
 
@@ -491,7 +490,7 @@ class AnySocket extends EventEmitter {
                         })
                         .catch((e) => {
                             packet.reply({
-                                error: e,
+                                error: errorMessage(e),
                                 details: "method: '" + packet.msg.method + "'",
                                 code: 500
                             });
@@ -499,7 +498,7 @@ class AnySocket extends EventEmitter {
                 }
                 catch(e) {
                     packet.reply({
-                        error: e.message,
+                        error: errorMessage(e),
                         details: "method: '" + packet.msg.method + "'",
                         code: 500
                     });
