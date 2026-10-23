@@ -44,7 +44,8 @@ Move every peer to 1.0 before any of them goes to 1.1.
 * `maintain()`: keep a peer connected, with backoff
 * **Browser support** (_see: ```/dist/anysocket.browser.js```_), tested as the built
   bundle
-* Transports: **ws/wss**, **tcp**, **ipc** (unix socket / named pipe), **http/https**
+* Transports: **ws/wss**, **tcp**, **ipc** (unix socket / named pipe), **http/https** —
+  and tcp can share one port with ws/http
 * Talks to 0.4.x peers on the wire, for upgrading a fleet one peer at a time
   (1.0.x only: 1.1 drops it — see [MIGRATING-1.0.md](MIGRATING-1.0.md))
 * All peers have a UUIDv4 associated

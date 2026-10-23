@@ -298,6 +298,16 @@ class AnySocket extends EventEmitter {
             return this[_private.httpServerFor](options).then(({ port }) => port);
         }
 
+        // tcp on a port this instance already serves http/ws on shares it: one
+        // port for browsers and ws peers, and for tcp peers. It used to fail as
+        // the port being in use.
+        if(kind == "tcp" && options.port && this[_private.httpServers].has(options.port)) {
+            return this[_private.httpServers].get(options.port).then(({ server, port }) => {
+                return this[_private.startTransport]("tcp", Object.assign({}, options, { server: server }))
+                    .then(() => port);
+            });
+        }
+
         return this[_private.startTransport](scheme, options).then((result) => {
             return result === undefined ? options.port : result;
         });

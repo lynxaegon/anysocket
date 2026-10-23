@@ -9,7 +9,15 @@ const Peer = require("./peer.js");
  *
  *   server.listen("tcp", { port: 3000 })
  *   client.connect("tcp", "10.0.0.2", 3000)
+ *
+ * It can also share a port an http(s) server already listens on (see
+ * _share): browsers and ws peers keep reaching that server, and tcp peers
+ * reach anysocket, on the one port.
  */
+
+// How long a connection on a shared port may stay silent before it is
+// dropped, undecided. Both kinds of client speak first, at once.
+const SHARED_SNIFF_TIMEOUT = 30000;
 class TCP extends AbstractTransport {
     constructor(type, options) {
         super(type, options);
@@ -46,6 +54,9 @@ class TCP extends AbstractTransport {
 
     /** Resolves with the address actually bound (a port, or a path). */
     onListen() {
+        if (this.options.server) {
+            return this._share(this.options.server);
+        }
         return new Promise((resolve, reject) => {
             this.server = net.createServer((socket) => {
                 this.addPeer(this._peer(socket));
@@ -93,8 +104,56 @@ class TCP extends AbstractTransport {
         });
     }
 
+    /**
+     * Share the port `server` already listens on.
+     *
+     * Each new connection is told apart by its first byte. A tcp peer opens
+     * with a frame, whose u32 length starts with 0 for any first frame under
+     * 16MB — and the first is an AUTH, far smaller. An http request opens with
+     * a method name, a TLS handshake with 0x16: never 0. So 0 is ours, and
+     * anything else goes to the server's own handlers, the bytes read put back
+     * first, as though nothing had looked.
+     */
+    _share(server) {
+        const handlers = server.listeners("connection");
+        const sniff = (socket) => {
+            const timer = setTimeout(() => socket.destroy(), this.options.sniffTimeout || SHARED_SNIFF_TIMEOUT);
+            const onError = () => clearTimeout(timer);
+            socket.once("error", onError);
+            socket.once("data", (chunk) => {
+                clearTimeout(timer);
+                socket.removeListener("error", onError);
+                socket.pause();
+                socket.unshift(chunk);
+
+                if (chunk[0] === 0x00) {
+                    this.addPeer(this._peer(socket));
+                } else {
+                    for (const handler of handlers) handler.call(server, socket);
+                }
+                process.nextTick(() => socket.resume());
+            });
+        };
+
+        server.removeAllListeners("connection");
+        server.on("connection", sniff);
+        this.shared = { server, handlers, sniff };
+
+        const address = server.address();
+        this.port = address && typeof address == "object" ? address.port : address;
+        return Promise.resolve(this.port);
+    }
+
     onStop() {
         return new Promise((resolve) => {
+            if (this.shared) {
+                // Give the port back to the server it belongs to.
+                const { server, handlers, sniff } = this.shared;
+                server.removeListener("connection", sniff);
+                for (const handler of handlers) server.on("connection", handler);
+                this.shared = null;
+                return resolve();
+            }
             if (!this.server) return resolve();
             this.server.close(() => resolve());
             this.server = null;

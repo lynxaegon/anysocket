@@ -133,6 +133,19 @@ port `0` for any free one.
 Between processes that do not need a browser, `tcp` is markedly faster than
 `ws`. `tcp` and `ipc` are not in the browser build.
 
+`tcp` on a port this instance already serves `ws` or `http` on **shares** it:
+browsers and ws peers keep reaching the http server, tcp peers reach anysocket,
+on the one port. Listen on `ws`/`http` first.
+
+```javascript
+const port = await server.listen("ws", 3000);
+await server.listen("tcp", { port });   // same port
+```
+
+A connection is told apart by its first byte, so a fleet can move from ws to
+tcp without a new port or firewall rule. One that sends nothing is dropped
+after `sniffTimeout` (30s).
+
 **Arguments:**
 * `scheme` - one of the implemented transports
 * `options` - one of the options below

@@ -211,6 +211,10 @@ Between processes that do not need a browser, tcp is markedly faster than ws:
 no frame header, and no masking of every byte a client sends. Neither exists in
 the browser build.
 
+tcp can share a port the same instance serves ws on — `listen("ws", 3000)` then
+`listen("tcp", { port: 3000 })` — so moving peers from ws to tcp needs no new
+port: old ones keep dialling ws, upgraded ones dial tcp, on the same address.
+
 ### Keeping a peer connected: `maintain()`
 
 ```js
