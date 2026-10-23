@@ -95,8 +95,15 @@ const _private = {
     httpBundle: Symbol("http bundle js"),
     httpServer: Symbol("HTTPServer"),
     httpServers: Symbol("HTTP servers by port"),
-    maintainers: Symbol("maintainers")
+    maintainers: Symbol("maintainers"),
+    standby: Symbol("standby duplicates of 0.4.x peers"),
+    holdStandby: Symbol("holdStandby")
 };
+
+// How long a duplicate connection to a 0.4.x peer is held while that peer picks which of the
+// two it keeps. It decides as soon as it sees the second, so this only bounds a standby the
+// peer never closed.
+const LEGACY_STANDBY_MS = 10000;
 
 const AnyPeer = require("./AnyPeer");
 const AnyProtocol = require("./AnyProtocol");
@@ -122,6 +129,7 @@ class AnySocket extends EventEmitter {
         this[_private.httpServer] = null;
         this[_private.httpServers] = new Map();
         this[_private.maintainers] = new Set();
+        this[_private.standby] = new Map();
         if (typeof window === 'undefined') {
             // nodejs
             this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.browser.js");
@@ -604,6 +612,9 @@ class AnySocket extends EventEmitter {
 
     [_private.onProtocolReady](protocol, resolve, reject) {
         const existing = this[_private.peers][protocol.peerID];
+        if(existing && !protocol.isProxy() && protocol.protocolVersion < constants.PROTOCOL_VERSION) {
+            return this[_private.holdStandby](existing, protocol, resolve);
+        }
         if(existing) {
             if(this[_private.keepsExisting](existing, protocol)) {
                 // A dial that got as far as authenticating has reached that peer;
@@ -691,8 +702,57 @@ class AnySocket extends EventEmitter {
         return anypeer;
     }
 
+    /**
+     * A second connection to a 0.4.x peer that already has one.
+     *
+     * Between 1.0 peers both ends keep the connection dialled by the lower id. A 0.4.x peer
+     * does not: it keeps whichever became ready first on its side and drops the other — and
+     * nothing we do changes which. Applying our rule against it, the two ends often dropped
+     * opposite connections and the peer lost both, every time they dialled each other.
+     *
+     * So against a 0.4.x peer we do not choose. The new connection is held, its input paused
+     * so nothing on it is lost, until that peer closes one of the two: closing this one ends
+     * it; closing the one in use promotes this one in its place.
+     */
+    [_private.holdStandby](existing, protocol, resolve) {
+        const id = protocol.peerID;
+        const prior = this[_private.standby].get(id);
+        if (prior) {
+            clearTimeout(prior.timer);
+            this[_private.standby].delete(id);
+            prior.protocol.peerID = null;
+            prior.protocol.disconnect("Duplicated AnySocket ID found!");
+        }
+
+        protocol._recvPacketQueue.pause();
+        protocol._recvLinkPacketQueue.pause();
+        const entry = { protocol: protocol };
+        entry.timer = setTimeout(() => {
+            if (this[_private.standby].get(id) !== entry) return;
+            this[_private.standby].delete(id);
+            protocol.peerID = null;
+            protocol.disconnect("Duplicated AnySocket ID found!");
+        }, LEGACY_STANDBY_MS);
+        if (entry.timer.unref) entry.timer.unref();
+        this[_private.standby].set(id, entry);
+
+        debug("Holding a duplicate connection to 0.4.x peer", id);
+        if (resolve) resolve(existing);
+    }
+
     [_private.onPeerDisconnected](peer, reason) {
         debug("Peer disconnected", reason, peer.id);
+
+        // A held duplicate of a 0.4.x peer closing: that peer kept the other one.
+        for (const [id, entry] of this[_private.standby]) {
+            if (entry.protocol.connectionID !== peer.connectionID) continue;
+            clearTimeout(entry.timer);
+            this[_private.standby].delete(id);
+            delete this[_private.peersConnected][peer.connectionID];
+            peer.disconnect();
+            return;
+        }
+
         let anypeerID = null;
         if (this[_private.peersConnected][peer.connectionID]) {
             anypeerID = this[_private.peersConnected][peer.connectionID].peerID;
@@ -703,7 +763,10 @@ class AnySocket extends EventEmitter {
             anypeerID = peer.id;
         }
 
-        const anypeer = anypeerID ? this[_private.peers][anypeerID] : null;
+        let anypeer = anypeerID ? this[_private.peers][anypeerID] : null;
+        // Only the connection the peer is using may take it down — never another one that
+        // happens to carry the same id.
+        if (anypeer && anypeer.connectionID !== peer.connectionID) anypeer = null;
         if (anypeer) {
             delete this[_private.peers][anypeerID];
 
@@ -724,6 +787,18 @@ class AnySocket extends EventEmitter {
 
             anypeer.disconnect();
             this.emit("disconnected", anypeer, reason);
+
+            // The 0.4.x peer kept the duplicate we were holding: it is the connection now.
+            const held = this[_private.standby].get(anypeer.id);
+            if (held) {
+                clearTimeout(held.timer);
+                this[_private.standby].delete(anypeer.id);
+                if (held.protocol.isConnected()) {
+                    this[_private.onProtocolReady](held.protocol);
+                    held.protocol._recvPacketQueue.resume();
+                    held.protocol._recvLinkPacketQueue.resume();
+                }
+            }
         } else {
             peer.disconnect();
         }
