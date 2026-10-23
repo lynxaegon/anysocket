@@ -54,6 +54,37 @@ module.exports = new (class Utils {
         });
     }
 
+    /**
+     * Same cipher as encryptAES, over bytes and returning bytes (iv then
+     * ciphertext) instead of a hex string. A 1.0 frame carries a byte payload,
+     * so hex-encoding it would double every encrypted message for nothing.
+     */
+    encryptAESBytes(secret, bytes) {
+        return new Promise((resolve, reject) => {
+            try {
+                const iv = crypto.randomBytes(16);
+                const cipher = crypto.createCipheriv('aes-256-cbc', BufferUtils.bufferFromHex(secret), iv);
+                resolve(new Uint8Array(Buffer.concat([iv, cipher.update(Buffer.from(bytes)), cipher.final()])));
+            }
+            catch(e) {
+                reject(e);
+            }
+        });
+    }
+
+    decryptAESBytes(secret, bytes) {
+        return new Promise((resolve, reject) => {
+            try {
+                const buf = Buffer.from(bytes);
+                const decipher = crypto.createDecipheriv('aes-256-cbc', BufferUtils.bufferFromHex(secret), buf.subarray(0, 16));
+                resolve(new Uint8Array(Buffer.concat([decipher.update(buf.subarray(16)), decipher.final()])));
+            }
+            catch(e) {
+                reject(e);
+            }
+        });
+    }
+
     decryptAES(secret, data) {
         return new Promise((resolve, reject) => {
             try {

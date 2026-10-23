@@ -135,7 +135,7 @@ module.exports = class AnyProtocol extends EventEmitter {
 
     _send(packet, resolve, reject) {
         debug(this.peerID, ">>>>", Packet.TYPE._string(packet.type), packet.seq);
-        packet.serialize(constants.MAX_PACKET_SIZE, this._encrypt.bind(this))
+        packet.serialize(constants.MAX_PACKET_SIZE, this._encrypt.bind(this), this.protocolVersion)
             .then((packet) => {
                 for (let i = 0; i < packet.length; i++) {
                     const item = {
@@ -374,7 +374,15 @@ module.exports = class AnyProtocol extends EventEmitter {
         const remoteCaps = Array.isArray(data && data.caps) ? data.caps : [];
 
         this.remoteProtocolVersion = remote;
-        this.protocolVersion = Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
+        // A relayed link keeps the legacy format. Its frames are opaque
+        // bytes to the relay, which re-wraps them for each hop, so the
+        // format would have to be the lowest version along the whole
+        // route — and the version of a further hop is not visible from
+        // here. Direct links get the 1.0 format; proxying is revisited
+        // once a route can report the versions along it.
+        this.protocolVersion = this.isProxy()
+            ? constants.PROTOCOL_VERSION_LEGACY
+            : Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
         this.capabilities = (this.options.capabilities || [])
             .filter((cap) => remoteCaps.indexOf(cap) != -1)
             .sort();
@@ -546,6 +554,11 @@ module.exports = class AnyProtocol extends EventEmitter {
                 case constants.PROTOCOL_ENCRYPTION.E2EE:
                     Utils.getAESSessionKey(this[ENCRYPTION_SECRET], this[ENCRYPTION_NONCE], seq)
                         .then((secretKey) => {
+                            // A 1.0 frame carries bytes, and hex-encoding
+                            // them would double every encrypted message.
+                            if (typeof packet != "string") {
+                                return Utils.encryptAESBytes(secretKey, packet).then(resolve);
+                            }
                             return Utils.encryptAES(secretKey, packet).then(resolve);
                         }).catch((e) => {
                         this.disconnect(e);
@@ -566,6 +579,9 @@ module.exports = class AnyProtocol extends EventEmitter {
                 case constants.PROTOCOL_ENCRYPTION.E2EE:
                     Utils.getAESSessionKey(this[ENCRYPTION_SECRET], this[ENCRYPTION_NONCE], seq)
                         .then((secretKey) => {
+                            if (typeof packet != "string") {
+                                return Utils.decryptAESBytes(secretKey, packet).then(resolve);
+                            }
                             return Utils.decryptAES(secretKey, packet).then(resolve);
                         }).catch((e) => {
                         this.disconnect(e);

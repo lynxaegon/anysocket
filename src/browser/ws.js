@@ -1,6 +1,9 @@
 module.exports = class BrowserWS {
     constructor(...args) {
         this.ws = new WebSocket(...args);
+        // Binary frames should arrive as bytes we can read synchronously; the
+        // default is Blob, which would have to be awaited.
+        this.ws.binaryType = "arraybuffer";
     }
 
     on(event, fnc) {
@@ -13,7 +16,9 @@ module.exports = class BrowserWS {
                 break;
             case "message":
                 this.ws.onmessage = (packet) => {
-                    fnc(packet.data);
+                    // A text message stays a string; a binary one is handed on
+                    // as bytes, matching what the node transport delivers.
+                    fnc(packet.data instanceof ArrayBuffer ? new Uint8Array(packet.data) : packet.data);
                 };
                 break;
             case "close":
@@ -24,8 +29,11 @@ module.exports = class BrowserWS {
         }
     }
 
-    send(...args) {
-        this.ws.send(args);
+    send(data) {
+        // This used to forward the whole arguments array, which the browser
+        // stringified — so it only ever worked by accident for a single string
+        // and would have mangled binary outright.
+        this.ws.send(data);
     }
 
     close() {

@@ -70,6 +70,49 @@ module.exports = new (class Utils {
         });
     }
 
+    /**
+     * Same cipher as encryptAES, over bytes and returning bytes (iv then
+     * ciphertext) instead of a hex string. A 1.0 frame carries a byte payload,
+     * so hex-encoding it would double every encrypted message for nothing.
+     */
+    encryptAESBytes(secret, bytes) {
+        return new Promise((resolve, reject) => {
+            window.crypto.subtle.importKey(
+                "raw",
+                BufferUtils.bufferFromHex(secret),
+                { name: "AES-CBC", length: 256 },
+                false,
+                ["encrypt"]
+            ).then(key => {
+                const iv = window.crypto.getRandomValues(new Uint8Array(16));
+                window.crypto.subtle.encrypt({ name: "AES-CBC", iv: iv }, key, bytes)
+                    .then(encrypted => {
+                        const out = new Uint8Array(16 + encrypted.byteLength);
+                        out.set(iv, 0);
+                        out.set(new Uint8Array(encrypted), 16);
+                        resolve(out);
+                    })
+                    .catch(reject);
+            }).catch(reject);
+        });
+    }
+
+    decryptAESBytes(secret, bytes) {
+        return new Promise((resolve, reject) => {
+            window.crypto.subtle.importKey(
+                "raw",
+                BufferUtils.bufferFromHex(secret),
+                { name: "AES-CBC", length: 256 },
+                false,
+                ["decrypt"]
+            ).then(key => {
+                window.crypto.subtle.decrypt({ name: "AES-CBC", iv: bytes.subarray(0, 16) }, key, bytes.subarray(16))
+                    .then(decrypted => resolve(new Uint8Array(decrypted)))
+                    .catch(reject);
+            }).catch(reject);
+        });
+    }
+
     decryptAES(secret, data) {
         return new Promise((resolve, reject) => {
             window.crypto.subtle.importKey(
