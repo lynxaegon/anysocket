@@ -29,9 +29,12 @@ const _private = {
     onPeerDisconnected: Symbol("onPeerDisconnected"),
     onPeerInternalMessage: Symbol("onPeerInternalMessage"),
     findTransport: Symbol("findTransport"),
+    startTransport: Symbol("startTransport"),
+    httpServerFor: Symbol("httpServerFor"),
     keepsExisting: Symbol("keepsExisting"),
     httpBundle: Symbol("http bundle js"),
-    httpServer: Symbol("HTTPServer")
+    httpServer: Symbol("HTTPServer"),
+    httpServers: Symbol("HTTP servers by port")
 };
 
 const AnyPeer = require("./AnyPeer");
@@ -53,6 +56,7 @@ class AnySocket extends EventEmitter {
         this[_private.peers] = {};
         this[_private.transports] = {};
         this[_private.httpServer] = null;
+        this[_private.httpServers] = new Map();
         if (typeof window === 'undefined') {
             // nodejs
             this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.browser.js");
@@ -146,6 +150,23 @@ class AnySocket extends EventEmitter {
         return this.listen(scheme, options);
     }
 
+    /**
+     * Start listening. Resolves with the port actually bound, so port 0
+     * ("any free port") is usable.
+     *
+     * ws rides on an http server, and http and ws asked for on the same
+     * port share one — that is how the http router and websocket upgrades
+     * live together. Three things used to go wrong here:
+     *
+     * - The http server was started without being awaited, so a failure
+     *   to bind raised a second rejection nobody could catch. Under node's
+     *   default that **crashes the process**, even when the caller handles
+     *   the error from listen() itself.
+     * - There was a single http-server slot, so a second ws listen —
+     *   another port, or a retry after a failure — reused the first server
+     *   and never bound anything.
+     * - `port || 80` made port 0 impossible.
+     */
     listen(scheme, options) {
         // server
         this._started = true;
@@ -155,41 +176,28 @@ class AnySocket extends EventEmitter {
         }
 
         options.ip = options.ip || "0.0.0.0";
-        if(["http", "ws"].indexOf(scheme.toLowerCase()) == -1 && !options.port)
+        if(["http", "ws"].indexOf(scheme.toLowerCase()) == -1 && options.port == null)
             throw new Error("Invalid port!");
 
-        if(["ws"].indexOf(scheme.toLowerCase()) != -1) {
-            if(!this[_private.httpServer]) {
-                this.listen("http", options);
-            }
-
-            // Keep the caller's options and only add the server to them. They
-            // used to be replaced outright, so everything a listening side
-            // configured — auth/e2e timeouts, heartbeat settings, receive
-            // limits — was silently dropped for the ws transport, and only
-            // dialling peers ever had their options honoured.
-            options = Object.assign({}, options, {
-                server: this[_private.httpServer]
+        if(scheme.toLowerCase() == "ws") {
+            return this[_private.httpServerFor](options).then(({ server, port }) => {
+                // Keep the caller's options and only add the server to them. They
+                // used to be replaced outright, so everything a listening side
+                // configured — auth/e2e timeouts, heartbeat settings, receive
+                // limits — was silently dropped for the ws transport, and only
+                // dialling peers ever had their options honoured.
+                return this[_private.startTransport]("ws", Object.assign({}, options, { server: server }))
+                    .then(() => port);
             });
         }
 
-        let transport = this[_private.findTransport](scheme);
-        transport = new transport("server", options);
-        this[_private.transports][transport.id] = transport;
-
-        // start transport
-        transport.on("connected", (peer) => {
-            this[_private.onPeerConnected](peer, transport.options);
-        });
-        transport.on("disconnected", (peer, reason) => {
-            this[_private.onPeerDisconnected](peer, reason);
-        });
-
-        let result = transport.listen();
-        if(scheme == "http") {
-            this[_private.httpServer] = transport.server;
+        if(scheme.toLowerCase() == "http") {
+            return this[_private.httpServerFor](options).then(({ port }) => port);
         }
-        return result;
+
+        return this[_private.startTransport](scheme, options).then((result) => {
+            return result === undefined ? options.port : result;
+        });
     }
 
     connect(scheme, ip, port, options) {
@@ -239,6 +247,10 @@ class AnySocket extends EventEmitter {
                 this[_private.peersConnected] = {};
                 this[_private.peers] = {};
                 this[_private.transports] = {};
+                // Closed servers must not be found by a later listen() on the
+                // same port, or the ws side would attach to one and wait forever.
+                this[_private.httpServer] = null;
+                this[_private.httpServers] = new Map();
 
                 resolve();
             }).catch(reject);
@@ -267,6 +279,65 @@ class AnySocket extends EventEmitter {
     //endregion
 
     //region Private Functions
+
+    /** Create a transport, wire it up, and start it listening. */
+    [_private.startTransport](scheme, options) {
+        let transport = this[_private.findTransport](scheme);
+        transport = new transport("server", options);
+        this[_private.transports][transport.id] = transport;
+
+        transport.on("connected", (peer) => {
+            this[_private.onPeerConnected](peer, transport.options);
+        });
+        transport.on("disconnected", (peer, reason) => {
+            this[_private.onPeerDisconnected](peer, reason);
+        });
+
+        return transport.listen().then((result) => {
+            if (scheme == "http") {
+                this[_private.httpServer] = transport.server;
+            }
+            return result === undefined ? transport.port : result;
+        }).catch((e) => {
+            // A transport that never came up must not linger, or stop() would
+            // try to stop it and a retry would trip over it.
+            delete this[_private.transports][transport.id];
+            throw e;
+        });
+    }
+
+    /**
+     * The http server a ws listen should ride on: the one already serving
+     * that port if there is one, otherwise a new one. Port 0 never shares —
+     * each such request is for a fresh port of its own.
+     */
+    [_private.httpServerFor](options) {
+        const requested = options.port == null ? 80 : options.port;
+        const shareable = requested !== 0;
+
+        if (shareable && this[_private.httpServers].has(requested)) {
+            return this[_private.httpServers].get(requested);
+        }
+
+        const starting = this[_private.startTransport]("http", Object.assign({}, options))
+            .then((port) => {
+                const transport = Object.values(this[_private.transports])
+                    .find((t) => t.type == "http" && t.port == port);
+                const entry = { server: transport ? transport.server : this[_private.httpServer], port: port };
+                // Also findable by the port it actually bound — which is the only
+                // way to share one that was asked for as port 0.
+                this[_private.httpServers].set(port, Promise.resolve(entry));
+                return entry;
+            })
+            .catch((e) => {
+                // Forget a server that failed to bind, so a retry starts clean.
+                if (shareable) this[_private.httpServers].delete(requested);
+                throw e;
+            });
+
+        if (shareable) this[_private.httpServers].set(requested, starting);
+        return starting;
+    }
     [_private.findTransport](scheme) {
         for (let name in AnySocket.Transport) {
             if(!AnySocket.Transport.hasOwnProperty(name))

@@ -1,26 +1,12 @@
 const AnySocket = require("../../src/index.js");
 
-// `node --test` runs each file in its own process, in parallel, so a shared
-// starting port would have the files fighting over it. Seed from the pid as well
-// as randomly, and still retry below, because nothing stops an unrelated process
-// from holding one.
-let port = 19000 + ((process.pid * 97) % 20000) + Math.floor(Math.random() * 200);
-const nextPort = () => ++port;
-
-const isPortTaken = (e) => String(e && (e.code || e.message || e)).includes("EADDRINUSE");
-
-/** Listen on ws, moving to another port if something already holds this one. */
-async function listen(server, options = {}, attempts = 25) {
-    for (let i = 0; i < attempts; i++) {
-        const p = nextPort();
-        try {
-            await server.listen("ws", Object.assign({ port: p }, options));
-            return p;
-        } catch (e) {
-            if (!isPortTaken(e)) throw e;
-        }
-    }
-    throw new Error("no free port after " + attempts + " attempts");
+/**
+ * Listen on ws on a port the OS picks. Test files run in parallel processes, and
+ * choosing ports ourselves — however randomly — let two of them collide and a
+ * client reach the wrong file's server. Port 0 removes the collision outright.
+ */
+async function listen(server, options = {}) {
+    return server.listen("ws", Object.assign({}, options, { port: 0 }));
 }
 
 /**
@@ -110,6 +96,24 @@ function rawSocket(peer) {
     return protocolOf(peer).peer.socket;
 }
 
+/**
+ * A port the OS just handed out, for something that cannot take port 0 itself —
+ * the published 0.4.32 turns 0 into 80, and dies on a busy port. Every other
+ * listener in the suite takes port 0, so the OS will not give this one out again
+ * to a parallel test file in the moment before it is used.
+ */
+function freePort() {
+    const http = require("http");
+    return new Promise((resolve, reject) => {
+        const probe = http.createServer();
+        probe.once("error", reject);
+        probe.listen(0, "0.0.0.0", () => {
+            const port = probe.address().port;
+            probe.close(() => resolve(port));
+        });
+    });
+}
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-module.exports = { pair, expectRefused, stop, listen, rawSocket, protocolOf, wait, nextPort, AnySocket };
+module.exports = { pair, expectRefused, stop, listen, rawSocket, protocolOf, wait, freePort, AnySocket };

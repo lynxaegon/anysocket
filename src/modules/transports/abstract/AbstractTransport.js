@@ -20,9 +20,9 @@ class AbstractTransport extends EventEmitter {
                 return;
             }
 
-            this.onListen().then(() => {
+            this.onListen().then((result) => {
                 this.started = true;
-                resolve();
+                resolve(result);
             }).catch((err) => {
                 reject(err);
             });

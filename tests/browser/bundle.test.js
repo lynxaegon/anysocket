@@ -91,7 +91,6 @@ test("a browser peer connects to a node server and exchanges messages", async (t
     // The server is the node build, which is the real pairing.
     const NodeAnySocket = require("../../src/index.js");
     const server = new NodeAnySocket();
-    const port = 33000 + (process.pid % 2000);
 
     const loaded = loadBundle();
     t.after(async () => {
@@ -99,7 +98,7 @@ test("a browser peer connects to a node server and exchanges messages", async (t
         try { await server.stop(); } catch (_) {}
     });
 
-    await server.listen("ws", { port });
+    const port = await server.listen("ws", { port: 0 });
 
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
@@ -124,7 +123,6 @@ test("a browser peer negotiates 1.0 and encrypts with the modern suite", async (
     const NodeAnySocket = require("../../src/index.js");
     const constants = require("../../src/libs/_constants");
     const server = new NodeAnySocket();
-    const port = 33000 + (process.pid % 2000) + 1;
 
     const loaded = loadBundle();
     t.after(async () => {
@@ -132,7 +130,7 @@ test("a browser peer negotiates 1.0 and encrypts with the modern suite", async (
         try { await server.stop(); } catch (_) {}
     });
 
-    await server.listen("ws", { port });
+    const port = await server.listen("ws", { port: 0 });
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
@@ -158,7 +156,6 @@ test("a browser peer negotiates 1.0 and encrypts with the modern suite", async (
 test("binary round-trips from the browser build", async (t) => {
     const NodeAnySocket = require("../../src/index.js");
     const server = new NodeAnySocket();
-    const port = 33000 + (process.pid % 2000) + 2;
 
     const loaded = loadBundle();
     t.after(async () => {
@@ -166,7 +163,7 @@ test("binary round-trips from the browser build", async (t) => {
         try { await server.stop(); } catch (_) {}
     });
 
-    await server.listen("ws", { port });
+    const port = await server.listen("ws", { port: 0 });
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
@@ -186,7 +183,6 @@ test("RPC works from the browser build", async (t) => {
     const NodeAnySocket = require("../../src/index.js");
     const server = new NodeAnySocket();
     server.setRPC({ greet: (name) => "hello " + name });
-    const port = 33000 + (process.pid % 2000) + 3;
 
     const loaded = loadBundle();
     t.after(async () => {
@@ -194,7 +190,7 @@ test("RPC works from the browser build", async (t) => {
         try { await server.stop(); } catch (_) {}
     });
 
-    await server.listen("ws", { port });
+    const port = await server.listen("ws", { port: 0 });
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
@@ -207,7 +203,6 @@ test("RPC works from the browser build", async (t) => {
 test("an async onAuth is enforced in the browser build too", async (t) => {
     const NodeAnySocket = require("../../src/index.js");
     const server = new NodeAnySocket();
-    const port = 33000 + (process.pid % 2000) + 4;
 
     const loaded = loadBundle();
     t.after(async () => {
@@ -215,7 +210,7 @@ test("an async onAuth is enforced in the browser build too", async (t) => {
         try { await server.stop(); } catch (_) {}
     });
 
-    await server.listen("ws", { port });
+    const port = await server.listen("ws", { port: 0 });
     const browser = new loaded.AnySocket();
     browser.onAuth = async () => false;
     t.after(async () => { try { await browser.stop(); } catch (_) {} });

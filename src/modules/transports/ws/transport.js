@@ -41,6 +41,14 @@ class WS extends AbstractTransport {
             this.ws.on('listening', () => {
                 resolve();
             });
+
+            // ws only forwards a *future* "listening" from the server it is
+            // attached to, so on a server that is already up — the http
+            // transport sharing its port, or one passed in — it would wait
+            // forever.
+            if (this.options.server && this.options.server.listening) {
+                resolve();
+            }
         });
     }
 

@@ -3,7 +3,7 @@ const assert = require("node:assert");
 const AnySocket = require("../../src/index.js");
 const LegacyAnySocket = require("anysocket-legacy");
 const constants = require("../../src/libs/_constants");
-const { listen, stop, wait } = require("../helpers/loopback");
+const { listen, stop, wait, freePort } = require("../helpers/loopback");
 
 /**
  * Interop with the published 0.4.32, tested against the real package rather
@@ -68,15 +68,8 @@ test("a 1.0 client can talk to a 0.4.x server", async (t) => {
 
     legacy.setRPC({ greet: (name) => "hello " + name });
 
-    let port = 0;
-    for (let attempt = 0; attempt < 25 && !port; attempt++) {
-        const candidate = 21000 + Math.floor(Math.random() * 9000);
-        try {
-            await legacy.listen("ws", { port: candidate });
-            port = candidate;
-        } catch (e) { /* taken, try another */ }
-    }
-    assert.ok(port, "the legacy server should have come up");
+    const port = await freePort();
+    await legacy.listen("ws", { port });
 
     const peer = await client.connect("ws", "127.0.0.1", port);
     await wait(150);
