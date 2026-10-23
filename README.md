@@ -51,19 +51,23 @@ _Info: Binary RPC arguments and responses are sent as bytes between 1.0 peers, a
 ## Benchmarks
 
 `npm run bench` measures 1.0 against the published 0.4.32, plain and encrypted,
-on loopback. From one run (node 24, x64):
+on loopback, interleaving the two and reporting the median of several runs
+(`BENCH_RUNS`). Median of 5 (node 24, x64, ws):
 
 | | 0.4.32 | 1.0 | |
 |---|---|---|---|
-| e2e handshake | 7.7 ms | **2.4 ms** | 3.3x faster |
-| 2KB messages, plain | 31.2k msg/s | **36.4k msg/s** | 1.2x faster |
-| 2KB messages, encrypted | 8.7k msg/s | **9.2k msg/s** | 2x fewer bytes |
-| 32MB of text, encrypted | 47.4 MB/s | **118 MB/s** | 2.5x faster, 2x fewer bytes |
-| 32MB of bytes, plain | 99.3 MB/s | **232 MB/s** | 2.3x faster |
-| 32MB of bytes, encrypted | 37.2 MB/s | **154 MB/s** | 4.1x faster, 2.7x fewer bytes |
+| connect + authenticate | 13.4 ms | 13.5 ms | about the same |
+| e2e handshake | 7.7 ms | **1.8 ms** | 4.2x faster |
+| 2KB messages, plain | 25.6k msg/s | **35.8k msg/s** | 1.4x faster (noisy) |
+| 2KB messages, encrypted | 14.4k msg/s | **29.0k msg/s** | 2.0x faster, 2x fewer bytes |
+| 32MB of text, plain | 136 MB/s | **151 MB/s** | 1.1x faster |
+| 32MB of text, encrypted | 52.6 MB/s | **123 MB/s** | 2.3x faster, 2x fewer bytes |
+| 32MB of bytes, plain | 103 MB/s | **239 MB/s** | 2.3x faster, 1.3x fewer bytes |
+| 32MB of bytes, encrypted | 40.2 MB/s | **181 MB/s** | 4.5x faster, 2.7x fewer bytes |
 
-Turning e2e on costs about 27% of throughput (128MB of bytes: 220 MB/s plain,
-160 MB/s encrypted).
+Turning e2e on costs about 26% of throughput (128MB of bytes: 233 MB/s plain,
+172 MB/s encrypted). tcp is faster still than ws; these are ws so both versions
+run the same transport.
 
 See also [benchmarks](benchmarks) for the http/ws server comparisons.
 

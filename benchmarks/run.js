@@ -22,15 +22,15 @@ try {
 
 const MB = 1024 * 1024;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let port = 30000 + Math.floor(Math.random() * 20000);
 
 async function link(Client, opts = {}) {
     const server = new AnySocket();
     const client = new Client();
-    const p = ++port;
     const wire = Object.assign({ maxPayload: 64 * MB }, opts);
 
-    await server.listen("ws", Object.assign({ port: p }, wire));
+    // port 0: a guessed port can be one another process holds on 127.0.0.1 while
+    // the 0.0.0.0 bind still succeeds, and the dial then reaches that process
+    const p = await server.listen("ws", Object.assign({ port: 0 }, wire));
     const peer = await client.connect("ws", "127.0.0.1", p, wire);
     await wait(80);
 
@@ -68,8 +68,7 @@ const ms = (from) => Number(process.hrtime.bigint() - from) / 1e6;
  */
 async function connectHandshake(Client, rounds) {
     const server = new AnySocket();
-    const p = ++port;
-    await server.listen("ws", { port: p, maxPayload: 64 * MB });
+    const p = await server.listen("ws", { port: 0, maxPayload: 64 * MB });
 
     let total = 0;
     for (let i = 0; i < rounds; i++) {
