@@ -5,6 +5,10 @@ wire, so a fleet can be upgraded one process at a time. The list below is
 everything that behaves differently, worst first — the first four are the ones
 that can change what your application does without you touching a line.
 
+**1.0.x is the only line that talks to 0.4.x.** 1.1 drops the 0.4.x wire format
+and the legacy e2e exchange, so move every peer to 1.0 before any of them goes
+to 1.1 — a 1.1 peer and a 0.4.x peer cannot connect at all.
+
 ## Behaviour that changed
 
 ### `onAuth` is awaited, so an async one finally works — and finally refuses

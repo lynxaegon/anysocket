@@ -40,6 +40,7 @@ one process at a time.
   bundle
 * Transports: **ws/wss**, **tcp**, **ipc** (unix socket / named pipe), **http/https**
 * Talks to 0.4.x peers on the wire, for upgrading a fleet one peer at a time
+  (1.0.x only: 1.1 drops it — see [MIGRATING-1.0.md](MIGRATING-1.0.md))
 * All peers have a UUIDv4 associated
 * Disconnect detection using a heartbeat
 * Tested: `npm test`, split into groups so iterating is quick
