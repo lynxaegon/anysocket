@@ -86,6 +86,19 @@ loop.
 - **Relaying needs 1.0 on both hops.** A relayed frame is opaque bytes the relay
   re-wraps per hop, so every hop has to be able to carry it. `proxy()` rejects
   with a reason when a hop is 0.4.x. Addresses are anysocket ids (UUIDv4).
+- **The far end of a relayed link has to accept it:** set
+  `canAcceptProxy(relayID, peerID)`, which defaults to false like `canProxy`.
+  Any connected peer could otherwise announce peers that do not exist, and speak
+  for them. `proxy()` rejects with "refused by the peer" when it says no, and
+  a relayed link over a connection that requires e2e is encrypted before either
+  end is handed it.
+- **An RPC path no longer reaches inherited methods.** `toString`,
+  `constructor`, an exposed array's `push` and the like answer 404; they used
+  to run, with our own peer object as an argument. Methods your own classes
+  define still work, so `setRPC(new Service())` is fine.
+- **A remote method may be named `name`, `length`, `call`, `apply` or `bind`.**
+  The caller's proxy used to answer those itself. It no longer forwards `then`,
+  `toJSON` or symbols, so awaiting or serializing it makes no call.
 - **`stop()` rejects** instead of throwing inside a promise callback.
 - **A failed `listen()` no longer crashes the process.** A busy port raised a
   second rejection nothing could catch, which killed the process even when the
@@ -218,6 +231,16 @@ A call used to have only the instance-wide `replyTimeout`, so it could not wait
 longer than that, and racing your own timer left the call registered until the
 default ran out.
 
+### Authorizing every call: `rpcGuard`
+
+```js
+new AnySocket({ rpcGuard: (peer, path, args) => peer.isAuthenticated() && path[0] !== "admin" });
+```
+
+Asked before every incoming RPC, with the decoded arguments; only `true` lets
+it run, anything else rejects the caller with 403. One place for a rule that
+applies to every method, instead of a check repeated at the top of each.
+
 ### Knowing what a connection is
 
 ```js
@@ -227,6 +250,7 @@ peer.supportsRelay();     // can it carry a relayed link
 peer.isOutbound();        // did we dial it — reportable only; nothing in the
                           // protocol depends on it
 peer.isAuthenticated();   // did this connection complete the built-in auth
+peer.requiresE2E();       // did this connection have to be encrypted
 anysocket.getPeer(id);    // the connected peer with this id, or null
 ```
 

@@ -297,7 +297,21 @@ class Packet {
                 .getUint32(0, false);
             body = body.subarray(Frame.LENGTH_HINT);
 
-            this.assembled = new Uint8Array(total);
+            // The total is the sender's word, so it is held to the same cap as
+            // the bytes themselves before anything is allocated for it — or an
+            // 11-byte frame could have us reserve 4GB.
+            const cap = this.maxTotal == null ? Infinity : this.maxTotal;
+            if (total > cap) {
+                this.parseError = true;
+                return true;
+            }
+
+            try {
+                this.assembled = new Uint8Array(total);
+            } catch (e) {
+                this.parseError = true;
+                return true;
+            }
             this.assembledAt = 0;
         }
 

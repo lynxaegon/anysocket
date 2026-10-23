@@ -92,6 +92,7 @@ test("proxying still works end to end and the proxied peer is usable", async (t)
     t.after(() => stop(relay, a, b));
 
     relay.canProxy = () => true;
+    b.canAcceptProxy = () => true;
 
     const port = await listen(relay);
     await a.connect("ws", "127.0.0.1", port);
@@ -118,6 +119,7 @@ test("a proxied peer can be end-to-end encrypted through the relay", async (t) =
     t.after(() => stop(relay, a, b));
 
     relay.canProxy = () => true;
+    b.canAcceptProxy = () => true;
 
     const port = await listen(relay);
     await a.connect("ws", "127.0.0.1", port);

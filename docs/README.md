@@ -21,7 +21,9 @@ Upgrading from 0.4.x? See [MIGRATING-1.0.md](../MIGRATING-1.0.md).
     * <a href="#AnySocket.auth"><code><b>options.auth (built-in auth)</b></code></a>
     * <a href="#AnySocket.broadcast"><code><b>broadcast()</b></code></a>
     * <a href="#AnySocket.setRPC"><code><b>setRPC()</b></code></a>
+    * <a href="#AnySocket.rpcGuard"><code><b>rpcGuard</b></code></a>
     * <a href="#AnySocket.canProxy"><code><b>canProxy()</b></code></a>
+    * <a href="#AnySocket.canAcceptProxy"><code><b>canAcceptProxy()</b></code></a>
     * <a href="#AnySocket.proxy"><code><b>proxy()</b></code></a>
     * <a href="#AnySocket.hasPeer"><code><b>hasPeer()</b></code></a>
     * <a href="#AnySocket.hasDirectPeer"><code><b>hasDirectPeer()</b></code></a>
@@ -50,6 +52,7 @@ Upgrading from 0.4.x? See [MIGRATING-1.0.md](../MIGRATING-1.0.md).
     * <a href="#AnyPeer.disconnect"><code><b>disconnect()</b></code></a>
     * <a href="#AnyPeer.isProxy"><code><b>isProxy()</b></code></a>
     * <a href="#AnyPeer.isE2EEnabled"><code><b>isE2EEnabled()</b></code></a>
+    * <a href="#AnyPeer.requiresE2E"><code><b>requiresE2E()</b></code></a>
     * <a href="#AnyPeer.getChannelBinding"><code><b>getChannelBinding()</b></code></a>
     * <a href="#AnyPeer.e2eInfo"><code><b>e2eInfo()</b></code></a>
     * <a href="#AnyPeer.protocolVersion"><code><b>protocolVersion()</b></code></a>
@@ -330,6 +333,12 @@ Binary info:
 **Arguments:**
 * `rpc` - object or class with RPC functions
 
+A method path reaches the object's own properties and the methods its own
+classes define, never what every object inherits: `toString`, `constructor`,
+an exposed array's `push` and the like answer 404. Every exposed method is
+callable by every connected peer unless an
+<a href="#AnySocket.rpcGuard">rpcGuard</a> says otherwise.
+
 Any  throwed error / reject will be sent back to the client in the form: 
 ```javascript
 {
@@ -343,12 +352,59 @@ Any  throwed error / reject will be sent back to the client in the form:
 
 -------------------------------------------------------
 
+<a name="AnySocket.rpcGuard"></a>
+### AnySocket.rpcGuard
+
+Asked before every incoming RPC runs. Set it on the instance or pass it to the
+constructor:
+
+```javascript
+const anysocket = new AnySocket({
+    rpcGuard: (peer, path, args) => peer.isAuthenticated() && path[0] !== "admin"
+});
+// or: anysocket.rpcGuard = async (peer, path, args) => { ... };
+```
+
+* `peer` - the calling <a href="#AnyPeer.constructor">AnyPeer</a>
+* `path` - the method path, e.g. `["users", "get"]`
+* `args` - the arguments, already decoded (binary ones as bytes)
+
+Only `true` (or a promise of it) lets the call run. Anything else refuses it,
+and the caller's promise rejects with `{ error: "Forbidden", code: 403 }`; a
+guard that throws refuses with its message. A refused method never runs.
+Unset, every exposed method is callable.
+
+Use it for authorization that applies to every call — so a method added later
+cannot forget the check.
+
+[back to top](#api)
+
+-------------------------------------------------------
 <a name="AnySocket.canProxy"></a>
 ### AnySocket.canProxy(peerID, otherPeerID)
 
 Checks if peerID can be proxied through otherPeerID. Defaults to: false
 
 _note: You need to override this function in order to allow proxying_
+
+**Returns** ```true/false```
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnySocket.canAcceptProxy"></a>
+### AnySocket.canAcceptProxy(relayID, peerID)
+
+Asked when the peer `relayID` offers us a link to `peerID` that it relays.
+Defaults to: false
+
+Relaying is opt-in at every hop: the relay allows it with
+<a href="#AnySocket.canProxy">canProxy()</a>, and the far end accepts it with this.
+When it refuses, the peer that asked rejects with "refused by the peer". A
+relayed link is announced only once it is encrypted, if either connection it
+runs over requires e2e.
+
+_note: You need to override this function to accept relayed links_
 
 **Returns** ```true/false```
 
@@ -697,6 +753,16 @@ Disconnects the peer
 ### AnyPeer.isE2EEnabled()
 
 **Returns** ```true``` if the connection has been end-to-end encrypted (see: <a href="#AnyPeer.e2e">AnyPeer.e2e</a>)
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.requiresE2E"></a>
+### AnyPeer.requiresE2E()
+
+**Returns** ```true``` if this connection had to be encrypted before it was
+announced. Either end asking for it is enough, so it can be true when your own
+options never said so.
 
 [back to top](#api)
 

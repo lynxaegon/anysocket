@@ -32,7 +32,7 @@ one process at a time.
   fleet over to it
 * `requireE2E`: never be handed a peer you could talk to in clear
 * Binary frames: a `Uint8Array`/`Buffer` travels as those bytes, in messages and RPC
-* RPC support
+* RPC support, with an `rpcGuard` to authorize every call in one place
 * NTP Sync between peers support
 * P2P using a proxy server (with support for direct E2EE between peers)
 * `maintain()`: keep a peer connected, with backoff

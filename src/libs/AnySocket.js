@@ -21,6 +21,64 @@ const errorMessage = (e) => {
     try { return JSON.stringify(e); } catch (_) { return String(e); }
 };
 
+/**
+ * Prototypes an RPC path never walks into. Their methods are on every object
+ * and function, so a path through them would hand any peer the language
+ * itself: `["constructor", "assign"]` reaches Object.assign, `["list", "push"]`
+ * mutates an exposed array, and each is called with our own AnyPeer as its last
+ * argument.
+ */
+const BUILTIN_PROTOTYPES = new Set([
+    Object.prototype, Function.prototype, Array.prototype, String.prototype,
+    Number.prototype, Boolean.prototype, Symbol.prototype, Date.prototype,
+    RegExp.prototype, Error.prototype, Promise.prototype, Map.prototype,
+    Set.prototype, WeakMap.prototype, WeakSet.prototype,
+    Object.getPrototypeOf(async function () {}),
+    Object.getPrototypeOf(function* () {}),
+    Object.getPrototypeOf(Uint8Array.prototype),
+    typeof Buffer !== "undefined" ? Buffer.prototype : Object.prototype
+]);
+const FORBIDDEN_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * The function an RPC path names in the exposed table, and the object it is a
+ * method of — or null. A step may land on an own property or on one inherited
+ * from the object's own classes, so `setRPC(new Service())` works, but never on
+ * one inherited from a built-in.
+ */
+const resolveRPC = (root, path) => {
+    if (!Array.isArray(path) || path.length === 0) return null;
+
+    let parent = null;
+    let node = root;
+    for (const name of path) {
+        if (typeof name !== "string" || FORBIDDEN_NAMES.has(name)) return null;
+        if (node === null || (typeof node !== "object" && typeof node !== "function")) return null;
+
+        let owner = node;
+        while (owner && !Object.prototype.hasOwnProperty.call(owner, name)) {
+            owner = Object.getPrototypeOf(owner);
+            if (owner && BUILTIN_PROTOTYPES.has(owner)) return null;
+        }
+        if (!owner) return null;
+
+        parent = node;
+        node = node[name];
+    }
+    return typeof node === "function" ? { parent, fn: node } : null;
+};
+
+/**
+ * A relayed link takes its options from the connection it is relayed over —
+ * including whether that connection had to be encrypted, which either of its
+ * ends may have asked for, so it is not always in our own options. `farEnd` is
+ * what the relay passed on about the other hop: a relayed link has to be
+ * encrypted when either hop had to be.
+ */
+const relayedOptions = (relay, farEnd) => Object.assign({}, relay.options, {
+    requireE2E: relay.requiresE2E() || farEnd === "required"
+});
+
 const _private = {
     peersConnected: Symbol("peers connected"),
     peers: Symbol("ready peers"),
@@ -55,6 +113,9 @@ class AnySocket extends EventEmitter {
         debug("AnySocketID:", this.id);
 
         this.rpc = {};
+        // Asked before every incoming RPC runs: (peer, path, args) => boolean,
+        // or a promise of one. Unset, every exposed method is callable.
+        this.rpcGuard = this.options.rpcGuard || null;
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
         this[_private.transports] = {};
@@ -97,6 +158,16 @@ class AnySocket extends EventEmitter {
         return false;
     }
 
+    /**
+     * May `relayID` hand us a link to `peerID` that it relays? Asked when a
+     * relay announces one. False by default, like canProxy(): relaying is opt-in
+     * at every hop. Without it, any connected peer could announce peers that
+     * do not exist, and speak for them.
+     */
+    canAcceptProxy(relayID, peerID) {
+        return false;
+    }
+
     proxy(peerID, throughPeerID) {
         return new Promise((resolve, reject) => {
             if(peerID == throughPeerID || peerID == this.id) {
@@ -121,9 +192,8 @@ class AnySocket extends EventEmitter {
                 id: peerID
             }, true).then((packet) => {
                 if(packet.msg.ok && !this[_private.peers][peerID]) {
-                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]), this[_private.peers][throughPeerID].options);
-                    this[_private.onProtocolReady](protocol);
-                    resolve(this[_private.peers][peerID]);
+                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]), relayedOptions(this[_private.peers][throughPeerID], packet.msg.e2e));
+                    this[_private.onProtocolReady](protocol, resolve, reject);
                 } else {
                     reject("Cannot proxy" + (packet.msg.reason ? ": " + packet.msg.reason : "!"));
                 }
@@ -522,7 +592,7 @@ class AnySocket extends EventEmitter {
         return existingOutbound === weShouldDial;
     }
 
-    [_private.onProtocolReady](protocol, resolve) {
+    [_private.onProtocolReady](protocol, resolve, reject) {
         const existing = this[_private.peers][protocol.peerID];
         if(existing) {
             if(this[_private.keepsExisting](existing, protocol)) {
@@ -563,19 +633,51 @@ class AnySocket extends EventEmitter {
         });
         anypeer.on("internal",this[_private.onPeerInternalMessage].bind(this));
 
-        if(resolve) {
-            resolve(anypeer);
+        const announce = () => {
+            if(resolve) {
+                resolve(anypeer);
+            }
+
+            // allow resolve to run before emitting event
+            setTimeout(() => {
+                // Deferred, so the peer may already be gone — dropped by the far
+                // end, or retired by the duplicate rule. Announcing it then would
+                // hand out a dead peer, after its own "disconnected".
+                if (this[_private.peers][anypeer.id] !== anypeer) return;
+                this.emit("connected", anypeer);
+            }, 0);
+        };
+
+        // A direct link that requires e2e only gets here once it has it. A
+        // relayed one has no handshake to wait in, and has to be registered
+        // first — its e2e frames are routed to it through the peers map — so it
+        // is announced only when e2e is up. Until then nobody holds a peer
+        // they could talk to in clear.
+        //
+        // Only the end that asked for the link starts it. The other end's
+        // half of the link may not exist yet when an offer of ours would reach
+        // it — it is set up when the relay answers — and an offer it never saw
+        // leaves the two ends out of step. So that end waits for the offer.
+        if(protocol.isProxy() && protocol.e2eRequired && !protocol.hasE2EEnabled()) {
+            const fail = (e) => {
+                const reason = "e2e is required, and could not be established: " + (e && e.message || e);
+                if(reject) reject(reason);
+                if (this[_private.peers][anypeer.id] === anypeer) anypeer.disconnect(reason);
+            };
+
+            if (protocol.isOutbound()) {
+                protocol.e2e().then(announce, fail);
+            } else {
+                const timer = setTimeout(() => fail("timed out"), protocol.options.e2eTimeout);
+                protocol.once("e2e", () => {
+                    clearTimeout(timer);
+                    if (this[_private.peers][anypeer.id] === anypeer) announce();
+                });
+            }
+            return anypeer;
         }
 
-        // allow resolve to run before emitting event
-        setTimeout(() => {
-            // Deferred, so the peer may already be gone — dropped by the far
-            // end, or retired by the duplicate rule. Announcing it then would
-            // hand out a dead peer, after its own "disconnected".
-            if (this[_private.peers][anypeer.id] !== anypeer) return;
-            this.emit("connected", anypeer);
-        }, 0);
-
+        announce();
         return anypeer;
     }
 
@@ -619,19 +721,40 @@ class AnySocket extends EventEmitter {
 
     [_private.onPeerInternalMessage](packet) {
         if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.NETWORK) {
+            const relay = this[_private.peers][packet.peer.id];
+            const id = packet.msg.id;
             if(packet.msg.action == "connected") {
-                if(!this[_private.peers][packet.msg.id]) {
-                    let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, packet.msg.id, this[_private.peers][packet.peer.id]));
-                    this[_private.onProtocolReady](protocol);
+                if(typeof id !== "string" || id == this.id || id == packet.peer.id || !relay || relay.isProxy()) {
+                    packet.peer.disconnect("Invalid proxy request!");
+                    return;
                 }
+                if(this[_private.peers][id]) {
+                    packet.reply({ ok: false, reason: "already connected" });
+                    return;
+                }
+                if(!this.canAcceptProxy(packet.peer.id, id)) {
+                    debug("refused a relayed link to", id, "from", packet.peer.id);
+                    packet.reply({ ok: false, reason: "refused by the peer" });
+                    return;
+                }
+                // The relay connection's options, as on the dialling side —
+                // not the defaults, which would drop its limits and requireE2E.
+                let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, id, relay), relayedOptions(relay, packet.msg.e2e));
+                this[_private.onProtocolReady](protocol);
+                // Our hop's requirement goes back, so the dialler knows to start e2e.
+                packet.reply({ ok: true, e2e: protocol.e2eRequired ? "required" : undefined });
             }
             else if(packet.msg.action == "disconnected") {
-                if(!this[_private.peers][packet.msg.id]) {
+                // Only the relay that carries a link may say it has closed. Any
+                // other peer could otherwise end our direct connections, or
+                // someone else's relayed ones.
+                const target = this[_private.peers][id];
+                if(!target || !target.isProxy() || target.relayID != packet.peer.id) {
                     packet.peer.disconnect("Invalid proxy request!");
                     return;
                 }
 
-                this[_private.onPeerDisconnected](this[_private.peers][packet.msg.id], "Proxy Connection Closed");
+                this[_private.onPeerDisconnected](target, "Proxy Connection Closed");
             }
         }
         else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.PROXY) {
@@ -667,16 +790,46 @@ class AnySocket extends EventEmitter {
                     return;
                 }
 
-                this[_private.peers][packet.msg.id].addLink(this[_private.peers][packet.peer.id]);
-                this[_private.peers][packet.peer.id].addLink(this[_private.peers][packet.msg.id]);
+                const from = this[_private.peers][packet.peer.id];
+                const to = this[_private.peers][packet.msg.id];
 
-                this[_private.peers][packet.msg.id].sendInternal({
+                // Linked before asking, so the target's first frames on the new
+                // link — its e2e offer, say — have a route the moment it accepts.
+                to.addLink(from);
+                from.addLink(to);
+
+                // The target decides too (canAcceptProxy), and the dialler is
+                // answered with that decision — not told "ok" for a link the far
+                // end then refuses, which would leave it holding a peer nothing
+                // reaches.
+                const unlink = () => {
+                    to.removeLink(from);
+                    from.removeLink(to);
+                };
+                // Each hop's e2e requirement is carried to the other end, the way
+                // a direct handshake carries it: either one requiring it is
+                // enough, and both ends then wait for it.
+                to.sendInternal({
                     type: constants.INTERNAL_PACKET_TYPE.NETWORK,
                     action: "connected",
-                    id: packet.peer.id
-                });
-                packet.reply({
-                    ok: true
+                    id: packet.peer.id,
+                    e2e: from.requiresE2E() ? "required" : undefined
+                }, true).then((answer) => {
+                    if(answer.msg && answer.msg.ok === true) {
+                        packet.reply({
+                            ok: true,
+                            e2e: (to.requiresE2E() || answer.msg.e2e === "required") ? "required" : undefined
+                        });
+                        return;
+                    }
+                    unlink();
+                    packet.reply({
+                        ok: false,
+                        reason: (answer.msg && answer.msg.reason) || "refused by the peer"
+                    });
+                }, (e) => {
+                    unlink();
+                    packet.reply({ ok: false, reason: "the peer did not answer" });
                 });
             }
             else if(packet.msg.action == "unproxy") {
@@ -698,33 +851,50 @@ class AnySocket extends EventEmitter {
         }
         else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC) {
             // RUN RPC, send reply
-            let parent = false;
-            let tmp = this.rpc;
-            for(let key in packet.msg.method){
-                parent = tmp;
-                tmp = tmp[packet.msg.method[key]];
-                if(!tmp)
-                    break;
-            }
+            const path = packet.msg.method;
+            const details = "method: '" + path + "'";
+            const target = resolveRPC(this.rpc, path);
 
             // method not found
-            if(!parent || !tmp || typeof tmp != "function") {
+            if(!target) {
                 packet.reply({
                     error: "Method not found!",
-                    details: "method: '" + packet.msg.method + "'",
+                    details: details,
                     code: 404
                 });
             } else {
                 try {
+                    const params = Array.isArray(packet.msg.params) ? packet.msg.params : [];
+                    const bin = Array.isArray(packet.msg.bin) ? packet.msg.bin : [];
                     // Attached bytes when the caller is 1.0, base64 when it is 0.4.x.
                     const attached = packet.msg[Packet.ATTACHMENTS];
-                    packet.msg.bin.forEach((item, i) => {
-                        packet.msg.params[item] = attached && attached.length
+                    bin.forEach((item, i) => {
+                        params[item] = attached && attached.length
                             ? attached[i]
-                            : AnySocket.Packer.unpack(packet.msg.params[item]);
+                            : AnySocket.Packer.unpack(params[item]);
                     });
 
-                    Promise.resolve(tmp.apply(parent, [...packet.msg.params, packet.peer]))
+                    // The guard sees the decoded arguments, and runs before the
+                    // method does. Refused, the method never runs.
+                    const guard = this.rpcGuard;
+                    const allowed = guard
+                        ? Promise.resolve().then(() => guard(packet.peer, path.slice(), params.slice()))
+                        : Promise.resolve(true);
+
+                    allowed
+                        .then((ok) => {
+                            if (ok !== true) {
+                                const refused = new Error("Forbidden");
+                                refused.forbidden = true;
+                                throw refused;
+                            }
+                            return target.fn.apply(target.parent, [...params, packet.peer]);
+                        }, (e) => {
+                            // A guard that throws refuses, with its reason.
+                            const refused = new Error(errorMessage(e));
+                            refused.forbidden = true;
+                            throw refused;
+                        })
                         .then((result) => {
                             if(!BufferUtils.isBuffer(result)) {
                                 packet.reply({ result: result, bin: false });
@@ -743,15 +913,15 @@ class AnySocket extends EventEmitter {
                         .catch((e) => {
                             packet.reply({
                                 error: errorMessage(e),
-                                details: "method: '" + packet.msg.method + "'",
-                                code: 500
+                                details: details,
+                                code: e && e.forbidden ? 403 : 500
                             });
                         });
                 }
                 catch(e) {
                     packet.reply({
                         error: errorMessage(e),
-                        details: "method: '" + packet.msg.method + "'",
+                        details: details,
                         code: 500
                     });
                 }

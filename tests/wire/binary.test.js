@@ -156,6 +156,7 @@ async function trio(t) {
     t.after(() => stop(relay, a, b));
 
     relay.canProxy = () => true;
+    b.canAcceptProxy = () => true;
 
     const port = await listen(relay);
     await a.connect("ws", "127.0.0.1", port);

@@ -31,8 +31,18 @@ module.exports = class AnyPeer extends EventEmitter {
             return new Proxy(() => {},
                 {
                     get: (target, name) => {
-                        const prop = target[name];
-                        if (prop != null) { return prop; }
+                        // Not method names. Symbols are how the runtime probes
+                        // an object (inspect, iteration, coercion); "then"
+                        // would make `await peer.rpc` call the peer, and
+                        // "toJSON" would turn serializing anything holding a
+                        // peer into a remote call.
+                        if (typeof name === "symbol" || name === "then" || name === "toJSON") {
+                            return undefined;
+                        }
+                        // Everything else is a remote name — including "call",
+                        // "name" or "length", which the function behind the
+                        // proxy used to answer locally, so a remote method by
+                        // one of those names could not be called.
                         return makeRPC(rpc, base + "/" + name, callOptions);
                     },
                     apply: (target, thisArg, args) => {
@@ -273,6 +283,14 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].hasE2EEnabled();
     }
 
+    /**
+     * Must this connection be encrypted before it is used? Either end asking
+     * is enough, so this can be true when our own options never said so.
+     */
+    requiresE2E() {
+        return !!this[_protocol].e2eRequired;
+    }
+
     send(message, awaitReply, timeout) {
         const packet = Packet
             .data(message)
@@ -380,13 +398,21 @@ module.exports = class AnyPeer extends EventEmitter {
                 // The caller can give up early. The entry is removed rather than
                 // left for its timer, so a late reply is simply dropped.
                 if (signal) {
+                    const entry = this[_packets][packet.seq];
                     const abort = () => {
-                        const entry = this[_packets][packet.seq];
-                        if (!entry) return;
+                        if (this[_packets][packet.seq] !== entry) return;
                         clearTimeout(entry.timeout);
                         delete this[_packets][packet.seq];
                         entry.reject(errors.aborted(signal.reason));
                     };
+                    // However the call settles, the listener goes with it: a
+                    // signal shared across many calls would otherwise keep every
+                    // one of them alive.
+                    const unhook = () => signal.removeEventListener("abort", abort);
+                    const { resolve: done, reject: failed } = entry;
+                    entry.resolve = (v) => { unhook(); done(v); };
+                    entry.reject = (e) => { unhook(); failed(e); };
+
                     if (signal.aborted) abort();
                     else signal.addEventListener("abort", abort, { once: true });
                 }

@@ -11,6 +11,7 @@ const Auth = require("./Auth");
 const { errors } = require("./errors");
 const ENCRYPTION_SECRET = Symbol("secret key");
 const ENCRYPTION_PRIVATE = Symbol("private key");
+const AUTH_RECEIVED = Symbol("auth received");
 const ENCRYPTION_NONCE = Symbol("nonce");
 const ENCRYPTION_STARTING = Symbol("e2e starting");
 const E2E_OFFER = Symbol("our e2e offer");
@@ -164,6 +165,9 @@ module.exports = class AnyProtocol extends EventEmitter {
             if (this.isProxy()) {
                 this.protocolVersion = constants.PROTOCOL_VERSION;
                 this.remoteProtocolVersion = constants.PROTOCOL_VERSION;
+                // There is no handshake to carry the requirement, so a relayed
+                // link takes it from the connection it is relayed over.
+                this.e2eRequired = !!this.options.requireE2E;
             }
             this.changeState(constants.PROTOCOL_STATES.CONNECTED);
         }
@@ -288,7 +292,32 @@ module.exports = class AnyProtocol extends EventEmitter {
         });
     }
 
+    /**
+     * Drop the connection rather than run the 0.4.x exchange, and say so.
+     *
+     * Between 1.0 peers it is refused whatever allowLegacyE2E says: a 1.0
+     * connection never encrypts with the legacy keys — its frames are sealed
+     * only by a 1.0 session — so accepting it would mark the connection
+     * encrypted, satisfy requireE2E and settle e2e(), while everything went on
+     * in clear. Anyone able to inject one frame before e2e could arrange that.
+     */
+    _refusesLegacyE2E() {
+        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
+            this.disconnect("Legacy e2e refused on a 1.0 connection");
+            return true;
+        }
+        if (!this.options.allowLegacyE2E) {
+            this.disconnect("Legacy e2e refused");
+            return true;
+        }
+        return false;
+    }
+
     hasE2EEnabled() {
+        // The legacy keys only ever encrypt a 0.4.x connection.
+        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
+            return !!(this[E2E_SESSION] && this[E2E_SESSION].ready);
+        }
         return !!this[ENCRYPTION_PRIVATE] || !!(this[E2E_SESSION] && this[E2E_SESSION].ready);
     }
 
@@ -480,8 +509,22 @@ module.exports = class AnyProtocol extends EventEmitter {
                     return resolve();
                 }
 
+                // A multi-chunk message announces its total up front, and the
+                // whole of it is allocated at once — so the total, not only
+                // what has arrived, has to fit the cap.
+                packet.maxTotal = cap;
                 packet.deserialize(recv, encryptionState, this._decrypt.bind(this))
+                    .catch((e) => {
+                        // Whatever went wrong decoding a frame (a failed
+                        // allocation included) ends the connection — and is
+                        // never left as an unhandled rejection.
+                        debug(this.peerID, "frame failed", e);
+                        delete this._packets[seq];
+                        this.disconnect("Invalid Packet!");
+                        return null;
+                    })
                     .then(result => {
+                        if (result === null) return resolve();
                         debug(this.peerID, "<<<<", Packet.TYPE._string(packet.type), packet.seq);
                         if (result) {
                             delete this._packets[seq];
@@ -536,8 +579,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                                             break;
                                         }
 
-                                        if (!this.options.allowLegacyE2E) {
-                                            this.disconnect("Legacy e2e refused");
+                                        if (this._refusesLegacyE2E()) {
                                             resolve();
                                             break;
                                         }
@@ -584,8 +626,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                                             break;
                                         }
 
-                                        if (!this.options.allowLegacyE2E) {
-                                            this.disconnect("Legacy e2e refused");
+                                        if (this._refusesLegacyE2E()) {
                                             resolve();
                                             break;
                                         }
@@ -755,6 +796,16 @@ module.exports = class AnyProtocol extends EventEmitter {
      * @param isReply true when we dialed and this is the listener's AUTH reply.
      */
     async _handleAuth(packet, isReply) {
+        // Exactly one AUTH per connection. The built-in auth is only sound while
+        // each end's challenge is fixed before it sees the other's: a listener
+        // that took a second AUTH would sign a fresh proof over its old challenge
+        // and a new peer challenge of the sender's choosing — which lets someone
+        // without the secret obtain, from one peer, the proof another expects.
+        if (this[AUTH_RECEIVED]) {
+            return this.disconnect("Invalid Auth Packet!");
+        }
+        this[AUTH_RECEIVED] = true;
+
         let ok = false;
         try {
             ok = !!(packet.data && packet.data.id) && !!(await this.anysocket.onAuth(packet.data));
