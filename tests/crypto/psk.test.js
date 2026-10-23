@@ -111,7 +111,7 @@ test("ends holding different secrets cannot talk", async (t) => {
 
     const header = new Uint8Array([1, 3, 0, 0, 0, 3]);
     const sealed = await E2E.seal(left.sendKey, 0, header, Frame.bytes("x"));
-    await assert.rejects(E2E.open(right.recvKey, 0, header, sealed));
+    await assert.rejects(async () => E2E.open(right.recvKey, 0, header, sealed));
 });
 
 test("a connection using the built-in auth is reported as an authenticated channel", async (t) => {

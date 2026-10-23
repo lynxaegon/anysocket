@@ -8,6 +8,7 @@ const constants = require("./_constants");
 const Frame = require("./Frame");
 const E2E = require("./E2E");
 const Auth = require("./Auth");
+const { errors } = require("./errors");
 const ENCRYPTION_SECRET = Symbol("secret key");
 const ENCRYPTION_PRIVATE = Symbol("private key");
 const ENCRYPTION_NONCE = Symbol("nonce");
@@ -104,7 +105,19 @@ module.exports = class AnyProtocol extends EventEmitter {
             sendHighWaterMark: 16 * 1024 * 1024,
             // What we announce in the handshake. Narrow it to opt out of a
             // feature; the peer is then never sent it.
-            capabilities: constants.CAPABILITIES
+            capabilities: constants.CAPABILITIES,
+            // The e2e a 0.4.x peer can do: an unauthenticated secp521r1
+            // exchange, then AES-256-CBC with no integrity, keyed per packet
+            // by PBKDF2 at one iteration. Allowed by default so a fleet can be
+            // upgraded a peer at a time; turn it off once it has been, and a
+            // 0.4.x peer can no longer be encrypted with it — in either
+            // direction.
+            allowLegacyE2E: true,
+            // Ciphers to offer for e2e, most preferred first. Left unset, this
+            // machine ranks them by measuring which it runs faster. Setting it
+            // pins a choice — the negotiation still only ever picks one both
+            // ends offer.
+            e2eCiphers: null
         }, options);
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
@@ -313,6 +326,12 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
             this._offerE2E().catch((e) => this.disconnect(e));
         } else {
+            if (!this.options.allowLegacyE2E) {
+                this[E2E_PENDING].reject(errors.refused(
+                    "Legacy e2e is disabled, and this peer cannot do the 1.0 exchange"));
+                this[E2E_PENDING] = null;
+                return promise;
+            }
             this._legacyE2E();
         }
 
@@ -328,7 +347,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     async _offerE2E() {
         if (this[E2E_OFFER]) return;
 
-        this[E2E_OFFER] = await E2E.createOffer();
+        this[E2E_OFFER] = await E2E.createOffer({ ciphers: this.options.e2eCiphers || undefined });
         if (this.state != constants.PROTOCOL_STATES.SWITCHING_PROTOCOL) {
             this.changeState(constants.PROTOCOL_STATES.SWITCHING_PROTOCOL);
         }
@@ -505,6 +524,12 @@ module.exports = class AnyProtocol extends EventEmitter {
                                             break;
                                         }
 
+                                        if (!this.options.allowLegacyE2E) {
+                                            this.disconnect("Legacy e2e refused");
+                                            resolve();
+                                            break;
+                                        }
+
                                         Utils.generateAESKey().then((result) => {
                                             this[ENCRYPTION_PRIVATE] = result.private;
                                             this[ENCRYPTION_NONCE] = packet.data.nonce + result.nonce;
@@ -546,6 +571,11 @@ module.exports = class AnyProtocol extends EventEmitter {
                                             break;
                                         }
 
+                                        if (!this.options.allowLegacyE2E) {
+                                            this.disconnect("Legacy e2e refused");
+                                            resolve();
+                                            break;
+                                        }
                                         this[ENCRYPTION_NONCE] = this[ENCRYPTION_NONCE] + packet.data.nonce;
                                         Utils.getAESSessionKey(this[ENCRYPTION_NONCE], this.anysocket.id, 0)
                                             .then((nonce) => {
@@ -867,18 +897,26 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processPacketQueue(item, cb) {
-        this._sealFrame(item.packet)
-            .then((payload) => this.peer.send(payload))
-            .then(() => {
-                if (item.resolve)
-                    item.resolve();
+        const fail = (e) => {
+            item.reject(e);
+            this._packetQueue.kill();
+            cb(null, null);
+        };
+        const send = (payload) => this.peer.send(payload).then(() => {
+            if (item.resolve)
+                item.resolve();
 
-                cb(null, null);
-            }).catch((e) => {
-                item.reject(e);
-                this._packetQueue.kill();
-                cb(null, null);
-            });
+            cb(null, null);
+        }, fail);
+
+        let sealed;
+        try {
+            sealed = this._sealFrame(item.packet);
+        } catch (e) {
+            return fail(e);
+        }
+        if (sealed && typeof sealed.then === "function") sealed.then(send, fail);
+        else send(sealed);
     }
 
     processLinkPacketQueue(item, cb) {
@@ -887,16 +925,24 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processRecvPacketQueue(item, cb) {
-        this._openFrame(item.recv)
-            .then((recv) => {
-                item.recv = recv;
-                this._routeRecvPacket(item, cb);
-            })
-            .catch((e) => {
-                debug(this.peerID, "frame rejected:", e && e.message);
-                this.disconnect("Invalid encrypted frame");
-                cb(null, null);
-            });
+        const reject = (e) => {
+            debug(this.peerID, "frame rejected:", e && e.message);
+            this.disconnect("Invalid encrypted frame");
+            cb(null, null);
+        };
+        const route = (recv) => {
+            item.recv = recv;
+            this._routeRecvPacket(item, cb);
+        };
+
+        let opened;
+        try {
+            opened = this._openFrame(item.recv);
+        } catch (e) {
+            return reject(e);
+        }
+        if (opened && typeof opened.then === "function") opened.then(route, reject);
+        else route(opened);
     }
 
     _routeRecvPacket(item, cb) {
@@ -1012,18 +1058,29 @@ module.exports = class AnyProtocol extends EventEmitter {
      * never sent. The header travels authenticated but in clear, so a frame
      * that was altered, replayed or reordered simply fails to open.
      */
-    async _sealFrame(packet) {
+    _sealFrame(packet) {
         const session = this[E2E_SESSION];
         if (!session || !session.ready || !Frame.isFrame(packet)) return packet;
 
         const bytes = Frame.asBytes(packet);
+        const plaintext = bytes.subarray(Frame.HEADER_SIZE);
         const header = bytes.slice(0, Frame.HEADER_SIZE);
         header[0] |= Frame.FLAGS.ENCRYPTED;
+        // Taken now, synchronously: this queue is the only place frames are in
+        // their final order, so this is the only place a counter can be.
+        const counter = session.sendCounter++;
 
-        const sealed = await E2E.seal(
-            session.sendKey, session.sendCounter++, header, bytes.subarray(Frame.HEADER_SIZE)
-        );
-        return Frame.concat([header, sealed]);
+        // Where the runtime can seal synchronously, the whole frame — header,
+        // ciphertext, tag — is one allocation and there is no thread-pool
+        // round trip, which on a small frame is most of the cost.
+        if (E2E.sealsInPlace(session.sendKey)) {
+            const out = new Uint8Array(Frame.HEADER_SIZE + plaintext.length + E2E.TAG_BYTES);
+            out.set(header, 0);
+            return E2E.sealInto(session.sendKey, counter, header, plaintext, out, Frame.HEADER_SIZE);
+        }
+
+        return E2E.seal(session.sendKey, counter, header, plaintext)
+            .then((sealed) => Frame.concat([header, sealed]));
     }
 
     /**
@@ -1033,7 +1090,7 @@ module.exports = class AnyProtocol extends EventEmitter {
      * none may be: either mismatch is a downgrade attempt and drops the
      * connection rather than being quietly tolerated.
      */
-    async _openFrame(recv) {
+    _openFrame(recv) {
         if (!Frame.isFrame(recv)) return recv;
 
         const bytes = Frame.asBytes(recv);
@@ -1047,14 +1104,20 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (!encrypted) throw new Error("plaintext frame after e2e was established");
 
         const header = bytes.subarray(0, Frame.HEADER_SIZE);
-        const plaintext = await E2E.open(
-            session.recvKey, session.recvCounter, header, bytes.subarray(Frame.HEADER_SIZE)
-        );
-        session.recvCounter++;
+        const counter = session.recvCounter;
+        const reframe = (plaintext) => {
+            // Advanced only once the frame has verified, so a forged one cannot
+            // push the counter past the frame that really comes next.
+            session.recvCounter = counter + 1;
+            const out = new Uint8Array(Frame.HEADER_SIZE + plaintext.length);
+            out.set(header, 0);
+            out.set(plaintext, Frame.HEADER_SIZE);
+            out[0] &= ~Frame.FLAGS.ENCRYPTED;
+            return out;
+        };
 
-        const out = Frame.concat([header, plaintext]);
-        out[0] &= ~Frame.FLAGS.ENCRYPTED;
-        return out;
+        const opened = E2E.open(session.recvKey, counter, header, bytes.subarray(Frame.HEADER_SIZE));
+        return opened && typeof opened.then === "function" ? opened.then(reframe) : reframe(opened);
     }
 
     /**

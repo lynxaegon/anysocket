@@ -1,8 +1,13 @@
 /**
  * End-to-end encryption for protocol version 1.
  *
- * Written entirely against WebCrypto, which node and the browser both provide,
- * so there is one implementation rather than two that have to be kept in step.
+ * The key exchange is WebCrypto, which node and the browser both provide. The
+ * per-frame cipher is node's own crypto where there is one, and WebCrypto
+ * otherwise: both are the same AES-256-GCM, so the two interoperate, but
+ * WebCrypto completes every call through a thread-pool round trip — about
+ * 22µs whatever the size, which is 7x the whole cost of sealing a 2kB frame
+ * synchronously. A connection is set up once; its frames are sealed millions
+ * of times. node's crypto also brings ChaCha20-Poly1305, which WebCrypto lacks.
  *
  * What it replaces: an unauthenticated secp521r1 exchange (4.5ms), then
  * AES-256-CBC with no integrity at all, keyed per packet by PBKDF2 at a single
@@ -17,6 +22,17 @@
 
 const Frame = require("./Frame");
 
+// node's crypto, when present. In the browser build this require resolves to
+// the browser shim, which has no createCipheriv, so the WebCrypto path is used.
+const nodeCrypto = (() => {
+    try {
+        const c = require("crypto");
+        return c && typeof c.createCipheriv === "function" ? c : null;
+    } catch (e) {
+        return null;
+    }
+})();
+
 const subtle = () => {
     const webcrypto = globalThis.crypto;
     if (!webcrypto || !webcrypto.subtle) {
@@ -28,7 +44,10 @@ const subtle = () => {
 // Canonical preference order. Used to break ties so both ends land on the same
 // choice from the same two lists.
 const KEX = ["x25519", "p256"];
-const CIPHERS = ["aes-256-gcm"];
+// Canonical cipher order, for breaking ties. AES-GCM first: it is the only
+// AEAD WebCrypto has, and the faster of the two wherever the CPU accelerates
+// AES. ChaCha20-Poly1305 is node-only, and wins on CPUs that do not.
+const CIPHERS = ["aes-256-gcm", "chacha20-poly1305"];
 
 const KEX_PARAMS = {
     x25519: { name: "X25519" },
@@ -66,9 +85,73 @@ async function supportedKex() {
     return kexSupport;
 }
 
-/** Reset the probe. Tests only. */
+let cipherPreference = null;
+
+/**
+ * The ciphers this runtime offers, fastest first.
+ *
+ * Measured rather than assumed: AES is quicker wherever the CPU accelerates it
+ * and much slower in software, where ChaCha20 wins — the difference between,
+ * say, an x86 server and an ARM board without crypto extensions. Each end
+ * ranks by its own measurement and the negotiation picks the lowest combined
+ * rank, so neither imposes its preference on the other. Measured once.
+ */
+function supportedCiphers() {
+    if (cipherPreference) return cipherPreference;
+    if (!nodeCrypto) return (cipherPreference = ["aes-256-gcm"]);
+
+    const block = new Uint8Array(16 * 1024);
+    const key = new Uint8Array(32);
+    const iv = new Uint8Array(NONCE_BYTES);
+    const run = (name, rounds) => {
+        const started = process.hrtime.bigint();
+        for (let i = 0; i < rounds; i++) {
+            const c = nodeCrypto.createCipheriv(name, key, iv, { authTagLength: TAG_BYTES });
+            c.update(block);
+            c.final();
+        }
+        return Number(process.hrtime.bigint() - started);
+    };
+
+    // Ciphers this build of node actually has.
+    const available = CIPHERS.filter((name) => {
+        try {
+            run(name, 1);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    });
+
+    // Warm every cipher up before timing any of them — the first one timed
+    // otherwise absorbs the warm-up and loses on that alone, which ranked
+    // ChaCha20 ahead of AES on a machine that accelerates AES. Then interleave
+    // and keep each one's best, so a stall during one round cannot decide it.
+    for (const name of available) run(name, 32);
+    const best = {};
+    for (let round = 0; round < 3; round++) {
+        for (const name of available) {
+            const took = run(name, 96);
+            best[name] = Math.min(best[name] == null ? Infinity : best[name], took);
+        }
+    }
+
+    // A small gap is noise, not a preference; keep the canonical order for it so
+    // the choice does not flip from one start to the next.
+    const MARGIN = 1.15;
+    cipherPreference = available.slice().sort((a, b) => {
+        const ratio = best[a] / best[b];
+        if (ratio > 1 / MARGIN && ratio < MARGIN) return CIPHERS.indexOf(a) - CIPHERS.indexOf(b);
+        return best[a] - best[b];
+    });
+    if (!cipherPreference.length) cipherPreference = ["aes-256-gcm"];
+    return cipherPreference;
+}
+
+/** Reset the probes. Tests only. */
 function _resetSupport() {
     kexSupport = null;
+    cipherPreference = null;
 }
 
 /**
@@ -93,7 +176,7 @@ async function createOffer(options = {}) {
         wire: {
             v: 1,
             kex: available,
-            ciphers: options.ciphers || CIPHERS,
+            ciphers: options.ciphers || supportedCiphers(),
             keys: keys,
             nonce: Frame.toBase64(nonce)
         },
@@ -241,7 +324,16 @@ async function derive(params) {
     const second = derived.subarray(KEY_BYTES, KEY_BYTES * 2);
     const binding = derived.subarray(KEY_BYTES * 2, KEY_BYTES * 2 + BINDING_BYTES);
 
-    const importKey = (raw) => subtle().importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+    // A handle per direction. node's crypto takes the raw key; WebCrypto needs
+    // a CryptoKey, imported only where it is the path that will be used.
+    const importKey = async (raw) => {
+        const handle = { cipher: cipher, raw: raw.slice(), webKey: null };
+        if (!nodeCrypto) {
+            if (cipher !== "aes-256-gcm") throw new Error(cipher + " is not available in this runtime");
+            handle.webKey = await subtle().importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+        }
+        return handle;
+    };
 
     return {
         kex: kex,
@@ -271,23 +363,63 @@ function nonceFor(counter) {
     return nonce;
 }
 
-/** Encrypt, with the frame header authenticated alongside it. */
-async function seal(key, counter, header, plaintext) {
-    return new Uint8Array(await subtle().encrypt(
-        { name: "AES-GCM", iv: nonceFor(counter), additionalData: header, tagLength: TAG_BYTES * 8 },
-        key,
-        plaintext
-    ));
+/**
+ * Encrypt, with the frame header authenticated alongside it. Returns the
+ * ciphertext followed by the tag — what WebCrypto produces too, so the two
+ * paths are interchangeable on the wire.
+ */
+function seal(key, counter, header, plaintext) {
+    if (key.webKey) {
+        return subtle().encrypt(
+            { name: "AES-GCM", iv: nonceFor(counter), additionalData: header, tagLength: TAG_BYTES * 8 },
+            key.webKey,
+            plaintext
+        ).then((out) => new Uint8Array(out));
+    }
+
+    const out = new Uint8Array(plaintext.length + TAG_BYTES);
+    sealInto(key, counter, header, plaintext, out, 0);
+    return out;
+}
+
+/**
+ * Seal straight into `out` at `at`: ciphertext then tag. This is what lets a
+ * whole encrypted frame — header, ciphertext, tag — be a single allocation
+ * instead of a ciphertext that then gets joined to its header. node only.
+ */
+function sealInto(key, counter, header, plaintext, out, at) {
+    const c = nodeCrypto.createCipheriv(key.cipher, key.raw, nonceFor(counter), { authTagLength: TAG_BYTES });
+    c.setAAD(header, { plaintextLength: plaintext.length });
+    const body = c.update(plaintext);
+    out.set(body, at);
+    const rest = c.final();
+    if (rest.length) out.set(rest, at + body.length);
+    out.set(c.getAuthTag(), at + plaintext.length);
+    return out;
 }
 
 /** Decrypt. Throws if the frame was altered, replayed or arrived out of order. */
-async function open(key, counter, header, ciphertext) {
-    return new Uint8Array(await subtle().decrypt(
-        { name: "AES-GCM", iv: nonceFor(counter), additionalData: header, tagLength: TAG_BYTES * 8 },
-        key,
-        ciphertext
-    ));
+function open(key, counter, header, ciphertext) {
+    if (key.webKey) {
+        return subtle().decrypt(
+            { name: "AES-GCM", iv: nonceFor(counter), additionalData: header, tagLength: TAG_BYTES * 8 },
+            key.webKey,
+            ciphertext
+        ).then((out) => new Uint8Array(out));
+    }
+
+    if (ciphertext.length < TAG_BYTES) throw new Error("ciphertext shorter than its tag");
+    const bodyLength = ciphertext.length - TAG_BYTES;
+    const d = nodeCrypto.createDecipheriv(key.cipher, key.raw, nonceFor(counter), { authTagLength: TAG_BYTES });
+    d.setAuthTag(ciphertext.subarray(bodyLength));
+    d.setAAD(header, { plaintextLength: bodyLength });
+    const body = d.update(ciphertext.subarray(0, bodyLength));
+    const rest = d.final(); // throws when the tag does not verify
+    return rest.length ? Frame.concat([body, rest]) : new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
 }
+
+/** Whether frames can be sealed in place, synchronously (node). */
+const sealsInPlace = (key) => !key.webKey;
 
 module.exports = {
     KEX,
@@ -303,7 +435,10 @@ module.exports = {
     derive,
     nonceFor,
     seal,
+    sealInto,
+    sealsInPlace,
     open,
+    supportedCiphers,
     compareBytes,
     _resetSupport
 };

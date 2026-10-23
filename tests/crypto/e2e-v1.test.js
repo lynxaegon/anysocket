@@ -312,7 +312,7 @@ test("each direction has its own key", async (t) => {
     const sealed = await E2E.seal(left.sendKey, 0, header, Frame.bytes("secret"));
 
     // What we send cannot be opened with the key we receive on.
-    await assert.rejects(E2E.open(left.recvKey, 0, header, sealed));
+    await assert.rejects(async () => E2E.open(left.recvKey, 0, header, sealed));
 });
 
 // Forcing a connection onto a weaker version changes the transcript, so the
@@ -346,7 +346,7 @@ test("opening with the wrong counter fails", async (t) => {
     const header = new Uint8Array([1, 3, 0, 0, 0, 1]);
     const sealed = await E2E.seal(left.sendKey, 5, header, Frame.bytes("x"));
 
-    await assert.rejects(E2E.open(right.recvKey, 6, header, sealed));
+    await assert.rejects(async () => E2E.open(right.recvKey, 6, header, sealed));
     assert.equal(Frame.text(await E2E.open(right.recvKey, 5, header, sealed)), "x");
 });
 
@@ -354,7 +354,7 @@ test("opening with a different header fails", async (t) => {
     const { left, right } = await deriveBoth("x25519");
     const sealed = await E2E.seal(left.sendKey, 0, new Uint8Array([1, 3, 0, 0, 0, 1]), Frame.bytes("x"));
 
-    await assert.rejects(E2E.open(right.recvKey, 0, new Uint8Array([1, 2, 0, 0, 0, 1]), sealed));
+    await assert.rejects(async () => E2E.open(right.recvKey, 0, new Uint8Array([1, 2, 0, 0, 0, 1]), sealed));
 });
 
 // A 0.4.x peer cannot do any of the above, so that link keeps the old

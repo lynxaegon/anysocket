@@ -24,7 +24,9 @@ const CODES = {
     // The connection was retired in favour of another one to the same peer.
     SUPERSEDED: "ESUPERSEDED",
     // The caller gave up on a call through its AbortSignal.
-    ABORTED: "EABORTED"
+    ABORTED: "EABORTED",
+    // Refused by local policy, e.g. the old e2e exchange when it is disabled.
+    REFUSED: "EREFUSED"
 };
 
 const errors = {
@@ -32,7 +34,8 @@ const errors = {
     timeout: (detail) => new AnySocketError(CODES.TIMEOUT, "Timeout!", detail),
     disconnected: () => new AnySocketError(CODES.DISCONNECTED, "Peer disconnected!"),
     superseded: () => new AnySocketError(CODES.SUPERSEDED, "Superseded by the agreed connection"),
-    aborted: (reason) => new AnySocketError(CODES.ABORTED, "Aborted", { reason: reason })
+    aborted: (reason) => new AnySocketError(CODES.ABORTED, "Aborted", { reason: reason }),
+    refused: (message) => new AnySocketError(CODES.REFUSED, message)
 };
 
 module.exports = { AnySocketError, CODES, errors };

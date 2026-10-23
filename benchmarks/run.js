@@ -167,6 +167,50 @@ async function throughput(Client, sizeMB, encrypt, binary) {
     return { label: "MB/s", value: sizeMB / (took / 1000), bytes: stats.bytes };
 }
 
+// ---------------------------------------------------------------- repeats
+
+// One sample of a loopback benchmark is noisy — easily +/-30% on a desktop that
+// is doing anything else. Each figure is the median of RUNS samples, and a
+// figure whose samples spread widely says so, so a noisy number is visible as
+// one rather than read as a result. BENCH_RUNS overrides the count.
+const RUNS = Math.max(1, parseInt(process.env.BENCH_RUNS, 10) || 5);
+
+function summarise(samples) {
+    const sorted = samples.slice().sort((a, b) => a.value - b.value);
+    const mid = sorted[Math.floor(sorted.length / 2)];
+    const spread = sorted.length > 1
+        ? (sorted[sorted.length - 1].value - sorted[0].value) / mid.value
+        : 0;
+    return Object.assign({}, mid, { spread: spread });
+}
+
+async function median(fn) {
+    await fn(); // warm-up, discarded: the first pass pays for JIT compilation
+    const samples = [];
+    for (let i = 0; i < RUNS; i++) samples.push(await fn());
+    return summarise(samples);
+}
+
+/**
+ * Both sides of a comparison, sampled alternately. Taking every sample of one
+ * and then every sample of the other lets anything that drifts over a run —
+ * heat, a background task — land on one side only and read as a difference
+ * between them; interleaving spreads it across both. A warm-up pair is taken
+ * and thrown away first.
+ */
+async function compare(before, after) {
+    await before();
+    await after();
+
+    const a = [];
+    const b = [];
+    for (let i = 0; i < RUNS; i++) {
+        a.push(await before());
+        b.push(await after());
+    }
+    return [summarise(a), summarise(b)];
+}
+
 // ---------------------------------------------------------------- presentation
 
 const rows = [];
@@ -206,6 +250,11 @@ function render() {
 
         console.log("  " + pad(row.name, w) + "  " + before.padStart(12) + "  " + after.padStart(12) + "   " + change);
         if (row.note) console.log("  " + pad("", w) + "  " + row.note);
+        const noisy = [row.before, row.after].filter((r) => r && r.spread > 0.25);
+        if (noisy.length) {
+            console.log("  " + pad("", w) + "  (noisy: samples ranged over " +
+                noisy.map((r) => Math.round(r.spread * 100) + "%").join(" / ") + " of the median)");
+        }
     }
 }
 
@@ -219,48 +268,39 @@ function bytesNote(before, after, payloadBytes) {
 }
 
 (async () => {
-    console.log("\nanysocket 1.0 vs 0.4.32 — loopback, node " + process.version + ", " + process.platform + "/" + process.arch);
+    console.log("\nanysocket 1.0 vs 0.4.32 — loopback, node " + process.version + ", " + process.platform + "/" + process.arch + ", median of " + RUNS);
 
     // --- connection setup
     record("connect + authenticate",
-        await connectHandshake(Legacy, 20),
-        await connectHandshake(AnySocket, 20));
+        ...await compare(() => connectHandshake(Legacy, 20), () => connectHandshake(AnySocket, 20)));
 
     record("e2e handshake",
-        await e2eHandshake(Legacy, 20),
-        await e2eHandshake(AnySocket, 20),
+        ...await compare(() => e2eHandshake(Legacy, 20), () => e2eHandshake(AnySocket, 20)),
         "0.4.32: secp521r1.  1.0: x25519 (p256 where unavailable)");
 
     // --- small messages
-    let before = await smallMessages(Legacy, 3000, false);
-    let after = await smallMessages(AnySocket, 3000, false);
+    let [before, after] = await compare(() => smallMessages(Legacy, 3000, false), () => smallMessages(AnySocket, 3000, false));
     record("2KB messages, plain", before, after, bytesNote(before, after));
 
-    before = await smallMessages(Legacy, 3000, true);
-    after = await smallMessages(AnySocket, 3000, true);
+    [before, after] = await compare(() => smallMessages(Legacy, 3000, true), () => smallMessages(AnySocket, 3000, true));
     record("2KB messages, encrypted", before, after, bytesNote(before, after));
 
     // --- bulk, text
-    before = await throughput(Legacy, 32, false, false);
-    after = await throughput(AnySocket, 32, false, false);
+    [before, after] = await compare(() => throughput(Legacy, 32, false, false), () => throughput(AnySocket, 32, false, false));
     record("32MB of text, plain", before, after, bytesNote(before, after, 32 * MB));
 
-    before = await throughput(Legacy, 32, true, false);
-    after = await throughput(AnySocket, 32, true, false);
+    [before, after] = await compare(() => throughput(Legacy, 32, true, false), () => throughput(AnySocket, 32, true, false));
     record("32MB of text, encrypted", before, after, bytesNote(before, after, 32 * MB));
 
     // --- bulk, binary: where 0.4.32 had no option but to inflate it
-    before = await throughput(Legacy, 32, false, true);
-    after = await throughput(AnySocket, 32, false, true);
+    [before, after] = await compare(() => throughput(Legacy, 32, false, true), () => throughput(AnySocket, 32, false, true));
     record("32MB of bytes, plain", before, after, bytesNote(before, after, 32 * MB));
 
-    before = await throughput(Legacy, 32, true, true);
-    after = await throughput(AnySocket, 32, true, true);
+    [before, after] = await compare(() => throughput(Legacy, 32, true, true), () => throughput(AnySocket, 32, true, true));
     record("32MB of bytes, encrypted", before, after, bytesNote(before, after, 32 * MB));
 
     // --- 1.0 only: plain against encrypted, which is the cost of turning e2e on
-    const plain = await throughput(AnySocket, 128, false, true);
-    const sealed = await throughput(AnySocket, 128, true, true);
+    const [plain, sealed] = await compare(() => throughput(AnySocket, 128, false, true), () => throughput(AnySocket, 128, true, true));
     render();
 
     console.log();
