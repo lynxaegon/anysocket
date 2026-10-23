@@ -54,7 +54,14 @@ module.exports = class AnyProtocol extends EventEmitter {
             // A reply that never arrives rejects that one call. Set true for the
             // pre-1.0 behaviour, where one missed reply tore down the whole
             // connection (and every other in-flight call with it).
-            disconnectOnReplyTimeout: false
+            disconnectOnReplyTimeout: false,
+            // Receive limits. Reassembly was unbounded, so an unauthenticated
+            // peer could pin memory with partial packets. Before the handshake
+            // completes only a single, small AUTH packet is in play, so the
+            // ceiling there is far lower than for live traffic.
+            maxPartialPackets: 64,
+            maxMessageSize: 64 * 1024 * 1024,
+            maxHandshakeMessageSize: 64 * 1024
         }, options);
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
@@ -186,15 +193,38 @@ module.exports = class AnyProtocol extends EventEmitter {
             let invalidPacket = true;
 
             if (Packet.isForwardPacket(recv)) {
-                this.emit("forward", this.peerID, this._decodeForwardPacket(recv));
+                if (!this._acceptForward(recv)) {
+                    return resolve();
+                }
                 resolve();
             } else {
                 let seq = Packet.getSeq(recv);
 
                 if (!this._packets[seq]) {
+                    // Reassembly used to be unbounded, so a peer could hold
+                    // memory open with partial packets it never finished —
+                    // before authenticating, where only AUTH is even legal.
+                    const limit = this.state == constants.PROTOCOL_STATES.CONNECTED
+                        ? this.options.maxPartialPackets
+                        : 1;
+                    if (Object.keys(this._packets).length >= limit) {
+                        this.disconnect("Too many partial packets");
+                        return resolve();
+                    }
                     this._packets[seq] = Packet.buffer();
                 }
                 let packet = this._packets[seq];
+
+                const cap = this.state == constants.PROTOCOL_STATES.CONNECTED
+                    ? this.options.maxMessageSize
+                    : this.options.maxHandshakeMessageSize;
+                packet.bytes = (packet.bytes || 0) + recv.length;
+                if (packet.bytes > cap) {
+                    delete this._packets[seq];
+                    this.disconnect("Message too large");
+                    return resolve();
+                }
+
                 packet.deserialize(recv, encryptionState, this._decrypt.bind(this))
                     .then(result => {
                         debug(this.peerID, "<<<<", Packet.TYPE._string(packet.type), packet.seq);
@@ -447,7 +477,7 @@ module.exports = class AnyProtocol extends EventEmitter {
 
     processRecvPacketQueue(item, cb) {
         if(Packet.isForwardPacket(item.recv)) {
-            this.emit("forward", this.peerID, this._decodeForwardPacket(item.recv));
+            this._acceptForward(item.recv);
             cb(null, null);
         } else {
             if(this.isLINKMessage(Packet.getType(item.recv))) {
@@ -506,6 +536,28 @@ module.exports = class AnyProtocol extends EventEmitter {
                     throw new Error("[decrypt] Encryption state '" + encryptionState + "' not implemented!");
             }
         });
+    }
+
+    /**
+     * Gate on a FORWARD frame before anyone acts on it.
+     *
+     * These used to be handled whatever state the connection was in, so a
+     * socket that had not authenticated could have its relayed payload
+     * delivered — and the `from` it carries is written by the sender, so it
+     * could name any peer. Only a connection that finished the handshake may
+     * relay, and AnySocket.onForward re-checks `from` against the peer id we
+     * authenticated on THIS connection.
+     *
+     * @returns true when the frame was handed on.
+     */
+    _acceptForward(recv) {
+        if (this.state != constants.PROTOCOL_STATES.CONNECTED || !this.peerID) {
+            this.disconnect("FORWARD before the handshake completed");
+            return false;
+        }
+
+        this.emit("forward", this.peerID, this._decodeForwardPacket(recv));
+        return true;
     }
 
     _encodeForwardPacket(to, from, msg) {

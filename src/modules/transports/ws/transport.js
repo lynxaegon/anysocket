@@ -21,7 +21,12 @@ class WS extends AbstractTransport {
     onListen() {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket.Server({
-                server: this.options.server
+                server: this.options.server,
+                // `ws` allows 100MB per frame by default, which an
+                // unauthenticated peer can make us buffer. A protocol frame is
+                // at most MAX_PACKET_SIZE plus encoding overhead (hex-encoded
+                // e2e payloads double), so this is generous.
+                maxPayload: this.options.maxPayload || 8 * 1024 * 1024
             });
             this.ws.on('connection', socket => {
                 this._applyTcpKeepAlive(socket);

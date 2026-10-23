@@ -156,9 +156,14 @@ class AnySocket extends EventEmitter {
                 this.listen("http", options);
             }
 
-            options = {
+            // Keep the caller's options and only add the server to them. They
+            // used to be replaced outright, so everything a listening side
+            // configured — auth/e2e timeouts, heartbeat settings, receive
+            // limits — was silently dropped for the ws transport, and only
+            // dialling peers ever had their options honoured.
+            options = Object.assign({}, options, {
                 server: this[_private.httpServer]
-            };
+            });
         }
 
         let transport = this[_private.findTransport](scheme);
@@ -303,20 +308,47 @@ class AnySocket extends EventEmitter {
         });
     }
 
+    /**
+     * A relayed packet, arriving over the connection we authenticated as
+     * `peerID`. Its `to`/`from` are written by the sender, so neither can be
+     * trusted on its own: `from` used to be taken at face value, which let a
+     * packet be delivered as though it came from any peer the receiver knew.
+     * Everything here is checked against `peerID`, the one thing the sender
+     * cannot choose.
+     */
     [_private.onForward](peerID, packet) {
+        const sender = this[_private.peers][peerID];
+
         if(this.id == packet.to) {
-            if(!this[_private.peers][packet.from]) {
-                this[_private.peers][peerID].disconnect("Invalid forward packet! Client doesn't exist!");
+            // Last hop. `from` must be a peer we reached *through this relay* —
+            // never a peer we talk to directly, and never one relayed by
+            // somebody else.
+            const origin = this[_private.peers][packet.from];
+            if(!origin || !origin.isProxy() || origin.relayID != peerID) {
+                debug("Dropping forward: " + packet.from + " is not relayed by " + peerID);
+                if(sender) sender.disconnect("Invalid forward packet!");
                 return;
             }
 
-            this[_private.peers][packet.from]._recvForward(packet);
+            origin._recvForward(packet);
+            return;
         }
-        else if(this.hasDirectPeer(packet.to)) {
-            this[_private.peers][packet.to].forward(packet);
-        } else {
-            console.error("FORWARD ERROR! We do not have the peer", packet.to);
+
+        // Relay hop. The sender may only ever speak for itself, and the route
+        // has to be one we actually allow.
+        if(packet.from != peerID) {
+            debug("Dropping forward: " + peerID + " tried to relay as " + packet.from);
+            if(sender) sender.disconnect("Invalid forward packet!");
+            return;
         }
+
+        if(!this.canProxy(packet.from, packet.to) || !this.hasDirectPeer(packet.to)) {
+            debug("Dropping forward: no permitted route from " + packet.from + " to " + packet.to);
+            if(sender) sender.disconnect("Invalid forward packet!");
+            return;
+        }
+
+        this[_private.peers][packet.to].forward(packet);
     }
 
     [_private.onProtocolReady](protocol, resolve) {

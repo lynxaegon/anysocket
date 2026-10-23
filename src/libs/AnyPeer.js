@@ -88,6 +88,19 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].isProxy();
     }
 
+    /**
+     * For a proxied peer, the id of the peer relaying it; null when we talk to
+     * it directly. Used to check that a relayed packet really arrived over the
+     * relay that peer belongs to.
+     */
+    get relayID() {
+        const protocol = this[_protocol];
+        if (!protocol.isProxy()) return null;
+
+        const relay = protocol.peer && protocol.peer.socket;
+        return (relay && relay.id) || null;
+    }
+
     addLink(peer) {
         this[_links][peer.id] = peer;
     }
