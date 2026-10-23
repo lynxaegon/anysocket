@@ -717,6 +717,14 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (!ok) {
             return this.disconnect("Invalid Auth Packet!");
         }
+
+        // Dialled ourselves — an address list that includes our own. Nothing
+        // useful can come of it, and left alone it would reach the duplicate
+        // rule with both ends being the same instance.
+        if (packet.data.id === this.anysocket.id) {
+            return this.disconnect("Connected to self");
+        }
+
         this.peerID = packet.data.id;
         this._negotiate(packet.data);
 

@@ -8,6 +8,7 @@ const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
 const BufferUtils = require("../wrappers/utils_buffer");
+const { errors } = require("./errors");
 
 const isBoolean = function (obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
@@ -26,13 +27,13 @@ module.exports = class AnyPeer extends EventEmitter {
         this.syncedTime = null;
         this.options = protocol.options;
 
-        const makeRPC = (rpc = {}, base = "") => {
+        const makeRPC = (rpc = {}, base = "", callOptions = {}) => {
             return new Proxy(() => {},
                 {
                     get: (target, name) => {
                         const prop = target[name];
                         if (prop != null) { return prop; }
-                        return makeRPC(rpc, base + "/" + name);
+                        return makeRPC(rpc, base + "/" + name, callOptions);
                     },
                     apply: (target, thisArg, args) => {
                         let path = base.split("/").slice(1);
@@ -66,7 +67,7 @@ module.exports = class AnyPeer extends EventEmitter {
                                 .data(body)
                                 .setType(constants.PACKET_TYPE.INTERNAL);
 
-                            this._send(packet, true)
+                            this._send(packet, true, callOptions.timeout, callOptions.signal)
                                 .then((packet) => {
                                     if (packet.msg.error) {
                                         reject(packet.msg);
@@ -94,6 +95,20 @@ module.exports = class AnyPeer extends EventEmitter {
             );
         };
         this.rpc = makeRPC();
+
+        /**
+         * The same RPC proxy with options for these calls:
+         *
+         *   await peer.rpcWith({ timeout: 45000 }).reset("node-3");
+         *   await peer.rpcWith({ signal: controller.signal }).slow();
+         *
+         * `timeout` replaces replyTimeout, in either direction — a caller
+         * that has to wait longer than the default could not, and one that
+         * gave up sooner by racing its own timer left the call registered
+         * until the default ran out. A method, not a property on `rpc`,
+         * so it cannot collide with a remote method name.
+         */
+        this.rpcWith = (options) => makeRPC({}, "", Object.assign({}, options));
 
         protocol.on("internal", this.onInternalComs.bind(this));
         protocol.on("message", this.onMessage.bind(this));
@@ -206,7 +221,7 @@ module.exports = class AnyPeer extends EventEmitter {
     _supersede(reason) {
         // Anything still waiting on this connection would otherwise sit out
         // the full reply timeout for an answer that can no longer arrive.
-        this._rejectPending(reason);
+        this._rejectPending(errors.superseded());
         this[_protocol].peerID = null;
         this[_protocol].disconnect(reason);
     }
@@ -301,17 +316,13 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     disconnect(reason) {
-        for (let seq in this[_packets]) {
-            clearTimeout(this[_packets][seq].timeout);
-            this[_packets][seq].reject("Peer disconnected!");
-        }
-        this[_packets] = {};
+        this._rejectPending(errors.disconnected());
 
         this[_protocol].disconnect(reason);
     }
 
-    _send(packet, awaitReply, timeout) {
-        const result = this._sendInner(packet, awaitReply, timeout);
+    _send(packet, awaitReply, timeout, signal) {
+        const result = this._sendInner(packet, awaitReply, timeout, signal);
         // send() never settled before 1.0, so code everywhere calls it without
         // awaiting or catching. Now that it can reject, an unhandled failure
         // would crash the process under node's default. A handler on the very
@@ -321,10 +332,10 @@ module.exports = class AnyPeer extends EventEmitter {
         return result;
     }
 
-    _sendInner(packet, awaitReply, timeout) {
+    _sendInner(packet, awaitReply, timeout, signal) {
         return new Promise((resolve, reject) => {
             if (!this[_protocol].isConnected()) {
-                reject("Cannot send message. Peer is disconnected");
+                reject(errors.notConnected());
                 return;
             }
 
@@ -352,10 +363,24 @@ module.exports = class AnyPeer extends EventEmitter {
                             if (this[_protocol].options.disconnectOnReplyTimeout) {
                                 this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " + packet.seq);
                             }
-                            msg.reject("Timeout!");
+                            msg.reject(errors.timeout({ after: timeout || this[_protocol].options.replyTimeout }));
                         }
                     }, timeout || this[_protocol].options.replyTimeout)
                 };
+
+                // The caller can give up early. The entry is removed rather than
+                // left for its timer, so a late reply is simply dropped.
+                if (signal) {
+                    const abort = () => {
+                        const entry = this[_packets][packet.seq];
+                        if (!entry) return;
+                        clearTimeout(entry.timeout);
+                        delete this[_packets][packet.seq];
+                        entry.reject(errors.aborted(signal.reason));
+                    };
+                    if (signal.aborted) abort();
+                    else signal.addEventListener("abort", abort, { once: true });
+                }
                 return;
             }
 
