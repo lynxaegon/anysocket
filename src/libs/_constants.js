@@ -5,7 +5,10 @@ const constants = {
         LINK: 3,
         SWITCH: 4,
         HEARTBEAT: 5,
-        FORWARD: 6
+        FORWARD: 6,
+        // Third message of the built-in mutual auth: the dialer proving
+        // itself against the challenge the listener just sent.
+        AUTH_CONFIRM: 7
     },
     PACKET_LENGTH: {
         FULL: 1,

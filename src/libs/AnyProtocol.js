@@ -7,6 +7,7 @@ const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
 const Frame = require("./Frame");
 const E2E = require("./E2E");
+const Auth = require("./Auth");
 const ENCRYPTION_SECRET = Symbol("secret key");
 const ENCRYPTION_PRIVATE = Symbol("private key");
 const ENCRYPTION_NONCE = Symbol("nonce");
@@ -14,6 +15,8 @@ const ENCRYPTION_STARTING = Symbol("e2e starting");
 const E2E_OFFER = Symbol("our e2e offer");
 const E2E_SESSION = Symbol("e2e session");
 const E2E_PENDING = Symbol("e2e promise");
+const AUTH_CHALLENGE = Symbol("our auth challenge");
+const AUTH_PEER_CHALLENGE = Symbol("peer auth challenge");
 const heartbeatTimer = Symbol("heartbeat timer");
 const heartbeatsMissed = Symbol("heartbeats missed");
 const heartbeatPonged = Symbol("heartbeat ponged");
@@ -33,6 +36,8 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[E2E_OFFER] = null;
         this[E2E_SESSION] = null;
         this[E2E_PENDING] = null;
+        this[AUTH_CHALLENGE] = null;
+        this[AUTH_PEER_CHALLENGE] = null;
 
         // Negotiated in the AUTH exchange (see _negotiate). 0 until then, and
         // 0 for good against a 0.4.x peer.
@@ -444,6 +449,9 @@ module.exports = class AnyProtocol extends EventEmitter {
                                     if (packet.type == Packet.TYPE.AUTH) {
                                         invalidPacket = false;
                                         this._handleAuth(packet, false).then(resolve);
+                                    } else if (packet.type == Packet.TYPE.AUTH_CONFIRM) {
+                                        invalidPacket = false;
+                                        this._handleAuthConfirm(packet).then(resolve);
                                     }
                                     break;
                                 case constants.PROTOCOL_STATES.AUTHING:
@@ -567,13 +575,76 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     /** Our AUTH packet. Identical whichever end sends it. */
-    _authPacket() {
-        return Packet.data({
+    _authPacket(extra) {
+        const data = {
             id: this.anysocket.id,
             auth: this.anysocket.authPacket(),
             pv: constants.PROTOCOL_VERSION,
             caps: this.options.capabilities
-        }).setType(Packet.TYPE.AUTH);
+        };
+
+        if (this.anysocket.authSecret()) {
+            if (!this[AUTH_CHALLENGE]) this[AUTH_CHALLENGE] = Auth.challenge();
+            data.ac = Frame.toBase64(this[AUTH_CHALLENGE]);
+        }
+
+        return Packet.data(Object.assign(data, extra)).setType(Packet.TYPE.AUTH);
+    }
+
+    /**
+     * The dialer's proof, which is the last thing the listener waits for.
+     *
+     * Only reachable while the listener is still in the handshake, so it cannot
+     * be used to re-authenticate a live connection.
+     */
+    async _handleAuthConfirm(packet) {
+        const secret = this.anysocket.authSecret();
+        if (!secret || !this.peerID || !this[AUTH_PEER_CHALLENGE]) {
+            return this.disconnect("Unexpected Auth Confirm!");
+        }
+
+        if (!await Auth.verify(secret, this._authParams(this.peerID), packet.data && packet.data.ap)) {
+            debug(this.peerID, "refused: bad auth proof from the dialer");
+            return this.disconnect("Invalid Auth Packet!");
+        }
+
+        this.changeState(constants.PROTOCOL_STATES.CONNECTED);
+        this.emit("ready", this);
+    }
+
+    /** What both ends sign: the two challenges, the two ids, the version. */
+    _authParams(proofFor) {
+        return {
+            protocolVersion: this.protocolVersion,
+            capabilities: this.capabilities,
+            localID: this.anysocket.id,
+            localChallenge: this[AUTH_CHALLENGE],
+            remoteID: this.peerID,
+            remoteChallenge: this[AUTH_PEER_CHALLENGE],
+            proofFor: proofFor
+        };
+    }
+
+    /**
+     * Take in the peer's challenge. A secret on our side means the peer
+     * must be offering the built-in auth too: letting a peer decline it
+     * would make requiring it pointless.
+     */
+    _acceptChallenge(data) {
+        if (!this.anysocket.authSecret()) return true;
+
+        if (!data || typeof data.ac != "string" || !data.ac) {
+            debug(this.peerID, "refused: peer did not offer the built-in auth");
+            return false;
+        }
+
+        try {
+            this[AUTH_PEER_CHALLENGE] = Frame.fromBase64(data.ac);
+        } catch (e) {
+            return false;
+        }
+
+        return this[AUTH_PEER_CHALLENGE].length == Auth.CHALLENGE_BYTES;
     }
 
     /**
@@ -608,11 +679,11 @@ module.exports = class AnyProtocol extends EventEmitter {
      * 1.0 it returned a Promise, which is truthy, so every peer passed.
      *
      * A synchronous `onAuth` resolves on the microtask queue, and microtasks
-     * cannot let another connection's socket event run in between, so callers
-     * that pair `onAuth` with the `authPacket()` immediately after it (nexus
-     * hive issues a challenge in one and answers it in the other) keep that
-     * guarantee. A genuinely async `onAuth` does not — such callers should move
-     * to the built-in challenge-response auth.
+     * cannot let another connection's socket event run in between, so a caller
+     * that pairs `onAuth` with the `authPacket()` immediately after it — issuing
+     * a challenge in one and answering it in the other — keeps that guarantee.
+     * A genuinely async `onAuth` does not; such callers should move to the
+     * built-in challenge-response auth.
      *
      * @param isReply true when we dialed and this is the listener's AUTH reply.
      */
@@ -630,9 +701,51 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.peerID = packet.data.id;
         this._negotiate(packet.data);
 
+        const secret = this.anysocket.authSecret();
+        if (secret) {
+            if (!this._acceptChallenge(packet.data)) {
+                return this.disconnect("Invalid Auth Packet!");
+            }
+            // Our own challenge has to exist before anything is signed over it.
+            // The listener has not sent an AUTH packet yet at this point, so
+            // nothing else would have created one.
+            if (!this[AUTH_CHALLENGE]) this[AUTH_CHALLENGE] = Auth.challenge();
+        }
+
         if (isReply) {
+            // We dialed. The listener answered with its own challenge and its
+            // proof; check it, then prove ourselves against its challenge.
+            if (secret) {
+                if (!await Auth.verify(secret, this._authParams(this.peerID), packet.data.ap)) {
+                    debug(this.peerID, "refused: bad auth proof from the listener");
+                    return this.disconnect("Invalid Auth Packet!");
+                }
+
+                try {
+                    await this.send(Packet.data({
+                        ap: await Auth.prove(secret, this._authParams(this.anysocket.id))
+                    }).setType(Packet.TYPE.AUTH_CONFIRM));
+                } catch (e) {
+                    return;
+                }
+            }
+
             this.changeState(constants.PROTOCOL_STATES.CONNECTED);
             this.emit("ready", this);
+            return;
+        }
+
+        if (secret) {
+            // We are the listener. Answer with our challenge and our proof, and
+            // stay out of CONNECTED until the dialer has proved itself in turn —
+            // otherwise only one direction would ever be authenticated.
+            try {
+                await this.send(this._authPacket({
+                    ap: await Auth.prove(secret, this._authParams(this.anysocket.id))
+                }));
+            } catch (e) {
+                // send() already tore the connection down.
+            }
             return;
         }
 

@@ -38,9 +38,10 @@ const AnyProtocol = require("./AnyProtocol");
 const ProxyPeer = require("./ProxyPeer");
 
 class AnySocket extends EventEmitter {
-    constructor() {
+    constructor(options) {
         super();
 
+        this.options = Object.assign({}, options);
         this._started = false;
         this.id = Utils.uuidv4();
         this.http = new AnyRouter();
@@ -247,6 +248,17 @@ class AnySocket extends EventEmitter {
         return true;
     }
 
+    /**
+     * The shared secret for the built-in mutual auth, if one was given as
+     * `new AnySocket({ auth: { secret } })`. With a secret set, a peer that
+     * cannot prove it is refused, and a peer that does not offer the
+     * built-in auth at all is refused too — otherwise an attacker could
+     * simply decline it.
+     */
+    authSecret() {
+        return (this.options.auth && this.options.auth.secret) || null;
+    }
+
     authPacket() {
         return undefined;
     }
@@ -399,8 +411,8 @@ class AnySocket extends EventEmitter {
             anypeerID = peer.id;
         }
 
-        if (anypeerID) {
-            const anypeer = this[_private.peers][anypeerID];
+        const anypeer = anypeerID ? this[_private.peers][anypeerID] : null;
+        if (anypeer) {
             delete this[_private.peers][anypeerID];
 
             const links = anypeer.getLinks();
