@@ -9,10 +9,10 @@ const { listen, stop, wait } = require("../helpers/loopback");
  * Interop with the published 0.4.32, tested against the real package rather
  * than a mock of it.
  *
- * This is not politeness to outside users: `nexus upgrade` rolls one node at a
- * time, so upgraded and not-yet-upgraded nodes share the raft mesh for the
- * length of a roll. If a 1.0 node could not talk to a 0.4.x node the roll would
- * split the mesh and could cost quorum.
+ * A fleet is rarely upgraded all at once: in a rolling upgrade, upgraded and
+ * not-yet-upgraded peers have to keep talking for the length of the roll. If a
+ * 1.0 peer could not talk to a 0.4.x one, upgrading any long-lived network of
+ * peers would partition it part-way through.
  */
 
 const legacyIsUsable = (() => {

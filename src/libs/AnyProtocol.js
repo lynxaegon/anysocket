@@ -65,8 +65,8 @@ module.exports = class AnyProtocol extends EventEmitter {
             heartbeatsMaxMissed: 2,
             // Disable app-level heartbeats entirely. Useful when the transport
             // itself already provides liveness (SO_KEEPALIVE, WebSocket
-            // ping/pong, or the application layer has its own heartbeat like
-            // raft AppendEntries). With this off, a dead peer is detected
+            // ping/pong), or when the application already sends regular
+            // traffic of its own. With this off, a dead peer is detected
             // only via TCP close / socket errors — pair with `tcpKeepAlive`
             // on the transport for reliable detection.
             heartbeatEnabled: true,
