@@ -98,6 +98,11 @@ class AnySocket extends EventEmitter {
                 reject("Cannot proxy via a proxy! atm... :)");
                 return;
             }
+            if(!this[_private.peers][throughPeerID].supportsRelay()) {
+                reject("Cannot proxy: the relay connection is not protocol version 1");
+                return;
+            }
+
             this[_private.peers][throughPeerID].sendInternal({
                 type: constants.INTERNAL_PACKET_TYPE.PROXY,
                 action: "proxy",
@@ -108,7 +113,7 @@ class AnySocket extends EventEmitter {
                     this[_private.onProtocolReady](protocol);
                     resolve(this[_private.peers][peerID]);
                 } else {
-                    reject("Cannot proxy!");
+                    reject("Cannot proxy" + (packet.msg.reason ? ": " + packet.msg.reason : "!"));
                 }
             }).catch(reject);
         })
@@ -448,10 +453,25 @@ class AnySocket extends EventEmitter {
                 if(this[_private.peers][packet.msg.id].isProxy())
                 {
                     packet.reply({
-                        ok: false
+                        ok: false,
+                        reason: "cannot relay through a relayed peer"
                     });
                     // TODO: this requires to implement a full network graph (map)
                     // TODO: this will enable to send messages without having multiple forward headers
+                    return;
+                }
+
+                // Both hops must speak 1.0. A relayed frame is opaque bytes the
+                // relay re-wraps for each hop, so its format has to be one that
+                // every hop can carry — and an endpoint cannot see the version
+                // of a hop further along. Requiring it here is what makes the
+                // relayed link's format knowable at both ends.
+                if(!this[_private.peers][packet.peer.id].supportsRelay() ||
+                    !this[_private.peers][packet.msg.id].supportsRelay()) {
+                    packet.reply({
+                        ok: false,
+                        reason: "relaying needs protocol version 1 on both hops"
+                    });
                     return;
                 }
 

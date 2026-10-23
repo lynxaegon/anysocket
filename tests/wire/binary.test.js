@@ -147,7 +147,8 @@ test("request/reply still matches up on binary frames", async (t) => {
     assert.deepEqual(replies.map((r) => r.msg.seen), [1, 2, 3]);
 });
 
-test("a relayed link stays on the legacy format", async (t) => {
+/** A relay with two peers dialled into it. */
+async function trio(t) {
     const relay = new AnySocket();
     const a = new AnySocket();
     const b = new AnySocket();
@@ -160,13 +161,75 @@ test("a relayed link stays on the legacy format", async (t) => {
     await b.connect("ws", "127.0.0.1", port);
     await wait(150);
 
+    return { relay, a, b, port };
+}
+
+// A relayed frame is opaque bytes the relay re-wraps for each hop, so its
+// format has to be one every hop can carry — and an endpoint cannot see the
+// version of a hop further along. The relay settles it by requiring 1.0 on
+// both hops, which makes the relayed link 1.0 at both ends by construction.
+test("a relayed link speaks 1.0", async (t) => {
+    const { relay, a, b } = await trio(t);
     const proxied = await a.proxy(b.id, relay.id);
 
-    // Its frames are opaque to the relay, which re-wraps them per hop, so the
-    // format has to be the lowest along the route — not knowable from here yet.
-    assert.equal(proxied.protocolVersion(), constants.PROTOCOL_VERSION_LEGACY);
+    assert.equal(proxied.protocolVersion(), constants.PROTOCOL_VERSION);
+    assert.ok(proxied.supportsRelay());
 
     const received = new Promise((resolve) => b.once("message", (packet) => resolve(packet.msg)));
     await proxied.send({ through: "the relay" });
     assert.deepEqual(await received, { through: "the relay" });
+});
+
+test("binary travels over a relayed link as bytes", async (t) => {
+    const { relay, a, b } = await trio(t);
+    const proxied = await a.proxy(b.id, relay.id);
+
+    const payload = new Uint8Array([0, 1, 2, 253, 254, 255]);
+    const received = new Promise((resolve) => b.once("message", (packet) => resolve(packet.msg)));
+    await proxied.send(payload);
+
+    const got = await received;
+    assert.ok(got instanceof Uint8Array, "expected bytes through the relay");
+    assert.deepEqual(Array.from(got), Array.from(payload));
+});
+
+test("a chunked payload survives a relayed link", async (t) => {
+    const { relay, a, b } = await trio(t);
+    const proxied = await a.proxy(b.id, relay.id);
+
+    const payload = new Uint8Array(5 * 1024 * 1024);
+    for (let i = 0; i < payload.length; i++) payload[i] = i % 256;
+
+    const received = new Promise((resolve) => b.once("message", (packet) => resolve(packet.msg)));
+    await proxied.send(payload);
+
+    const got = await received;
+    assert.equal(got.length, payload.length);
+    assert.deepEqual(Array.from(got.subarray(-16)), Array.from(payload.subarray(-16)));
+});
+
+test("a relay refuses to carry a link for a 0.4.x peer", async (t) => {
+    const LegacyAnySocket = require("anysocket-legacy");
+
+    const relay = new AnySocket();
+    const modern = new AnySocket();
+    const legacy = new LegacyAnySocket();
+    t.after(() => stop(relay, modern, legacy));
+
+    relay.canProxy = () => true;
+
+    const port = await listen(relay);
+    await modern.connect("ws", "127.0.0.1", port);
+    await legacy.connect("ws", "127.0.0.1", port);
+    await wait(200);
+
+    // Refused with a reason rather than silently producing a link that cannot
+    // carry the frames either end would put on it.
+    await assert.rejects(
+        modern.proxy(legacy.id, relay.id),
+        (e) => {
+            assert.match(String(e), /protocol version 1/i);
+            return true;
+        }
+    );
 });

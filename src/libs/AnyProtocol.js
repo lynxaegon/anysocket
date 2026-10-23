@@ -128,12 +128,24 @@ module.exports = class AnyProtocol extends EventEmitter {
             this.send(this._authPacket());
         }
         if (this.peerID) {
+            // A relayed link has no AUTH exchange of its own to negotiate
+            // from: it exists because a relay confirmed 1.0 on both of its
+            // hops, so both of its endpoints speak 1.0 by construction.
+            if (this.isProxy()) {
+                this.protocolVersion = constants.PROTOCOL_VERSION;
+                this.remoteProtocolVersion = constants.PROTOCOL_VERSION;
+            }
             this.changeState(constants.PROTOCOL_STATES.CONNECTED);
         }
     }
 
     isProxy() {
         return !!this.peer.isProxy;
+    }
+
+    /** Can this connection carry a relayed link? */
+    supportsRelay() {
+        return this.protocolVersion >= constants.PROTOCOL_VERSION;
     }
 
     isConnected() {
@@ -900,21 +912,51 @@ module.exports = class AnyProtocol extends EventEmitter {
         return out;
     }
 
+    /**
+     * Wrap a relayed frame for the next hop.
+     *
+     * Addresses are anysocket ids — UUIDv4, so 32 hex characters — and travel
+     * as the 16 bytes they actually are. On a 1.0 hop the whole thing is a
+     * proper frame, so the relayed payload keeps its own bytes and does not
+     * have to survive being read as text.
+     */
     _encodeForwardPacket(to, from, msg) {
-        return Packet.TYPE.FORWARD +
-            AnyPacker.packHex(to) +
-            AnyPacker.packHex(from) +
-            msg
-            ;
+        if (this.protocolVersion < constants.PROTOCOL_VERSION) {
+            return Packet.TYPE.FORWARD +
+                AnyPacker.packHex(to) +
+                AnyPacker.packHex(from) +
+                msg
+                ;
+        }
+
+        return Frame.encode({
+            flags: Frame.FLAGS.FINAL | Frame.FLAGS.FIRST | Frame.FLAGS.BINARY,
+            type: Packet.TYPE.FORWARD,
+            seq: 0,
+            payload: Frame.concat([
+                Frame.idToBytes(to),
+                Frame.idToBytes(from),
+                Frame.asBytes(msg)
+            ])
+        });
     }
 
     _decodeForwardPacket(recv) {
-        recv = {
-            to: AnyPacker.unpackHex(recv.substr(1, 16)),
-            from: AnyPacker.unpackHex(recv.substr(17, 16)),
-            msg: recv.substr(33)
+        if (!Frame.isFrame(recv)) {
+            const text = Frame.legacyText(recv);
+            return {
+                to: AnyPacker.unpackHex(text.substr(1, 16)),
+                from: AnyPacker.unpackHex(text.substr(17, 16)),
+                msg: text.substr(33)
+            };
+        }
+
+        const payload = Frame.decode(recv).payload;
+        return {
+            to: Frame.idFromBytes(payload, 0),
+            from: Frame.idFromBytes(payload, Frame.ID_BYTES),
+            msg: payload.subarray(Frame.ID_BYTES * 2)
         };
-        return recv;
     }
 
     _getSeq() {

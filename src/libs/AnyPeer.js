@@ -155,6 +155,14 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].protocolVersion;
     }
 
+    /**
+     * Can this connection carry a relayed link? Relaying needs the 1.0 frame
+     * format, because a relayed frame is opaque bytes that each hop re-wraps.
+     */
+    supportsRelay() {
+        return this[_protocol].supportsRelay();
+    }
+
     /** The optional features both ends announced. */
     capabilities() {
         return this[_protocol].capabilities.slice();

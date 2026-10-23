@@ -36,6 +36,8 @@ const FLAGS = {
 const HEADER_SIZE = 6;
 // Width of the total-length hint carried by a multi-chunk message.
 const LENGTH_HINT = 4;
+// An anysocket id is a UUIDv4 — 32 hex characters, so 16 bytes on the wire.
+const ID_BYTES = 16;
 const MAX_SEQ = 0xffffffff;
 
 const encoder = new TextEncoder();
@@ -102,6 +104,28 @@ const isFrame = (recv) => {
     return bytes.length > 0 && bytes[0] < 0x30;
 };
 
+/**
+ * An anysocket id as bytes. Ids are the library's own UUIDv4s, so this is
+ * exact rather than a general string encoding; an application that replaces
+ * the id with something of its own is outside what relaying addresses.
+ */
+const idToBytes = (id) => {
+    const out = new Uint8Array(ID_BYTES);
+    const hex = String(id || "");
+    for (let i = 0; i < ID_BYTES; i++) {
+        out[i] = parseInt(hex.substr(i * 2, 2), 16) || 0;
+    }
+    return out;
+};
+
+const idFromBytes = (bytes, at) => {
+    let hex = "";
+    for (let i = at; i < at + ID_BYTES; i++) {
+        hex += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+    }
+    return hex;
+};
+
 /** A legacy frame as the string the legacy codec expects. */
 const legacyText = (recv) => (typeof recv == "string" ? recv : decoder.decode(asBytes(recv)));
 
@@ -152,6 +176,9 @@ module.exports = {
     FLAGS,
     HEADER_SIZE,
     LENGTH_HINT,
+    ID_BYTES,
+    idToBytes,
+    idFromBytes,
     MAX_SEQ,
     isFrame,
     legacyText,
