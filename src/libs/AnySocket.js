@@ -7,6 +7,7 @@ const constants = require("./_constants");
 const AnyHTTPPeer = require("./AnyHTTPPeer");
 const AnyRouter = require("./AnyHTTPRouter");
 const Packet = require("./Packet");
+const Maintainer = require("./Maintainer");
 
 /**
  * A thrown Error has no enumerable fields, so JSON.stringify turned every
@@ -35,7 +36,8 @@ const _private = {
     keepsExisting: Symbol("keepsExisting"),
     httpBundle: Symbol("http bundle js"),
     httpServer: Symbol("HTTPServer"),
-    httpServers: Symbol("HTTP servers by port")
+    httpServers: Symbol("HTTP servers by port"),
+    maintainers: Symbol("maintainers")
 };
 
 const AnyPeer = require("./AnyPeer");
@@ -58,6 +60,7 @@ class AnySocket extends EventEmitter {
         this[_private.transports] = {};
         this[_private.httpServer] = null;
         this[_private.httpServers] = new Map();
+        this[_private.maintainers] = new Set();
         if (typeof window === 'undefined') {
             // nodejs
             this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.browser.js");
@@ -144,6 +147,27 @@ class AnySocket extends EventEmitter {
         return !!this[_private.peers][id];
     }
 
+    /** The connected peer with this id, or null. */
+    getPeer(id) {
+        return this[_private.peers][id] || null;
+    }
+
+    /**
+     * Keep a peer connected: dial it, and dial it again with backoff whenever the
+     * link drops. Returns a handle with connected / disconnected / retry /
+     * abandoned events, fail(reason) and stop(). See Maintainer for the policy
+     * options and what it does beyond a plain retry loop.
+     */
+    maintain(scheme, ip, port, options, policy) {
+        const handle = new Maintainer(this, { scheme: scheme, ip: ip, port: port, options: options }, policy);
+        this[_private.maintainers].add(handle);
+        return handle;
+    }
+
+    _forgetMaintainer(handle) {
+        this[_private.maintainers].delete(handle);
+    }
+
     hasDirectPeer(id) {
         return !!(this[_private.peers][id] && !this[_private.peers][id].isProxy());
     }
@@ -179,8 +203,14 @@ class AnySocket extends EventEmitter {
         }
 
         options.ip = options.ip || "0.0.0.0";
-        if(["http", "ws"].indexOf(scheme.toLowerCase()) == -1 && options.port == null)
+        // ipc listens on a path, not a port; everything else needs a port (or 0
+        // for any free one), except http and ws, which default to 80.
+        const kind = scheme.toLowerCase();
+        if(kind == "ipc") {
+            if(!options.path) throw new Error("ipc needs a path");
+        } else if(["http", "ws"].indexOf(kind) == -1 && options.port == null) {
             throw new Error("Invalid port!");
+        }
 
         if(scheme.toLowerCase() == "ws") {
             return this[_private.httpServerFor](options).then(({ server, port }) => {
@@ -238,6 +268,8 @@ class AnySocket extends EventEmitter {
 
     stop() {
         this._started = false;
+        // Before anything closes, or each closing link would be redialled.
+        for (const handle of Array.from(this[_private.maintainers])) handle.stop();
         return new Promise((resolve, reject) => {
             const promises = [];
             for (let id in this[_private.transports]) {
@@ -346,8 +378,14 @@ class AnySocket extends EventEmitter {
             if(!AnySocket.Transport.hasOwnProperty(name))
                 continue;
 
-            if(AnySocket.Transport[name].scheme() == scheme) {
-                return AnySocket.Transport[name];
+            const candidate = AnySocket.Transport[name];
+            // The browser build stubs out the transports it cannot have, so not
+            // every entry is a transport class.
+            if(!candidate || typeof candidate.scheme != "function")
+                continue;
+
+            if(candidate.scheme() == scheme) {
+                return candidate;
             }
         }
 
@@ -477,6 +515,15 @@ class AnySocket extends EventEmitter {
         const existing = this[_private.peers][protocol.peerID];
         if(existing) {
             if(this[_private.keepsExisting](existing, protocol)) {
+                // A dial that got as far as authenticating has reached that peer;
+                // it just was not the connection both ends kept. So it succeeds
+                // with the one that was. Rejecting it left a caller that had only
+                // ever lost this race unable to learn it was connected at all.
+                //
+                // Resolved before the disconnect, not after: the disconnect runs
+                // the transport's own handler synchronously, and that rejects the
+                // same promise — after which resolving does nothing.
+                if(resolve) resolve(existing);
                 protocol.peerID = null;
                 protocol.disconnect("Duplicated AnySocket ID found!");
                 return;
@@ -511,6 +558,10 @@ class AnySocket extends EventEmitter {
 
         // allow resolve to run before emitting event
         setTimeout(() => {
+            // Deferred, so the peer may already be gone — dropped by the far
+            // end, or retired by the duplicate rule. Announcing it then would
+            // hand out a dead peer, after its own "disconnected".
+            if (this[_private.peers][anypeer.id] !== anypeer) return;
             this.emit("connected", anypeer);
         }, 0);
 
