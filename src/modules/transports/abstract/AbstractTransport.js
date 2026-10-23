@@ -76,6 +76,13 @@ class AbstractTransport extends EventEmitter {
             this.emit('disconnected', peer, reason);
         });
 
+        // A socket error (a reset, a broken pipe — the other end dying mid-connection) ends
+        // that connection, never the process: re-emitted as "error" with nothing listening,
+        // node threw it as an uncaught exception.
+        peer.on('error', (peer, err) => {
+            peer.disconnect(err && err.message ? err.message : 'Socket error');
+        });
+
         peer.init();
     }
 
