@@ -86,8 +86,9 @@ test("bytes cost no more on the wire than they are", async (t) => {
     await wait(50);
 
     // Previously a byte payload went through JSON, which turned each byte into
-    // several characters. Now it is the payload plus one 6-byte header.
-    assert.equal(observed, payload.length + Frame.HEADER_SIZE);
+    // several characters. Now it is the payload, one 6-byte header, and one byte
+    // saying what kind of body follows.
+    assert.equal(observed, payload.length + Frame.HEADER_SIZE + 1);
 });
 
 test("a large binary payload survives chunking", async (t) => {

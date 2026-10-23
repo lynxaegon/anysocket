@@ -37,20 +37,33 @@ module.exports = class AnyPeer extends EventEmitter {
                     apply: (target, thisArg, args) => {
                         let path = base.split("/").slice(1);
                         return new Promise((resolve, reject) => {
+                            // Between 1.0 peers a binary argument travels as
+                            // its own bytes, attached beside the call; to a
+                            // 0.4.x peer it still has to be base64 inside it.
+                            const native = this.protocolVersion() >= constants.PROTOCOL_VERSION;
+                            const attached = [];
                             let binary = [];
                             for (let item in args) {
                                 if (BufferUtils.isBuffer(args[item])) {
-                                    args[item] = AnyPacker.packBytes(args[item]);
+                                    if (native) {
+                                        attached.push(args[item]);
+                                        args[item] = null;
+                                    } else {
+                                        args[item] = AnyPacker.packBytes(args[item]);
+                                    }
                                     binary.push(item);
                                 }
                             }
+                            const body = {
+                                type: constants.INTERNAL_PACKET_TYPE.RPC,
+                                method: path,
+                                params: args || null,
+                                bin: binary
+                            };
+                            if (attached.length) body[Packet.ATTACHMENTS] = attached;
+
                             const packet = Packet
-                                .data({
-                                    type: constants.INTERNAL_PACKET_TYPE.RPC,
-                                    method: path,
-                                    params: args || null,
-                                    bin: binary
-                                })
+                                .data(body)
                                 .setType(constants.PACKET_TYPE.INTERNAL);
 
                             this._send(packet, true)
@@ -59,13 +72,21 @@ module.exports = class AnyPeer extends EventEmitter {
                                         reject(packet.msg);
                                     } else {
                                         let result = packet.msg.result;
-                                        if (packet.msg.bin)
-                                            result = AnyPacker.unpackBytes(result);
+                                        if (packet.msg.bin) {
+                                            const attachedResult = packet.msg[Packet.ATTACHMENTS];
+                                            result = attachedResult && attachedResult.length
+                                                ? attachedResult[0]
+                                                : AnyPacker.unpackBytes(result);
+                                        }
                                         resolve(result);
                                     }
                                 })
                                 .catch((e) => {
-                                    reject(packet.data)
+                                    // The reason, not the request. Rejecting with
+                                    // packet.data handed the caller its own outgoing
+                                    // call — method and arguments, whatever secrets
+                                    // they held — in place of what went wrong.
+                                    reject(e);
                                 });
                         });
                     }
@@ -183,8 +204,19 @@ module.exports = class AnyPeer extends EventEmitter {
      * for the replacement going away.
      */
     _supersede(reason) {
+        // Anything still waiting on this connection would otherwise sit out
+        // the full reply timeout for an answer that can no longer arrive.
+        this._rejectPending(reason);
         this[_protocol].peerID = null;
         this[_protocol].disconnect(reason);
+    }
+
+    _rejectPending(reason) {
+        for (let seq in this[_packets]) {
+            clearTimeout(this[_packets][seq].timeout);
+            this[_packets][seq].reject(reason);
+        }
+        this[_packets] = {};
     }
 
     /**
@@ -279,6 +311,17 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     _send(packet, awaitReply, timeout) {
+        const result = this._sendInner(packet, awaitReply, timeout);
+        // send() never settled before 1.0, so code everywhere calls it without
+        // awaiting or catching. Now that it can reject, an unhandled failure
+        // would crash the process under node's default. A handler on the very
+        // promise returned keeps that from happening, while a caller that does
+        // await it still sees the rejection.
+        result.catch(() => {});
+        return result;
+    }
+
+    _sendInner(packet, awaitReply, timeout) {
         return new Promise((resolve, reject) => {
             if (!this[_protocol].isConnected()) {
                 reject("Cannot send message. Peer is disconnected");

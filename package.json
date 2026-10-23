@@ -14,7 +14,8 @@
     "test:fast": "node --test --test-timeout=20000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\"",
     "bench": "node benchmarks/run.js",
     "build": "webpack",
-    "test:browser": "node --test --test-timeout=20000 \"tests/browser/*.test.js\""
+    "test:browser": "node --test --test-timeout=20000 \"tests/browser/*.test.js\"",
+    "prepublishOnly": "npm run build && npm test"
   },
   "repository": {
     "type": "git",

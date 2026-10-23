@@ -129,19 +129,67 @@ const idFromBytes = (bytes, at) => {
 /** A legacy frame as the string the legacy codec expects. */
 const legacyText = (recv) => (typeof recv == "string" ? recv : decoder.decode(asBytes(recv)));
 
+/**
+ * `payload` may be one buffer or a list of them. A list is written straight into
+ * the frame one part after another, so a frame that spans a small prefix and a
+ * slice of a large body costs one copy rather than a join followed by a copy.
+ */
 function encode(fields) {
-    const payload = asBytes(fields.payload == null ? "" : fields.payload);
+    const parts = Array.isArray(fields.payload)
+        ? fields.payload.map(asBytes)
+        : [asBytes(fields.payload == null ? "" : fields.payload)];
     const seq = Math.abs(fields.seq || 0);
     if (seq > MAX_SEQ) throw new Error("seq out of range: " + seq);
 
-    const out = new Uint8Array(HEADER_SIZE + payload.length);
+    let length = 0;
+    for (const part of parts) length += part.length;
+
+    const out = new Uint8Array(HEADER_SIZE + length);
     out[0] = fields.flags & 0xff;
     out[1] = fields.type & 0xff;
     new DataView(out.buffer).setUint32(2, seq, false);
-    out.set(payload, HEADER_SIZE);
+
+    let at = HEADER_SIZE;
+    for (const part of parts) {
+        out.set(part, at);
+        at += part.length;
+    }
 
     return out;
 }
+
+/**
+ * The parts of `segments` (taken end to end) that fall in [start, end), as
+ * views — nothing is copied.
+ */
+function range(segments, start, end) {
+    const out = [];
+    let at = 0;
+    for (const segment of segments) {
+        const from = at;
+        const to = at + segment.length;
+        at = to;
+        if (to <= start) continue;
+        if (from >= end) break;
+        out.push(segment.subarray(Math.max(0, start - from), Math.min(segment.length, end - from)));
+    }
+    return out;
+}
+
+/**
+ * Bytes as the platform's own type: a Buffer on node, so existing callers keep
+ * .toString("utf8") and friends, and a plain Uint8Array in the browser. A view —
+ * no copy either way.
+ */
+const native = (bytes) => (typeof Buffer != "undefined"
+    ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    : bytes);
+
+const u32 = (value) => {
+    const out = new Uint8Array(4);
+    new DataView(out.buffer).setUint32(0, value, false);
+    return out;
+};
 
 function decode(recv) {
     const bytes = asBytes(recv);
@@ -184,6 +232,9 @@ module.exports = {
     legacyText,
     encode,
     decode,
+    range,
+    native,
+    u32,
     getType,
     getSeq,
     asBytes,

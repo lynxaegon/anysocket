@@ -114,8 +114,9 @@ test("a binary payload round-trips without a base64 detour", async (t) => {
     const out = Packet.data(payload).setType(Packet.TYPE.LINK).setSeq(11);
     const chunks = await out.serialize(constants.MAX_PACKET_SIZE, (p) => Promise.resolve(p), constants.PROTOCOL_VERSION);
 
-    // bytes on the wire, not a base64 or JSON expansion of them
-    assert.equal(chunks[0].length, Frame.HEADER_SIZE + payload.length);
+    // bytes on the wire, not a base64 or JSON expansion of them: the header,
+    // one byte saying what kind of body follows, and the bytes themselves
+    assert.equal(chunks[0].length, Frame.HEADER_SIZE + 1 + payload.length);
 
     const back = Packet.buffer();
     assert.equal(await back.deserialize(chunks[0], constants.PROTOCOL_ENCRYPTION.PLAIN), true);
@@ -129,7 +130,8 @@ test("a chunked binary payload is rejoined byte for byte", async (t) => {
 
     const out = Packet.data(payload).setType(Packet.TYPE.LINK).setSeq(12);
     const chunks = await out.serialize(1000, (p) => Promise.resolve(p), constants.PROTOCOL_VERSION);
-    assert.equal(chunks.length, 5);
+    // 5000 bytes plus the one-byte body kind, in 1000-byte frames
+    assert.equal(chunks.length, 6);
 
     const back = Packet.buffer();
     let done = false;

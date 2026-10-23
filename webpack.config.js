@@ -15,8 +15,12 @@ module.exports = {
             type: "umd"
         },
         globalObject: "typeof self !== 'undefined' ? self : this",
-        path: path.resolve(__dirname, 'dist'),
-        filename: 'anysocket.browser.js'
+        path: path.resolve(__dirname, "dist"),
+        filename: "anysocket.browser.js",
+        // Always write it. webpack skips an output identical to what is on disk,
+        // which leaves dist/ with an old timestamp after a rebuild and makes a
+        // fresh bundle impossible to tell from a forgotten one.
+        compareBeforeEmit: false
     },
     module: {
         rules: [

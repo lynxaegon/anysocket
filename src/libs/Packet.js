@@ -16,6 +16,60 @@ const isBinaryPayload = (data) =>
     data instanceof ArrayBuffer ||
     (typeof Buffer != "undefined" && Buffer.isBuffer(data));
 
+/**
+ * Binary attachments carried beside a message's JSON body, keyed by a Symbol so
+ * JSON.stringify never sees them. Set on an outgoing message to send bytes
+ * without base64; present on a received message that carried any. Between 1.0
+ * peers only — against a 0.4.x peer the caller still has to pack them itself.
+ */
+const ATTACHMENTS = Symbol.for("anysocket.attachments");
+
+const BODY_KIND = {
+    RAW: 0,
+    STRUCTURED: 1
+};
+
+/** The other end of Packet._segments(). */
+function decodeBinaryBody(payload) {
+    if (!payload.length) throw new Error("empty binary body");
+
+    const kind = payload[0];
+    if (kind === BODY_KIND.RAW) {
+        return Frame.native(payload.subarray(1));
+    }
+
+    if (kind !== BODY_KIND.STRUCTURED) {
+        throw new Error("unknown binary body kind " + kind);
+    }
+
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    let at = 1;
+    const read32 = () => {
+        if (at + 4 > payload.length) throw new Error("truncated binary body");
+        const value = view.getUint32(at, false);
+        at += 4;
+        return value;
+    };
+    const take = (length) => {
+        if (at + length > payload.length) throw new Error("truncated binary body");
+        const out = payload.subarray(at, at + length);
+        at += length;
+        return out;
+    };
+
+    const data = JSON.parse(Frame.text(take(read32())));
+    const count = read32();
+    const attached = new Array(count);
+    for (let i = 0; i < count; i++) {
+        attached[i] = Frame.native(take(read32()));
+    }
+
+    if (data && typeof data == "object") {
+        data[ATTACHMENTS] = attached;
+    }
+    return data;
+}
+
 const regex = {};
 class Packet {
     constructor(data) {
@@ -94,17 +148,50 @@ class Packet {
         }
     }
 
-    async *_frameChunks(max_packet_size, encryptFnc) {
-        // Raw bytes travel as themselves. Everything else is JSON, as before —
-        // but it is chunked by byte rather than by character, so a multi-byte
-        // character can no longer be split across two chunks.
-        const binary = isBinaryPayload(this.data);
-        const payload = binary ? Frame.asBytes(this.data) : Frame.bytes(JSON.stringify(this.data));
+    /**
+     * The message as a list of byte segments, taken end to end. Nothing large is
+     * joined — a raw payload stays the caller's own buffer.
+     *
+     *   raw bytes     BINARY, [KIND_RAW][bytes]
+     *   attachments   BINARY, [KIND_STRUCTURED][u32 json][json][u32 n]([u32 len][bytes])*
+     *   anything else plain JSON
+     *
+     * The kind lives in the payload rather than in another flag because every
+     * flag bit left would let a header byte collide with the "1", "2" or "6" a
+     * legacy frame starts with.
+     */
+    _segments() {
+        if (isBinaryPayload(this.data)) {
+            return { binary: true, segments: [new Uint8Array([BODY_KIND.RAW]), Frame.asBytes(this.data)] };
+        }
 
-        const count = Math.max(1, Math.ceil(payload.length / max_packet_size));
+        const attached = this.data && this.data[ATTACHMENTS];
+        if (attached && attached.length) {
+            const json = Frame.bytes(JSON.stringify(this.data));
+            const segments = [new Uint8Array([BODY_KIND.STRUCTURED]), Frame.u32(json.length), json, Frame.u32(attached.length)];
+            for (const item of attached) {
+                const bytes = Frame.asBytes(item);
+                segments.push(Frame.u32(bytes.length), bytes);
+            }
+            return { binary: true, segments: segments };
+        }
+
+        return { binary: false, segments: [Frame.bytes(JSON.stringify(this.data))] };
+    }
+
+    async *_frameChunks(max_packet_size, encryptFnc) {
+        // Chunked by byte rather than by character, so a multi-byte character
+        // can no longer be split across two chunks. Encryption does not happen
+        // here on a 1.0 connection: whole frames are sealed in wire order on the
+        // way out (see AnyProtocol._sealFrame).
+        const { binary, segments } = this._segments();
+
+        let total = 0;
+        for (const segment of segments) total += segment.length;
+        const count = Math.max(1, Math.ceil(total / max_packet_size));
 
         for (let i = 0, o = 0; i < count; ++i, o += max_packet_size) {
-            let slice = payload.subarray(o, o + max_packet_size);
+            const parts = Frame.range(segments, o, Math.min(total, o + max_packet_size));
 
             let flags = 0;
             if (i == count - 1) flags |= Frame.FLAGS.FINAL;
@@ -115,21 +202,14 @@ class Packet {
                 flags |= Frame.FLAGS.FIRST;
                 // Tell the far side how much is coming, so it can allocate once
                 // rather than hoarding chunks and joining them at the end.
-                if (count > 1) {
-                    const hint = new Uint8Array(Frame.LENGTH_HINT);
-                    new DataView(hint.buffer).setUint32(0, payload.length, false);
-                    slice = Frame.concat([hint, slice]);
-                }
+                if (count > 1) parts.unshift(Frame.u32(total));
             }
-
-            const body = await encryptFnc(slice, Math.abs(this.seq));
-            if (body !== slice) flags |= Frame.FLAGS.ENCRYPTED;
 
             yield Frame.encode({
                 flags: flags,
                 type: this.type,
                 seq: this.seq,
-                payload: body
+                payload: parts
             });
         }
     }
@@ -249,13 +329,8 @@ class Packet {
             this.buffer = [];
         }
 
-        if (frame.binary) {
-            this.data = payload;
-            return true;
-        }
-
         try {
-            this.data = JSON.parse(Frame.text(payload));
+            this.data = frame.binary ? decodeBinaryBody(payload) : JSON.parse(Frame.text(payload));
         } catch (e) {
             debug("packet parse error", e);
             this.data = null;
@@ -286,5 +361,6 @@ module.exports = {
             : Frame.legacyText(buf).substr(0, 1) == constants.PACKET_TYPE.FORWARD;
     },
     isBinaryPayload,
+    ATTACHMENTS,
     TYPE: constants.PACKET_TYPE
 };

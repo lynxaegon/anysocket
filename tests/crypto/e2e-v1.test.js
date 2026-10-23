@@ -30,7 +30,9 @@ test("the negotiated suite is the modern one", async (t) => {
     assert.deepEqual(link.clientPeer.e2eInfo(), {
         protocolVersion: 1,
         kex: "x25519",
-        cipher: "aes-256-gcm"
+        cipher: "aes-256-gcm",
+        // no shared secret on this link, so private but not authenticated
+        authenticated: false
     });
 });
 

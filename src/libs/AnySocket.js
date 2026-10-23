@@ -6,6 +6,7 @@ const BufferUtils = require("../wrappers/utils_buffer");
 const constants = require("./_constants");
 const AnyHTTPPeer = require("./AnyHTTPPeer");
 const AnyRouter = require("./AnyHTTPRouter");
+const Packet = require("./Packet");
 
 /**
  * A thrown Error has no enumerable fields, so JSON.stringify turned every
@@ -80,7 +81,9 @@ class AnySocket extends EventEmitter {
             promises.push(this[_private.peers][id].send(message, awaitReply));
         }
 
-        return Promise.all(promises);
+        const result = Promise.all(promises);
+        result.catch(() => {});
+        return result;
     }
 
     setRPC(rpc) {
@@ -485,6 +488,9 @@ class AnySocket extends EventEmitter {
             debug("Replacing the duplicate connection to", protocol.peerID);
             delete this[_private.peers][existing.id];
             existing._supersede("Superseded by the agreed connection");
+            // The application may hold this peer object, so tell it that one is
+            // gone; the replacement arrives as its own "connected" below.
+            this.emit("disconnected", existing, "Superseded by the agreed connection");
         }
 
         debug("Peer ready");
@@ -648,21 +654,29 @@ class AnySocket extends EventEmitter {
                 });
             } else {
                 try {
-                    for(let item of packet.msg.bin) {
-                        packet.msg.params[item] = AnySocket.Packer.unpack(packet.msg.params[item]);
-                    }
+                    // Attached bytes when the caller is 1.0, base64 when it is 0.4.x.
+                    const attached = packet.msg[Packet.ATTACHMENTS];
+                    packet.msg.bin.forEach((item, i) => {
+                        packet.msg.params[item] = attached && attached.length
+                            ? attached[i]
+                            : AnySocket.Packer.unpack(packet.msg.params[item]);
+                    });
 
                     Promise.resolve(tmp.apply(parent, [...packet.msg.params, packet.peer]))
                         .then((result) => {
-                            let binary = false;
-                            if(BufferUtils.isBuffer(result)) {
-                                result = AnySocket.Packer.pack(result)
-                                binary = true;
+                            if(!BufferUtils.isBuffer(result)) {
+                                packet.reply({ result: result, bin: false });
+                                return;
                             }
-                            packet.reply({
-                                result: result,
-                                bin: binary
-                            });
+
+                            // Bytes back as bytes to a 1.0 caller; base64 to 0.4.x.
+                            if(packet.peer.protocolVersion() >= constants.PROTOCOL_VERSION) {
+                                const reply = { result: null, bin: true };
+                                reply[Packet.ATTACHMENTS] = [result];
+                                packet.reply(reply);
+                            } else {
+                                packet.reply({ result: AnySocket.Packer.pack(result), bin: true });
+                            }
                         })
                         .catch((e) => {
                             packet.reply({

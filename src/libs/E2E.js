@@ -208,8 +208,29 @@ async function derive(params) {
         KEX_BITS[kex]
     ));
 
+    // With a pre-shared secret, it goes into the key material alongside the
+    // exchange. The key exchange on its own is unauthenticated, so an on-path
+    // party could stand in the middle of it — relaying the auth handshake
+    // untouched, then answering each side's offer with keys of its own. It cannot
+    // derive the keys either side ends up with if those depend on a secret it
+    // does not have, so the substitution simply fails to produce a working
+    // channel. Without a secret the exchange is still private against anyone
+    // only listening, but not against someone in the path.
+    let ikm = shared;
+    if (params.psk) {
+        const pskKey = await subtle().importKey(
+            "raw",
+            typeof params.psk == "string" ? Frame.bytes(params.psk) : Frame.asBytes(params.psk),
+            { name: "HMAC", hash: "SHA-256" },
+            false,
+            ["sign"]
+        );
+        const bound = new Uint8Array(await subtle().sign("HMAC", pskKey, Frame.bytes(LABEL + " psk")));
+        ikm = Frame.concat([shared, bound]);
+    }
+
     const salt = new Uint8Array(await subtle().digest("SHA-256", transcript));
-    const hkdf = await subtle().importKey("raw", shared, "HKDF", false, ["deriveBits"]);
+    const hkdf = await subtle().importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
     const derived = new Uint8Array(await subtle().deriveBits(
         { name: "HKDF", hash: "SHA-256", salt: salt, info: Frame.bytes(LABEL + " keys") },
         hkdf,
@@ -225,6 +246,9 @@ async function derive(params) {
     return {
         kex: kex,
         cipher: cipher,
+        // True when the keys depend on a pre-shared secret, so the channel is
+        // authenticated and not merely private.
+        authenticated: !!params.psk,
         // Whoever sorts first sends under the first key, so the two ends agree
         // which key is which without reference to direction.
         sendKey: await importKey(localFirst ? first : second),

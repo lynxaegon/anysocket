@@ -284,7 +284,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                 ? { protocolVersion: 0, kex: "secp521r1", cipher: "aes-256-cbc" }
                 : null;
         }
-        return { protocolVersion: 1, kex: session.kex, cipher: session.cipher };
+        return { protocolVersion: 1, kex: session.kex, cipher: session.cipher, authenticated: !!session.authenticated };
     }
 
     /**
@@ -300,6 +300,9 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         let settle;
         const promise = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+        // Called and forgotten as often as send() is, so a failure must not
+        // surface as an unhandled rejection; an awaiting caller still sees it.
+        promise.catch(() => {});
         this[E2E_PENDING] = { promise: promise, resolve: settle.resolve, reject: settle.reject };
 
         if (this.hasE2EEnabled()) {
@@ -363,7 +366,10 @@ module.exports = class AnyProtocol extends EventEmitter {
             localPublicKey: Frame.fromBase64(mine.wire.keys[kex]),
             localNonce: mine.nonce,
             remotePublicKey: Frame.fromBase64(offer.keys[kex]),
-            remoteNonce: Frame.fromBase64(offer.nonce)
+            remoteNonce: Frame.fromBase64(offer.nonce),
+            // Only ever set on a connection whose built-in auth succeeded, so the
+            // peer has proved it holds the same secret.
+            psk: this.anysocket.authSecret() || null
         });
 
         session.sendCounter = 0;
@@ -588,10 +594,10 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     /** Our AUTH packet. Identical whichever end sends it. */
-    _authPacket(extra) {
+    _authPacket(extra, precomputed) {
         const data = {
             id: this.anysocket.id,
-            auth: this.anysocket.authPacket(),
+            auth: precomputed ? precomputed.value : this.anysocket.authPacket(),
             pv: constants.PROTOCOL_VERSION,
             caps: this.options.capabilities
         };
@@ -752,10 +758,15 @@ module.exports = class AnyProtocol extends EventEmitter {
             // We are the listener. Answer with our challenge and our proof, and
             // stay out of CONNECTED until the dialer has proved itself in turn —
             // otherwise only one direction would ever be authenticated.
+            //
+            // authPacket() is taken now, before signing. Signing is real
+            // asynchronous work, during which another connection's AUTH can be
+            // handled — so a caller pairing its onAuth with the authPacket() that
+            // follows would otherwise be handed the wrong connection's value.
+            const custom = { value: this.anysocket.authPacket() };
             try {
-                await this.send(this._authPacket({
-                    ap: await Auth.prove(secret, this._authParams(this.anysocket.id))
-                }));
+                const proof = await Auth.prove(secret, this._authParams(this.anysocket.id));
+                await this.send(this._authPacket({ ap: proof }, custom));
             } catch (e) {
                 // send() already tore the connection down.
             }
