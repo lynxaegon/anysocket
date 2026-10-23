@@ -1,6 +1,8 @@
 const AnySocket = require("../../src/index");
 
 const client = new AnySocket();
+// relayed links are opt-in at the far end too (canProxy is the relay's half)
+client.canAcceptProxy = () => true;
 client.id = "c442d833-04ef-4b06-a1ff-fb90e04ed5bd";
 client.connect("ws", "127.0.0.1",3000);
 client.on("connected", (peer) => {

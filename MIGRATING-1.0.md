@@ -104,6 +104,8 @@ loop.
   The caller's proxy used to answer those itself. It no longer forwards `then`,
   `toJSON` or symbols, so awaiting or serializing it makes no call.
 - **`stop()` rejects** instead of throwing inside a promise callback.
+- **An HTTP request's path is normalized**, as the URL standard has it:
+  `/a/../b` routes as `/b`. The query parses as before.
 - **A failed `listen()` no longer crashes the process.** A busy port raised a
   second rejection nothing could catch, which killed the process even when the
   caller handled the error. `listen()` resolves with the bound port, and port

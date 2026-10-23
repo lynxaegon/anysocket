@@ -18,8 +18,14 @@ A custom protocol over any transport — client/server agnostic, binary framed, 
 [MIGRATING-1.0.md](MIGRATING-1.0.md) — a few behaviours changed, and one of them
 (`onAuth` is now actually awaited) can start refusing peers that used to connect.
 
-A 1.0 peer still talks to a 0.4.x peer on the wire, so a fleet can be upgraded
-one process at a time.
+Releases come in two steps:
+
+| | talks to 0.4.x | |
+|---|---|---|
+| **1.0.x** | yes | the bridge: upgrade a running fleet one process at a time |
+| **1.1** | no | drops the 0.4.x wire format and its legacy e2e exchange |
+
+Move every peer to 1.0 before any of them goes to 1.1.
 
 <a name="features"></a>
 ## Features
@@ -75,8 +81,14 @@ See also [benchmarks](benchmarks) for the http/ws server comparisons.
 <a name="installation"></a>
 ## Installation
 
-```javascript
+```
 npm install --save anysocket
+```
+
+Until 1.0.0 is on npm, from the `dev` branch:
+
+```
+npm install --save github:lynxaegon/anysocket#dev
 ```
 or
 ```html
@@ -145,6 +157,40 @@ client.on("disconnected", (peer, reason) => {
     console.log("Disconnected", peer.id, "Reason:", reason);
 });
 ```
+### Authenticated and encrypted
+
+```javascript
+// both ends hold the same secret; each proves it to the other, and the
+// e2e keys are bound to it, so someone relaying the handshake cannot read on
+const server = new AnySocket({ auth: { secret: process.env.SHARED_SECRET } });
+await server.listen("tcp", { port: 3000, requireE2E: true });  // no "connected" until encrypted
+
+const client = new AnySocket({ auth: { secret: process.env.SHARED_SECRET } });
+const peer = await client.connect("tcp", "10.0.0.2", 3000);
+peer.e2eInfo();  // { protocolVersion: 1, kex: "x25519", cipher: "aes-256-gcm", authenticated: true }
+```
+
+### RPC, with one place to authorize it
+
+```javascript
+server.setRPC({
+    users: { get: async (id, peer) => db.users.get(id) },
+    admin: { wipe: async (peer) => db.wipe() }
+});
+// asked before every call; only `true` lets it run, anything else is a 403
+server.rpcGuard = (peer, path, args) => peer.isAuthenticated() && path[0] !== "admin";
+
+const user = await peer.rpc.users.get(42);
+await peer.rpcWith({ timeout: 5000 }).users.get(42);   // per-call timeout (or { signal })
+```
+
+### Staying connected
+
+```javascript
+const link = client.maintain("tcp", "10.0.0.2", 3000);   // dials, and re-dials with backoff
+link.on("connected", (peer) => { /* ... */ });
+```
+
 More in the `examples` folder.
 
 ## Documentation
