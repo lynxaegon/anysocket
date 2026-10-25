@@ -29,6 +29,8 @@ const EventEmitter = require("../wrappers/events-wrapper");
  *   link.on("abandoned", (error) => ...);
  *   link.stop();
  */
+const DEFAULT_CONNECT_TIMEOUT = 10 * 1000;
+
 class Maintainer extends EventEmitter {
     constructor(anysocket, target, policy) {
         super();
@@ -116,7 +118,9 @@ class Maintainer extends EventEmitter {
 
         this._dialing = true;
         const t = this.target;
-        this.anysocket.connect(t.scheme, t.ip, t.port, Object.assign({}, t.options))
+        // A dial that never answers (a ws upgrade nobody replies to) must fail, or the
+        // handle waits on it forever instead of retrying: give it a timeout unless one is set.
+        this.anysocket.connect(t.scheme, t.ip, t.port, Object.assign({ connectTimeout: DEFAULT_CONNECT_TIMEOUT }, t.options))
             .then((peer) => {
                 this._dialing = false;
                 if (!this.active) return;

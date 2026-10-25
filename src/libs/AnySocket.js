@@ -8,6 +8,7 @@ const AnyHTTPPeer = require("./AnyHTTPPeer");
 const AnyRouter = require("./AnyHTTPRouter");
 const Packet = require("./Packet");
 const Maintainer = require("./Maintainer");
+const { errors } = require("./errors");
 
 /**
  * A thrown Error has no enumerable fields, so JSON.stringify turned every
@@ -97,7 +98,8 @@ const _private = {
     httpServers: Symbol("HTTP servers by port"),
     maintainers: Symbol("maintainers"),
     standby: Symbol("standby duplicates of 0.4.x peers"),
-    holdStandby: Symbol("holdStandby")
+    holdStandby: Symbol("holdStandby"),
+    stops: Symbol("stop() calls so far")
 };
 
 // How long a duplicate connection to a 0.4.x peer is held while that peer picks which of the
@@ -130,6 +132,7 @@ class AnySocket extends EventEmitter {
         this[_private.httpServers] = new Map();
         this[_private.maintainers] = new Set();
         this[_private.standby] = new Map();
+        this[_private.stops] = 0;
         if (typeof window === 'undefined') {
             // nodejs
             this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.browser.js");
@@ -212,11 +215,13 @@ class AnySocket extends EventEmitter {
     unproxy(peerID, throughPeerID, reason) {
         reason = reason || "Proxy Connection Closed";
         if(this[_private.peers][peerID] && this[_private.peers][peerID].isProxy() ) {
-            this[_private.peers][throughPeerID].sendInternal({
+            // The relay may already be gone; then there is no one to tell.
+            const relay = this[_private.peers][throughPeerID];
+            if (relay) relay.sendInternal({
                 type: constants.INTERNAL_PACKET_TYPE.PROXY,
                 action: "unproxy",
                 id: peerID
-            });
+            }).catch(() => {});
             this[_private.onPeerDisconnected](this[_private.peers][peerID], reason);
         }
     }
@@ -332,14 +337,23 @@ class AnySocket extends EventEmitter {
             // client
             let transport = this[_private.findTransport](scheme);
             transport = new transport("client", options);
+            const stops = this[_private.stops];
 
             // start transport
             transport.on("connected", (peer) => {
+                // stop() ran while this dial was in flight: it must not bring a live peer
+                // back to an instance that was stopped.
+                if (this[_private.stops] !== stops) {
+                    peer.disconnect("Local Connection Closed");
+                    reject(errors.disconnected());
+                    return;
+                }
                 this[_private.transports][transport.id] = transport;
                 this[_private.onPeerConnected](peer, transport.options, resolve);
                 debug("Transports Added", transport.id, Object.keys(this[_private.transports]).length);
             });
             transport.on("disconnected", (peer, reason) => {
+                if (!this[_private.transports][transport.id]) return;   // never registered: see above
                 this[_private.transports][transport.id].stop();
                 delete this[_private.transports][transport.id];
                 this[_private.onPeerDisconnected](peer, reason);
@@ -356,6 +370,7 @@ class AnySocket extends EventEmitter {
 
     stop() {
         this._started = false;
+        this[_private.stops]++;
         // Before anything closes, or each closing link would be redialled.
         for (const handle of Array.from(this[_private.maintainers])) handle.stop();
         return new Promise((resolve, reject) => {
@@ -787,6 +802,20 @@ class AnySocket extends EventEmitter {
 
             anypeer.disconnect();
             this.emit("disconnected", anypeer, reason);
+            // The peer's own event, as documented: the protocol never emitted the one AnyPeer
+            // re-emits, so it never fired.
+            anypeer.emit("disconnected", anypeer, reason);
+
+            // The links it relayed for us went with it. Left in place they looked connected
+            // and swallowed whatever was sent on them.
+            if (!anypeer.isProxy()) {
+                for (const id of Object.keys(this[_private.peers])) {
+                    const relayed = this[_private.peers][id];
+                    if (relayed && relayed.isProxy() && relayed.relayID === anypeer.id) {
+                        this[_private.onPeerDisconnected](relayed, "Relay disconnected");
+                    }
+                }
+            }
 
             // The 0.4.x peer kept the duplicate we were holding: it is the connection now.
             const held = this[_private.standby].get(anypeer.id);

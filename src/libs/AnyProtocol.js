@@ -204,8 +204,13 @@ module.exports = class AnyProtocol extends EventEmitter {
             packet.setSeq(this._getSeq());
 
         return new Promise((resolve, reject) => {
+            // Nothing queued now would ever be written.
+            if (!this.isConnected()) {
+                reject(errors.notConnected());
+                return;
+            }
             const rejectFnc = (e) => {
-                this.disconnect(e);
+                if (this.isConnected()) this.disconnect(e);
                 reject(e);
             };
 
@@ -263,6 +268,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                     if (failure) throw failure;
                 }
 
+                if (!this.isConnected()) throw errors.notConnected();
                 inFlight++;
                 this._packetQueue.push({
                     packet: chunk,
@@ -650,6 +656,12 @@ module.exports = class AnyProtocol extends EventEmitter {
                                             .catch((e) => {
                                                 this.disconnect(e);
                                             });
+                                    } else if (packet.type == Packet.TYPE.HEARTBEAT) {
+                                        // A probe or reply that crossed our offer. Dropping it
+                                        // costs the sender one missed beat; refusing it used to
+                                        // tear the link down mid-switch.
+                                        invalidPacket = false;
+                                        resolve();
                                     }
                                     break;
                                 case constants.PROTOCOL_STATES.DISCONNECTED:
@@ -938,9 +950,13 @@ module.exports = class AnyProtocol extends EventEmitter {
                 this._recvLinkPacketQueue.pause();
                 break;
             case constants.PROTOCOL_STATES.AUTHING:
-                // clear for client
+                // The dialler waits for the other end's AUTH under the same timeout as the
+                // listener. Clearing it here left a dial to an endpoint that accepts but never
+                // answers pending forever — and a maintain() on it stuck, never retrying.
                 clearTimeout(this[authTimeout]);
-                this[authTimeout] = false;
+                this[authTimeout] = setTimeout(() => {
+                    this.disconnect("auth timed out");
+                }, this.options.authTimeout);
 
                 this._linkPacketQueue.pause();
                 this._recvLinkPacketQueue.pause();
@@ -955,8 +971,16 @@ module.exports = class AnyProtocol extends EventEmitter {
 
                 this._linkPacketQueue.resume();
                 this._recvLinkPacketQueue.resume();
+
+                // Probe from here on, whoever spoke last. Arming only on receipt left the
+                // timer off on a link that went quiet right after the handshake or the e2e
+                // switch — the switch clears it, below — so a silent peer was never timed out.
+                this._heartbeat();
                 break;
             case constants.PROTOCOL_STATES.SWITCHING_PROTOCOL:
+                // No probe may go out in clear while encryption is being switched on.
+                clearTimeout(this[heartbeatTimer]);
+
                 this[e2eTimeout] = setTimeout(() => {
                     this.disconnect("e2e timed out");
                 }, this.options.e2eTimeout);
@@ -964,7 +988,11 @@ module.exports = class AnyProtocol extends EventEmitter {
                 this._linkPacketQueue.pause();
                 this._recvLinkPacketQueue.pause();
                 break;
-            case constants.PROTOCOL_STATES.DISCONNECTED:
+            case constants.PROTOCOL_STATES.DISCONNECTED: {
+                // kill() drops queued sends without calling back, which left their send()
+                // waiting forever: fail them instead, once the queues are empty.
+                const unsent = this._packetQueue.getQueue().concat(this._linkPacketQueue.getQueue());
+
                 this._packetQueue.pause();
                 this._packetQueue.kill();
 
@@ -977,7 +1005,11 @@ module.exports = class AnyProtocol extends EventEmitter {
                 this._recvLinkPacketQueue.pause();
                 this._recvLinkPacketQueue.kill();
 
+                for (const item of unsent) {
+                    if (item && item.reject) item.reject(errors.disconnected());
+                }
                 break;
+            }
         }
     }
 

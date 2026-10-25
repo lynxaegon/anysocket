@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const net = require("net");
-const { stop, wait, freePort, listen, AnySocket } = require("../helpers/loopback");
+const { pair, stop, wait, freePort, listen, protocolOf, AnySocket } = require("../helpers/loopback");
 const LegacyAnySocket = require("anysocket-legacy");
 
 /**
@@ -117,3 +117,72 @@ for (const legacyListens of [true, false]) {
         assert.equal(dropped, false);
     });
 }
+
+// A frozen process: writes nothing, and never times anything out itself.
+function freeze(peer) {
+    const p = protocolOf(peer);
+    p.peer.send = () => Promise.resolve();
+    p.options.heartbeatEnabled = false;
+    p._heartbeat();
+}
+
+async function droppedWithin(instance, ms) {
+    let reason = null;
+    instance.on("disconnected", (_p, r) => { reason = reason || r; });
+    await wait(ms);
+    return reason;
+}
+
+// The timer was armed only by receiving something, and cleared by the e2e switch: a link
+// that went quiet right after the handshake or the switch never probed at all.
+test("a requireE2E link probes while idle", async (t) => {
+    const opts = { ...HB, requireE2E: true };
+    const link = await pair(t, { listen: opts, connect: opts });
+    let frames = 0;
+    for (const peer of [link.serverPeer, link.clientPeer]) {
+        const p = protocolOf(peer).peer;
+        const send = p.send.bind(p);
+        p.send = (m) => { frames++; return send(m); };
+    }
+    await wait(BUDGET * 2);
+    assert.ok(frames > 0, "no heartbeat at all on an idle requireE2E link");
+});
+
+test("a requireE2E link drops a peer that freezes", async (t) => {
+    const opts = { ...HB, requireE2E: true };
+    const link = await pair(t, { listen: opts, connect: opts });
+    freeze(link.serverPeer);
+    assert.ok(await droppedWithin(link.client, BUDGET + HB.heartbeatInterval * 4));
+});
+
+test("a dialler times out a listener that never speaks", async (t) => {
+    const link = await pair(t, { listen: { heartbeatEnabled: false }, connect: HB });
+    freeze(link.serverPeer);
+    assert.ok(await droppedWithin(link.client, BUDGET + HB.heartbeatInterval * 4));
+});
+
+test("a peer that freezes right after e2e() is dropped", async (t) => {
+    const link = await pair(t, { listen: HB, connect: HB });
+    await wait(HB.heartbeatInterval * 2);
+    const serverUp = new Promise((r) => link.serverPeer.on("e2e", r));
+    link.clientPeer.e2e();
+    await serverUp;
+    freeze(link.serverPeer);
+    assert.ok(await droppedWithin(link.client, BUDGET + HB.heartbeatInterval * 4));
+});
+
+test("a heartbeat crossing an e2e offer does not kill the link", async (t) => {
+    const opts = { heartbeatInterval: 100, heartbeatsMaxMissed: 5 };
+    const link = await pair(t, { listen: opts, connect: opts });
+    await wait(250);
+    // A slow answer to the offer (latency, a slow key generation): probes fire meanwhile.
+    const sp = protocolOf(link.serverPeer);
+    const offer = sp._offerE2E.bind(sp);
+    sp._offerE2E = async () => { await wait(250); return offer(); };
+    let reason = null;
+    link.client.on("disconnected", (_p, r) => { reason = reason || "client: " + r; });
+    link.server.on("disconnected", (_p, r) => { reason = reason || "server: " + r; });
+    await link.clientPeer.e2e();
+    await wait(300);
+    assert.equal(reason, null);
+});

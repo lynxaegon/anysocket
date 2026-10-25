@@ -325,7 +325,7 @@ Broadcasts a message to all connected peers
 
 **Returns** a Promise that resolves with a <a href="#AnyPacket.constructor">AnyPacket</a> if waiting for a reply or rejects on error
 
-_note: it doesn't resolve if awaitReply is not set_ 
+_note: without awaitReply it resolves once the message is written_
 
 [back to top](#api)
 
@@ -482,7 +482,8 @@ peer from either direction satisfies it and is never dialled back. When two
 peers maintain each other it adopts the connection both ends keep, rather than
 reading the other's retirement as a drop. The backoff resets only once a
 connection has stayed up for `stableAfter`, so a link that dies the moment it
-connects keeps backing off. <a href="#AnySocket.stop">stop()</a> on the
+connects keeps backing off. Each dial gets a 10s `connectTimeout` unless the
+options set one, so a dial that is never answered fails and is retried. <a href="#AnySocket.stop">stop()</a> on the
 instance stops every handle first.
 
 [back to top](#api)
@@ -691,9 +692,9 @@ not a property on `rpc`, so it cannot collide with a remote method name.
 <a name="AnyPeer.e2e"></a>
 ### AnyPeer.e2e()
 
-Enables E2E encryption using ECDH for exchange and then switches to AES-256-CBC with forward secrecy. 
+Enables E2E encryption: an x25519 key exchange, then AES-256-GCM (or ChaCha20-Poly1305 between node peers), with keys that exist only for this connection. A 0.4.x peer gets its own exchange, ECDH secp521r1 and AES-256-CBC.
 
-Each message is encrypted with a different key derrived from the master key
+**Returns** a Promise that resolves once the link is encrypted, or rejects if it could not be.
 
 [back to top](#api)
 
@@ -712,7 +713,7 @@ Sends a message to the peer
 
 **Returns** a Promise that resolves with a <a href="#AnyPacket.constructor">AnyPacket</a> if waiting for a reply or rejects on error
 
-_note: it doesn't resolve if awaitReply is not set_ 
+_note: without awaitReply it resolves once the message is written_
 
 _note: you can only reply to a normal message, you **cannot** reply to a **reply packet**. It fails silently_ 
 
