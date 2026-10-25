@@ -48,6 +48,22 @@ in-flight call and any healthy traffic with it. Now only that call rejects.
 client.connect("ws", ip, port, { disconnectOnReplyTimeout: true });
 ```
 
+### The heartbeat now drops a peer that goes silent
+
+The heartbeat timer only re-armed when a probe was answered, so once one went
+unanswered nothing was counted as missed: a peer whose process froze, or a path
+that stopped delivering while the connection stayed open, was never timed out.
+Now a link with nothing received for `heartbeatInterval × (heartbeatsMaxMissed + 1)`
+— 15s by default — is disconnected, as the options always described. Any message
+counts as a reply, so a busy link sends no probes. If your peers can go quiet for
+longer (a long synchronous job, a suspended mobile app), raise the budget:
+
+```js
+client.connect("ws", ip, port, { heartbeatInterval: 10 * 1000, heartbeatsMaxMissed: 5 });   // ~60s
+```
+
+A 0.4.x peer answers probes even with its own heartbeat off.
+
 ### `send()` without `awaitReply` now resolves
 
 It previously never settled, so `await peer.send(msg)` hung forever. If you

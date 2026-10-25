@@ -1359,6 +1359,10 @@ module.exports = class AnyProtocol extends EventEmitter {
                 debug("Heartbeat Error:", e);
                 this.disconnect(e);
             });
+
+            // Re-arm to count the miss if no reply comes. Without this the timer only came back
+            // with the reply, so a peer that went silent was never timed out.
+            this._heartbeat();
         }, this.options.heartbeatInterval)
     }
 
