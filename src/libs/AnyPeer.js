@@ -232,6 +232,11 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].isOutbound();
     }
 
+    /** The peer's instance as it sent it in the handshake; null from a 0.4.x peer. */
+    remoteInstanceID() {
+        return this[_protocol].remoteInstanceID;
+    }
+
     /**
      * Retire this peer in favour of another connection to the same id. Detached
      * from its protocol first, so the resulting disconnect cannot be mistaken

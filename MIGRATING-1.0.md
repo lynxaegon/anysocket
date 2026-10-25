@@ -94,6 +94,12 @@ was kept, and a retired connection rejects whatever was pending on it and is
 announced as `disconnected`. If you re-dialled on every drop, you no longer
 loop.
 
+A peer that restarts keeping its id is not a duplicate: its new connection
+replaces the one its previous instance left, which may not have closed yet.
+Each instance sends its own `instanceID` in the handshake, so the two cases are
+told apart. (Two live instances sharing an id will now take turns, which they
+should not do anyway.)
+
 ## Smaller changes
 
 - **A rejected RPC reports a readable message.** A thrown `Error` has no

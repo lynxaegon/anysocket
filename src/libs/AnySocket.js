@@ -118,6 +118,9 @@ class AnySocket extends EventEmitter {
         this.options = Object.assign({}, options);
         this._started = false;
         this.id = Utils.uuidv4();
+        // This instance, as opposed to the id, which an application may set and keep across
+        // restarts. Sent in the handshake so a peer can tell a restarted us from a duplicate.
+        this.instanceID = Utils.uuidv4();
         this.http = new AnyRouter();
         debug("AnySocketID:", this.id);
 
@@ -611,6 +614,12 @@ class AnySocket extends EventEmitter {
      * kept whichever way it was dialled.
      */
     [_private.keepsExisting](existing, incoming) {
+        // A different instance behind the same id is that peer restarted: what we hold is
+        // the dead process's connection, which may not have closed yet. Keeping it refused
+        // the new one, and once the old one did close, neither end was connected.
+        const existingInstance = existing.remoteInstanceID();
+        if (existingInstance && incoming.remoteInstanceID && existingInstance !== incoming.remoteInstanceID) return false;
+
         const existingOutbound = existing.isOutbound();
         const incomingOutbound = incoming.isOutbound();
 

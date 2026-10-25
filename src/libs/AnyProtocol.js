@@ -55,6 +55,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         // 0 for good against a 0.4.x peer.
         this.protocolVersion = constants.PROTOCOL_VERSION_LEGACY;
         this.remoteProtocolVersion = null;
+        this.remoteInstanceID = null;
         this.capabilities = [];
         this[heartbeatTimer] = 0;
         this[heartbeatsMissed] = 0;
@@ -723,7 +724,8 @@ module.exports = class AnyProtocol extends EventEmitter {
             id: this.anysocket.id,
             auth: precomputed ? precomputed.value : this.anysocket.authPacket(),
             pv: constants.PROTOCOL_VERSION,
-            caps: this.options.capabilities
+            caps: this.options.capabilities,
+            inst: this.anysocket.instanceID
         };
 
         if (this.anysocket.authSecret()) {
@@ -808,6 +810,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         const remoteCaps = Array.isArray(data && data.caps) ? data.caps : [];
 
         this.remoteProtocolVersion = remote;
+        this.remoteInstanceID = typeof (data && data.inst) === "string" ? data.inst : null;
         this.protocolVersion = Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
         this.capabilities = (this.options.capabilities || [])
             .filter((cap) => remoteCaps.indexOf(cap) != -1)

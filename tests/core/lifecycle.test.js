@@ -121,3 +121,42 @@ test("a relayed peer goes down with its relay", async (t) => {
     assert.match(await settled(proxied.send({ x: 1 })), /^rejected/);
     assert.doesNotThrow(() => proxied.disconnect("bye"));
 });
+
+// An application that keeps its id across restarts (a node name, say) comes back while the
+// other end may still hold the dead process's connection. Both dial the same way, which the
+// duplicate rule read as one instance dialling twice: it kept the stale connection, refused
+// the new one, and once the stale one closed neither end was connected.
+test("a restarted peer replaces the connection its previous instance left behind", async (t) => {
+    const listener = new AnySocket();
+    const before = new AnySocket();
+    const after = new AnySocket();
+    before.id = after.id = "same-id-across-restarts";
+    t.after(() => stop(listener, before, after));
+    const port = await listener.listen("tcp", { port: 0 });
+
+    await before.connect("tcp", "127.0.0.1", port);
+    await wait(100);
+    const peer = await after.connect("tcp", "127.0.0.1", port);
+    await wait(200);
+    assert.equal(listener.getPeer(after.id).remoteInstanceID(), after.instanceID, "the listener kept the old instance");
+
+    await before.stop();   // the old process finally goes
+    await wait(300);
+    assert.equal(listener.hasPeer(after.id), true);
+    assert.equal(after.hasPeer(listener.id), true);
+    listener.setRPC({ ping: () => "pong" });
+    assert.equal(await peer.rpc.ping(), "pong");
+});
+
+test("the same instance dialling twice still keeps its first connection", async (t) => {
+    const listener = new AnySocket();
+    const client = new AnySocket();
+    t.after(() => stop(listener, client));
+    const port = await listener.listen("tcp", { port: 0 });
+    const first = await client.connect("tcp", "127.0.0.1", port);
+    const second = await client.connect("tcp", "127.0.0.1", port);
+    await wait(200);
+    assert.equal(second, first, "the second dial resolves with the kept connection");
+    assert.equal(client.hasPeer(listener.id), true);
+    assert.equal(listener.hasPeer(client.id), true);
+});
