@@ -51,7 +51,10 @@ test("RPC works from either end", async (t) => {
 test("e2e() can be driven from either end", async (t) => {
     for (const side of ["clientPeer", "serverPeer"]) {
         const link = await pair(t);
-        const up = new Promise((resolve) => link[side].on("e2e", resolve));
+        // Both ends: the one that started reports e2e as soon as its side is done, and
+        // asserting the other end at that moment raced the other end finishing.
+        const up = Promise.all(["clientPeer", "serverPeer"].map((end) =>
+            new Promise((resolve) => link[end].on("e2e", resolve))));
 
         link[side].e2e();
         await up;

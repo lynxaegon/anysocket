@@ -3,7 +3,7 @@ const assert = require("node:assert");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const LegacyAnySocket = require("anysocket-legacy");
-const { pair, listen, stop, rawSocket, wait, freePort, AnySocket } = require("../helpers/loopback");
+const { e2e, pair, listen, stop, rawSocket, wait, freePort, AnySocket } = require("../helpers/loopback");
 
 /** Total bytes a peer puts on the wire while `fn` runs. */
 async function bytesSent(peer, fn) {
@@ -88,7 +88,7 @@ test("a large binary RPC payload survives chunking", async (t) => {
 
 test("binary RPC still works over an encrypted link", async (t) => {
     const link = await pair(t, { configure: (server) => server.setRPC({ rev: (b) => Buffer.from(b).reverse() }) });
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const result = await link.clientPeer.rpc.rev(Buffer.from([1, 2, 3, 4]));
     assert.deepEqual(Array.from(result), [4, 3, 2, 1]);

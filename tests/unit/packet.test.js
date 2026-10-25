@@ -74,3 +74,37 @@ test("a packet type the state does not expect drops the connection", async (t) =
     await wait(50);
     await link.stop();
 });
+
+// Small 1.0 messages skip the async chunk generator. The bytes must be exactly what it
+// would have produced, or a peer reading the other path would see something else.
+test("a single-frame message encodes to the same bytes either way", async (t) => {
+    const collect = async (packet, size) => {
+        const out = [];
+        for await (const chunk of packet.chunks(size, null, constants.PROTOCOL_VERSION)) out.push(chunk);
+        return out;
+    };
+    const bytes = new Uint8Array([1, 2, 3, 250]);
+    const cases = [
+        () => Packet.data({ hello: "world", n: [1, 2] }).setType(Packet.TYPE.LINK).setSeq(7),
+        () => Packet.data({ reply: true }).setType(Packet.TYPE.LINK).setSeq(-9),
+        () => Packet.data(bytes).setType(Packet.TYPE.LINK).setSeq(11),
+        () => Packet.data("ünïcødé ✓").setType(Packet.TYPE.INTERNAL).setSeq(12),
+    ];
+    for (const make of cases) {
+        const fast = make().singleFrame(1024);
+        const slow = await collect(make(), 1024);
+        assert.equal(slow.length, 1);
+        assert.deepEqual(Buffer.from(fast), Buffer.from(slow[0]));
+    }
+});
+
+test("a message too big for one frame is left to the chunk path, unchanged", async (t) => {
+    const make = () => Packet.data({ blob: "z".repeat(5000) }).setType(Packet.TYPE.LINK).setSeq(5);
+    const viaFast = make();
+    assert.equal(viaFast.singleFrame(1000), null);
+    const a = [], b = [];
+    for await (const c of viaFast.chunks(1000, null, constants.PROTOCOL_VERSION)) a.push(Buffer.from(c));
+    for await (const c of make().chunks(1000, null, constants.PROTOCOL_VERSION)) b.push(Buffer.from(c));
+    assert.ok(a.length > 1);
+    assert.deepEqual(a, b);
+});

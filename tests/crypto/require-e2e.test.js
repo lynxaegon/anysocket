@@ -126,3 +126,22 @@ test("and refuses a 0.4.x peer when the old exchange is off as well", async (t) 
     await Promise.race([gone, wait(2000)]);
     assert.equal(arrived, false, "a peer that cannot be encrypted must never be handed over");
 });
+
+// Both ends start the exchange on their own, so the peer's offer can arrive while our keys
+// are still being generated. That started a second offer of our own; the two ends derived
+// keys from different ones and the first encrypted frame failed to open. Under load, with
+// key generation slow, this dropped a few handshakes in a hundred.
+test("an offer that arrives while ours is still being made does not start a second one", async (t) => {
+    const E2E = require("../../src/libs/E2E");
+    const createOffer = E2E.createOffer;
+    let made = 0;
+    // The first end to start is slow, so the other end's offer always lands mid-way.
+    E2E.createOffer = async (...args) => { if (made++ === 0) await wait(300); return createOffer(...args); };
+    t.after(() => { E2E.createOffer = createOffer; });
+
+    const l = await link(t, { requireE2E: true }, { requireE2E: true });
+    assert.equal(made, 2, "one offer per end");
+    const atServer = new Promise((resolve) => l.server.once("message", (p) => resolve(p.msg)));
+    await l.clientPeer.send({ hello: "encrypted" });
+    assert.deepEqual(await atServer, { hello: "encrypted" });
+});

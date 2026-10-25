@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const Auth = require("../../src/libs/Auth");
 const Frame = require("../../src/libs/Frame");
-const { pair, expectRefused, wait } = require("../helpers/loopback");
+const { e2e, pair, expectRefused, wait } = require("../helpers/loopback");
 
 const SECRET = "a shared secret neither end sends";
 
@@ -84,7 +84,7 @@ test("it works the same whichever end dialled", async (t) => {
 
 test("the built-in auth composes with e2e and a channel binding", async (t) => {
     const link = await pair(t, withSecret(SECRET));
-    await link.clientPeer.e2e();
+    await e2e(link);
     await wait(50);
 
     assert.ok(link.clientPeer.isE2EEnabled());

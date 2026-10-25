@@ -3,7 +3,7 @@ const assert = require("node:assert");
 const E2E = require("../../src/libs/E2E");
 const Frame = require("../../src/libs/Frame");
 const constants = require("../../src/libs/_constants");
-const { pair, rawSocket, wait } = require("../helpers/loopback");
+const { e2e, pair, rawSocket, wait } = require("../helpers/loopback");
 
 const hex = (bytes) => Buffer.from(bytes).toString("hex");
 
@@ -25,7 +25,7 @@ function intercept(peer) {
 
 test("the negotiated suite is the modern one", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     assert.deepEqual(link.clientPeer.e2eInfo(), {
         protocolVersion: 1,
@@ -46,7 +46,7 @@ test("e2e() resolves once the channel is live", async (t) => {
 
 test("both ends derive the same channel binding", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
     await wait(50);
 
     const a = link.clientPeer.getChannelBinding();
@@ -101,13 +101,13 @@ test("a repeated e2e() returns the same settled promise", async (t) => {
     assert.equal(first, second, "the same promise should be handed back");
 
     await first;
-    await link.clientPeer.e2e();
+    await e2e(link);
     assert.ok(link.clientPeer.isE2EEnabled());
 });
 
 test("traffic flows both ways over the encrypted channel", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     for (const dir of [
         { from: link.clientPeer, at: link.server, name: "client -> server" },
@@ -121,7 +121,7 @@ test("traffic flows both ways over the encrypted channel", async (t) => {
 
 test("many messages in a row keep their counters in step", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const seen = [];
     link.server.on("message", (packet) => seen.push(packet.msg.n));
@@ -135,7 +135,7 @@ test("many messages in a row keep their counters in step", async (t) => {
 // be touched without the frame failing to open.
 test("an altered payload is rejected", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const wire = intercept(link.clientPeer);
     await link.clientPeer.send({ tamper: "me" });
@@ -152,7 +152,7 @@ test("an altered payload is rejected", async (t) => {
 
 test("an altered header is rejected", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const wire = intercept(link.clientPeer);
     await link.clientPeer.send({ tamper: "header" });
@@ -168,7 +168,7 @@ test("an altered header is rejected", async (t) => {
 
 test("a replayed frame is rejected", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const wire = intercept(link.clientPeer);
     await link.clientPeer.send({ n: 1 });
@@ -185,7 +185,7 @@ test("a replayed frame is rejected", async (t) => {
 
 test("frames arriving out of order are rejected", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const wire = intercept(link.clientPeer);
     await link.clientPeer.send({ n: 1 });
@@ -201,7 +201,7 @@ test("frames arriving out of order are rejected", async (t) => {
 // Once the channel is encrypted, anything in clear is an injection attempt.
 test("a plaintext frame after e2e is rejected", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const wire = intercept(link.clientPeer);
     const gone = new Promise((resolve) => link.server.on("disconnected", (_p, reason) => resolve(reason)));

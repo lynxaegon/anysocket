@@ -23,6 +23,8 @@ const isBinaryPayload = (data) =>
  * peers only — against a 0.4.x peer the caller still has to pack them itself.
  */
 const ATTACHMENTS = Symbol.for("anysocket.attachments");
+// Segments singleFrame() built for a message too big for one frame, handed on to chunks().
+const SEGMENTS = Symbol("segments");
 
 const BODY_KIND = {
     RAW: 0,
@@ -179,12 +181,34 @@ class Packet {
         return { binary: false, segments: [Frame.bytes(JSON.stringify(this.data))] };
     }
 
+    /**
+     * A 1.0 message that fits in one frame, encoded at once; null when it needs
+     * more than one. Most messages are this small, and producing them through
+     * the async chunk generator cost more than encoding them. The bytes are what
+     * chunks() would yield: a single frame carries no length hint.
+     */
+    singleFrame(max_packet_size) {
+        const parts = this._segments();
+        let total = 0;
+        for (const segment of parts.segments) total += segment.length;
+        if (total > max_packet_size) {
+            this[SEGMENTS] = parts;   // spared from being built twice by chunks()
+            return null;
+        }
+
+        let flags = Frame.FLAGS.FIRST | Frame.FLAGS.FINAL;
+        if (parts.binary) flags |= Frame.FLAGS.BINARY;
+        if (this.seq < 0) flags |= Frame.FLAGS.REPLY;
+        return Frame.encode({ flags: flags, type: this.type, seq: this.seq, payload: parts.segments });
+    }
+
     async *_frameChunks(max_packet_size, encryptFnc) {
         // Chunked by byte rather than by character, so a multi-byte character
         // can no longer be split across two chunks. Encryption does not happen
         // here on a 1.0 connection: whole frames are sealed in wire order on the
         // way out (see AnyProtocol._sealFrame).
-        const { binary, segments } = this._segments();
+        const { binary, segments } = this[SEGMENTS] || this._segments();
+        this[SEGMENTS] = null;
 
         let total = 0;
         for (const segment of segments) total += segment.length;

@@ -134,6 +134,10 @@ loop.
 - **A connection to ourselves is refused**, rather than reaching the duplicate
   rule with both ends being the same instance.
 - **`"connected"` is no longer emitted for a peer that already went away.**
+- **`bufferutil` is an optional dependency.** It masks ws frames natively, which
+  speeds up large ws transfers. npm skips it where it cannot be installed (no
+  prebuilt binary and no compiler, e.g. arm64 Alpine), and ws then masks in JavaScript
+  as before.
 - **On node, a plain `Uint8Array` is treated as bytes**, as in the browser; it
   used to go through JSON as `{"0":9,...}`. Binary RPC arguments and results
   arrive as `Buffer`s on node.

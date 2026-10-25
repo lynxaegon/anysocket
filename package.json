@@ -49,17 +49,16 @@
   "homepage": "https://github.com/lynxaegon/anysocket#readme",
   "dependencies": {
     "debug": "^4.3.2",
-    "fastq": "^1.11.0",
     "ws": "^7.5.7"
   },
   "devDependencies": {
     "@babel/core": "^7.12.10",
     "@babel/plugin-proposal-class-properties": "^7.12.1",
+    "anysocket-legacy": "npm:anysocket@0.4.32",
     "babel-loader": "^8.2.2",
     "null-loader": "^4.0.1",
     "webpack": "^5.105.4",
-    "webpack-cli": "^6.0.1",
-    "anysocket-legacy": "npm:anysocket@0.4.32"
+    "webpack-cli": "^6.0.1"
   },
   "files": [
     "src/",
@@ -67,5 +66,8 @@
     "README.md",
     "MIGRATING-1.0.md",
     "LICENSE"
-  ]
+  ],
+  "optionalDependencies": {
+    "bufferutil": "^4.1.0"
+  }
 }

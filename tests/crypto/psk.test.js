@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const E2E = require("../../src/libs/E2E");
 const Frame = require("../../src/libs/Frame");
-const { pair, wait } = require("../helpers/loopback");
+const { e2e, pair, wait } = require("../helpers/loopback");
 
 const hex = (bytes) => Buffer.from(bytes).toString("hex");
 const SECRET = "the secret both honest ends hold";
@@ -121,7 +121,7 @@ test("a connection using the built-in auth is reported as an authenticated chann
             client.options.auth = { secret: SECRET };
         }
     });
-    await link.clientPeer.e2e();
+    await e2e(link);
     await wait(50);
 
     assert.equal(link.clientPeer.e2eInfo().authenticated, true);
@@ -134,7 +134,7 @@ test("a connection using the built-in auth is reported as an authenticated chann
 
 test("without the built-in auth the channel is private but not authenticated", async (t) => {
     const link = await pair(t);
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     assert.equal(link.clientPeer.e2eInfo().authenticated, false);
 });

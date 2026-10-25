@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const net = require("net");
-const { pair, stop, wait, freePort, listen, protocolOf, AnySocket } = require("../helpers/loopback");
+const { e2e, pair, stop, wait, freePort, listen, protocolOf, AnySocket } = require("../helpers/loopback");
 const LegacyAnySocket = require("anysocket-legacy");
 
 /**
@@ -182,7 +182,25 @@ test("a heartbeat crossing an e2e offer does not kill the link", async (t) => {
     let reason = null;
     link.client.on("disconnected", (_p, r) => { reason = reason || "client: " + r; });
     link.server.on("disconnected", (_p, r) => { reason = reason || "server: " + r; });
-    await link.clientPeer.e2e();
+    await e2e(link);
     await wait(300);
     assert.equal(reason, null);
+});
+
+// Receiving only notes the time; the timer waits out the rest of the interval. A link that
+// keeps receiving stays up and is never probed.
+test("a link that keeps receiving is not probed and stays up", async (t) => {
+    const link = await pair(t, { listen: HB, connect: HB });
+    const Packet = require("../../src/libs/Packet");
+    let probes = 0;
+    const p = protocolOf(link.clientPeer);
+    const send = p.send.bind(p);
+    // Probes only, not its replies to the server's.
+    p.send = (packet) => { if (packet.type == Packet.TYPE.HEARTBEAT && packet.data == 1) probes++; return send(packet); };
+    const timer = setInterval(() => link.serverPeer.send({ tick: 1 }).catch(() => {}), HB.heartbeatInterval / 3);
+    t.after(() => clearInterval(timer));
+    await wait(BUDGET * 2);
+    clearInterval(timer);
+    assert.equal(probes, 0);
+    assert.equal(link.client.hasPeer(link.server.id), true);
 });

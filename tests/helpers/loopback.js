@@ -116,4 +116,16 @@ function freePort() {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-module.exports = { pair, expectRefused, stop, listen, rawSocket, protocolOf, wait, freePort, AnySocket };
+/**
+ * The client turns e2e on; resolves once BOTH ends are encrypted. The client's e2e()
+ * settles when its own side is done, and the server may still be deriving its keys
+ * then: a test that went on to look at the server raced it.
+ */
+function e2e(link) {
+    const server = link.serverPeer.isE2EEnabled()
+        ? null
+        : new Promise((resolve) => link.serverPeer.once("e2e", resolve));
+    return link.clientPeer.e2e().then((peer) => server && server.then(() => peer) || peer);
+}
+
+module.exports = { e2e, pair, expectRefused, stop, listen, rawSocket, protocolOf, wait, freePort, AnySocket };

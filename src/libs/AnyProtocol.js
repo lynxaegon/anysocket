@@ -1,6 +1,6 @@
 const debug = require('debug')('AnyProtocol');
 const EventEmitter = require("../wrappers/events-wrapper");
-const FastQ = require('fastq');
+const SerialQueue = require("./SerialQueue");
 const Packet = require("./Packet");
 const Utils = require("../wrappers/utils");
 const AnyPacker = require("./AnyPacker");
@@ -15,6 +15,7 @@ const AUTH_RECEIVED = Symbol("auth received");
 const ENCRYPTION_NONCE = Symbol("nonce");
 const ENCRYPTION_STARTING = Symbol("e2e starting");
 const E2E_OFFER = Symbol("our e2e offer");
+const E2E_OFFERING = Symbol("our e2e offer, being made");
 const E2E_SESSION = Symbol("e2e session");
 const E2E_PENDING = Symbol("e2e promise");
 const AUTH_CHALLENGE = Symbol("our auth challenge");
@@ -22,6 +23,9 @@ const AUTH_PEER_CHALLENGE = Symbol("peer auth challenge");
 const heartbeatTimer = Symbol("heartbeat timer");
 const heartbeatsMissed = Symbol("heartbeats missed");
 const heartbeatPonged = Symbol("heartbeat ponged");
+const lastReceived = Symbol("last received");
+// A monotonic clock where there is one: a wall clock set back would read as a long silence.
+const now = (typeof performance !== "undefined" && performance.now) ? () => performance.now() : () => Date.now();
 const authTimeout = Symbol("authTimeout");
 const e2eTimeout = Symbol("e2eTimeout");
 
@@ -55,6 +59,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[heartbeatTimer] = 0;
         this[heartbeatsMissed] = 0;
         this[heartbeatPonged] = true;
+        this[lastReceived] = 0;
         this[authTimeout] = false;
         this[e2eTimeout] = false;
 
@@ -135,17 +140,17 @@ module.exports = class AnyProtocol extends EventEmitter {
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
 
-        this._packetQueue = FastQ(this, this.processPacketQueue.bind(this), 1);
-        this._linkPacketQueue = FastQ(this, this.processLinkPacketQueue.bind(this), 1);
-        this._recvPacketQueue = FastQ(this, this.processRecvPacketQueue.bind(this), 1);
-        this._recvLinkPacketQueue = FastQ(this, this.processRecvLinkPacketQueue.bind(this), 1);
+        this._packetQueue = new SerialQueue(this, this.processPacketQueue);
+        this._linkPacketQueue = new SerialQueue(this, this.processLinkPacketQueue);
+        this._recvPacketQueue = new SerialQueue(this, this.processRecvPacketQueue);
+        this._recvLinkPacketQueue = new SerialQueue(this, this.processRecvLinkPacketQueue);
         this._packets = {};
 
         this.changeState(constants.PROTOCOL_STATES.ESTABLISHED);
         this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.PLAIN;
 
         this.peer.on("message", (peer, recv) => {
-            this._heartbeat(true);
+            this._received();
 
             this._recvPacketQueue.push({
                 peer: peer,
@@ -242,6 +247,15 @@ module.exports = class AnyProtocol extends EventEmitter {
         const chunkSize = this.protocolVersion >= constants.PROTOCOL_VERSION
             ? this.options.maxPacketSize
             : constants.MAX_PACKET_SIZE;
+
+        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
+            const frame = packet.singleFrame(chunkSize);
+            if (frame) {
+                this._packetQueue.push({ packet: frame, resolve: () => resolve(), reject: reject });
+                return;
+            }
+        }
+
         const chunks = packet.chunks(
             chunkSize, this._encrypt.bind(this), this.protocolVersion
         );
@@ -390,15 +404,25 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (pending) pending.resolve(this);
     }
 
-    /** Send our half of the exchange. The same message whichever end sends it. */
-    async _offerE2E() {
-        if (this[E2E_OFFER]) return;
-
-        this[E2E_OFFER] = await E2E.createOffer({ ciphers: this.options.e2eCiphers || undefined });
-        if (this.state != constants.PROTOCOL_STATES.SWITCHING_PROTOCOL) {
-            this.changeState(constants.PROTOCOL_STATES.SWITCHING_PROTOCOL);
+    /**
+     * Send our half of the exchange. The same message whichever end sends it.
+     *
+     * Made once, however many callers ask. Both ends start the exchange on their own,
+     * so the peer's offer can arrive while our keys are still being generated; that
+     * used to start a second offer, the two ends then derived keys from different
+     * ones, and the first encrypted frame failed to open.
+     */
+    _offerE2E() {
+        if (!this[E2E_OFFERING]) {
+            this[E2E_OFFERING] = (async () => {
+                this[E2E_OFFER] = await E2E.createOffer({ ciphers: this.options.e2eCiphers || undefined });
+                if (this.state != constants.PROTOCOL_STATES.SWITCHING_PROTOCOL) {
+                    this.changeState(constants.PROTOCOL_STATES.SWITCHING_PROTOCOL);
+                }
+                await this.send(Packet.data(this[E2E_OFFER].wire).setType(Packet.TYPE.SWITCH));
+            })();
         }
-        await this.send(Packet.data(this[E2E_OFFER].wire).setType(Packet.TYPE.SWITCH));
+        return this[E2E_OFFERING];
     }
 
     /**
@@ -1328,8 +1352,18 @@ module.exports = class AnyProtocol extends EventEmitter {
         return this._seq;
     }
 
-    _heartbeat(ponged) {
-        ponged = ponged || false;
+    /**
+     * Anything received proves the peer alive. It only notes the time: the timer used to
+     * be cleared and re-created on every message, which cost more than many messages
+     * did. When it fires early, it waits out the rest of the interval instead.
+     */
+    _received() {
+        this[lastReceived] = now();
+        this[heartbeatPonged] = true;
+        this[heartbeatsMissed] = 0;
+    }
+
+    _heartbeat(delay) {
         // proxies are notified by peers if they disconnect
         if(this.isProxy())
             return;
@@ -1343,10 +1377,6 @@ module.exports = class AnyProtocol extends EventEmitter {
         if(!this.options.heartbeatEnabled)
             return;
 
-        if(ponged) {
-            this._heartbeatPong();
-        }
-
         // Nothing may go out in clear once the peer has turned encryption on,
         // and the peer turns it on as soon as it sees our offer. Link traffic
         // is already paused while switching; this keeps heartbeats from
@@ -1357,6 +1387,12 @@ module.exports = class AnyProtocol extends EventEmitter {
             return;
 
         this[heartbeatTimer] = setTimeout(() => {
+            const quiet = now() - this[lastReceived];
+            if (quiet < this.options.heartbeatInterval) {
+                this._heartbeat(this.options.heartbeatInterval - quiet);
+                return;
+            }
+
             if (!this[heartbeatPonged]) {
                 this[heartbeatsMissed]++;
 
@@ -1367,8 +1403,8 @@ module.exports = class AnyProtocol extends EventEmitter {
 
                 // Resend a fresh probe in case the original heartbeat was lost
                 // in transit (common on lossy wifi). Any incoming packet —
-                // including a late pong for the original — will still reset
-                // state via peer.on("message") → _heartbeat(true).
+                // including a late pong for the original — still counts, via
+                // peer.on("message") → _received().
                 const probe = Packet
                     .data(1)
                     .setType(Packet.TYPE.HEARTBEAT);
@@ -1395,7 +1431,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             // Re-arm to count the miss if no reply comes. Without this the timer only came back
             // with the reply, so a peer that went silent was never timed out.
             this._heartbeat();
-        }, this.options.heartbeatInterval)
+        }, delay || this.options.heartbeatInterval)
     }
 
     _heartbeatPong(data) {

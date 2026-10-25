@@ -2,13 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert");
 const E2E = require("../../src/libs/E2E");
 const Frame = require("../../src/libs/Frame");
-const { pair, wait } = require("../helpers/loopback");
+const { e2e, pair, wait } = require("../helpers/loopback");
 
 const both = (ciphers) => ({ connect: { e2eCiphers: ciphers }, listen: { e2eCiphers: ciphers } });
 
 test("ChaCha20-Poly1305 works end to end between two node peers", async (t) => {
     const link = await pair(t, both(["chacha20-poly1305"]));
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     assert.equal(link.clientPeer.e2eInfo().cipher, "chacha20-poly1305");
     assert.equal(link.serverPeer.e2eInfo().cipher, "chacha20-poly1305");
@@ -20,7 +20,7 @@ test("ChaCha20-Poly1305 works end to end between two node peers", async (t) => {
 
 test("bytes and chunked payloads survive ChaCha20 too", async (t) => {
     const link = await pair(t, both(["chacha20-poly1305"]));
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     const payload = Buffer.alloc(9 * 1024 * 1024);
     for (let i = 0; i < payload.length; i++) payload[i] = i % 253;
@@ -39,7 +39,7 @@ test("ends that prefer different ciphers settle on one both offer", async (t) =>
         connect: { e2eCiphers: ["chacha20-poly1305", "aes-256-gcm"] },
         listen: { e2eCiphers: ["aes-256-gcm"] }
     });
-    await link.clientPeer.e2e();
+    await e2e(link);
 
     assert.equal(link.clientPeer.e2eInfo().cipher, "aes-256-gcm");
     assert.equal(link.serverPeer.e2eInfo().cipher, "aes-256-gcm");
@@ -95,7 +95,7 @@ test("a ChaCha-preferring node and an AES-only peer agree on AES", (t) => {
 
 test("a tampered ChaCha20 frame is rejected", async (t) => {
     const link = await pair(t, both(["chacha20-poly1305"]));
-    await link.clientPeer.e2e();
+    await e2e(link);
     await wait(30);
 
     const { rawSocket } = require("../helpers/loopback");
