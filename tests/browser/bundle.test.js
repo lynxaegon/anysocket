@@ -16,8 +16,26 @@ const fs = require("fs");
  * Rather than a DOM, the bundle gets the globals it actually reaches for:
  * `window` with a `document` (which is how its wrappers detect a browser),
  * WebCrypto, and a WebSocket constructor. The real `ws` package stands in for
- * the browser's WebSocket — the two agree on the surface the bundle uses.
+ * the browser's WebSocket, held to the browser's constructor: (url, protocols)
+ * only. Node's `ws` takes an options object there, and so hid a bundle that
+ * passed one, which a browser reads as the subprotocol list and refuses.
  */
+
+/** `ws`, with the browser's WebSocket constructor rules. */
+function browserWebSocket() {
+    const WS = require("ws");
+    return class BrowserWebSocket extends WS {
+        constructor(url, protocols) {
+            if (arguments.length > 2) throw new TypeError("a browser WebSocket takes (url, protocols)");
+            // As WebIDL converts it: absent is none, a list is a list, anything else becomes a
+            // string, and each has to be a valid token. An object becomes "[object Object]".
+            const list = protocols === undefined ? [] : (Array.isArray(protocols) ? protocols : [protocols]).map(String);
+            const bad = list.find((p) => !/^[!#$%&'*+-.^_`|~0-9A-Za-z]+$/.test(p));
+            if (bad !== undefined) throw new SyntaxError("Failed to construct 'WebSocket': The subprotocol '" + bad + "' is invalid.");
+            super(url, list.length ? list : undefined);
+        }
+    };
+}
 
 const BUNDLE = path.resolve(__dirname, "../../dist/anysocket.browser.js");
 
@@ -29,7 +47,7 @@ function loadBundle() {
         self: global.self
     };
 
-    const WS = require("ws");
+    const WS = browserWebSocket();
 
     // The bundle picks its browser modules by checking window.document.
     global.window = {
@@ -227,4 +245,41 @@ test("an async onAuth is enforced in the browser build too", async (t) => {
     }
 
     assert.ok(refused, "a browser peer refusing the server must not end up connected");
+});
+
+// connectTimeout built an options object for `new WebSocket(url, opts)`. A browser read it as
+// the subprotocol list and threw, so any browser connect with connectTimeout set failed.
+test("a browser peer connects with connectTimeout set", async (t) => {
+    const NodeAnySocket = require("../../src/index.js");
+    const server = new NodeAnySocket();
+    const loaded = loadBundle();
+    const browser = new loaded.AnySocket();
+    t.after(async () => {
+        try { await browser.stop(); } catch (_) {}
+        loaded.restore();
+        try { await server.stop(); } catch (_) {}
+    });
+
+    const port = await server.listen("ws", { port: 0 });
+    const peer = await browser.connect("ws", "127.0.0.1", port, { connectTimeout: 3000 });
+    assert.equal(peer.id, server.id);
+});
+
+test("connectTimeout still abandons a browser dial that never answers", async (t) => {
+    const net = require("net");
+    const sockets = [];
+    const mute = net.createServer((s) => sockets.push(s));   // accepts, never upgrades
+    await new Promise((r) => mute.listen(0, "127.0.0.1", r));
+    const loaded = loadBundle();
+    const browser = new loaded.AnySocket();
+    t.after(async () => {
+        try { await browser.stop(); } catch (_) {}
+        loaded.restore();
+        sockets.forEach((s) => s.destroy());
+        mute.close();
+    });
+
+    const started = Date.now();
+    await assert.rejects(browser.connect("ws", "127.0.0.1", mute.address().port, { connectTimeout: 300 }), /timed out/);
+    assert.ok(Date.now() - started < 3000, "took " + (Date.now() - started) + "ms");
 });

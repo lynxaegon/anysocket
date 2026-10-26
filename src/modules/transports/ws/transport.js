@@ -74,8 +74,21 @@ class WS extends AbstractTransport {
             if(!inBrowser) {
                 opts = Object.assign(opts || {}, { maxPayload: this._maxPayload() });
             }
-            let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
+            const url = (plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/';
+            // A browser's WebSocket takes (url, protocols): handed the options object, it read it
+            // as the subprotocol list and the connect failed. Node options never go to a browser,
+            // and connectTimeout is kept there with a timer instead of handshakeTimeout.
+            let ws = inBrowser ? new WebSocket(url) : new WebSocket(url, opts);
+            let timer = null;
+            if (inBrowser && this.options.connectTimeout) {
+                timer = setTimeout(() => {
+                    if (connected) return;
+                    try { ws.close(); } catch (_) {}
+                    reject(new Error("connect timed out after " + this.options.connectTimeout + "ms"));
+                }, this.options.connectTimeout);
+            }
             ws.on('open', socket => {
+                clearTimeout(timer);
                 connected = true;
                 this._applyTcpKeepAlive(ws);
                 this.addPeer(this._peer(ws));
@@ -83,6 +96,7 @@ class WS extends AbstractTransport {
             });
 
             ws.on('error', err => {
+                clearTimeout(timer);
                 if (!plain && !connected) {
                     this.onConnect(true).then(resolve).catch(reject)
                 } else {
