@@ -67,6 +67,7 @@
     "dist/",
     "README.md",
     "MIGRATING-1.0.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "optionalDependencies": {
