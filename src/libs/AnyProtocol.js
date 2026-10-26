@@ -1249,15 +1249,26 @@ module.exports = class AnyProtocol extends EventEmitter {
                 this._recvLinkPacketQueue.push(item);
                 cb(null, null);
             } else {
-                this.onPacket(item.peer, item.recv, item.state).then(() => {
-                    cb(null, null);
-                });
+                this._deliver(item, cb);
             }
         }
     }
 
     processRecvLinkPacketQueue(item, cb) {
+        this._deliver(item, cb);
+    }
+
+    /**
+     * Hand a frame to onPacket. A frame it cannot parse (a binary message too
+     * short for a header, say) rejects; that drops this connection rather than
+     * leaving the rejection unhandled, which took the whole process down.
+     */
+    _deliver(item, cb) {
         this.onPacket(item.peer, item.recv, item.state).then(() => {
+            cb(null, null);
+        }, (e) => {
+            debug(this.peerID, "invalid packet:", e && e.message);
+            this.disconnect("Invalid packet");
             cb(null, null);
         });
     }

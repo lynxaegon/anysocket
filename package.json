@@ -1,6 +1,6 @@
 {
   "name": "anysocket",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A custom protocol over any transport: client/server agnostic, binary framed, with authenticated end-to-end encryption",
   "main": "src/index.js",
   "engines": {

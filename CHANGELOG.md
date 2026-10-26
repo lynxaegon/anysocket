@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+### Fixed
+- A binary message too short for a frame header — a single `0x00` from any
+  unauthenticated socket — left a rejection unhandled, which ended the process.
+  It now drops that connection only.
+
 ## 1.0.0
 
 A rewrite of the protocol and its internals. A 1.0 peer still talks to a 0.4.x
