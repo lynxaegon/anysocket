@@ -216,6 +216,49 @@ test("RPC works from the browser build", async (t) => {
     assert.equal(await peer.rpc.greet("world"), "hello world");
 });
 
+// The browser's isBuffer read `.buffer` of whatever it was given, so a null or undefined
+// RPC argument threw before the call went out (and a null result, when the browser answers).
+test("RPC from the browser build takes null and undefined arguments", async (t) => {
+    const NodeAnySocket = require("../../src/index.js");
+    const server = new NodeAnySocket();
+    server.setRPC({ echo: (a, b, c, d, peer) => [a, b === undefined ? "undefined" : b, c, d], nothing: () => null });
+
+    const loaded = loadBundle();
+    t.after(async () => {
+        loaded.restore();
+        try { await server.stop(); } catch (_) {}
+    });
+
+    const port = await server.listen("ws", { port: 0 });
+    const browser = new loaded.AnySocket();
+    t.after(async () => { try { await browser.stop(); } catch (_) {} });
+
+    const peer = await browser.connect("ws", "127.0.0.1", port);
+    assert.deepEqual(await peer.rpc.echo(null, undefined, 0, false), [null, null, 0, false]);
+    assert.equal(await peer.rpc.nothing(), null);
+});
+
+test("a browser answering an RPC with null", async (t) => {
+    const NodeAnySocket = require("../../src/index.js");
+    const server = new NodeAnySocket();
+    const loaded = loadBundle();
+    t.after(async () => {
+        loaded.restore();
+        try { await server.stop(); } catch (_) {}
+    });
+
+    const port = await server.listen("ws", { port: 0 });
+    const browser = new loaded.AnySocket();
+    browser.setRPC({ nothing: () => null, maybe: (value) => value });
+    t.after(async () => { try { await browser.stop(); } catch (_) {} });
+
+    const connected = new Promise((resolve) => server.once("connected", resolve));
+    await browser.connect("ws", "127.0.0.1", port);
+    const browserPeer = await connected;
+    assert.equal(await browserPeer.rpc.nothing(), null);
+    assert.equal(await browserPeer.rpc.maybe(null), null);
+});
+
 // The bug the browser client of a real consumer was relying on: an async onAuth
 // returned a Promise, which is truthy, so it accepted any server.
 test("an async onAuth is enforced in the browser build too", async (t) => {

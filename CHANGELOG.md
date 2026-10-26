@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.3
+
+### Fixed
+- In the browser, an RPC with a `null` or `undefined` argument threw before it was sent, and so
+  did a browser answering an RPC with `null`: the browser build's buffer check read `.buffer` of
+  whatever it was given.
+
 ## 1.0.2
 
 ### Fixed
