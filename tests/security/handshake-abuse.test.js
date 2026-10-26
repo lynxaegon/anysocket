@@ -162,6 +162,34 @@ test("a frame that fails to decode ends the connection, not the process", async 
     assert.deepEqual(unhandled, []);
 });
 
+test("a binary ws message too short for a header ends the connection, not the process", async (t) => {
+    const WebSocket = require("ws");
+    const server = new AnySocket();
+    t.after(() => stop(server));
+    const port = await server.listen("ws", { port: 0 });
+
+    const unhandled = [];
+    const onUnhandled = (e) => unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    t.after(() => process.off("unhandledRejection", onUnhandled));
+
+    // What a 0.4.x browser client's send(argsArray) became over node's ws: one 0x00.
+    for (const bytes of [[0x00], [0x10, 0x01], [0x00, 0x00, 0x00, 0x00, 0x00]]) {
+        const attacker = new WebSocket("ws://127.0.0.1:" + port + "/");
+        await new Promise((resolve) => attacker.on("open", resolve));
+        const closed = new Promise((resolve) => attacker.on("close", resolve));
+        attacker.send(Buffer.from(bytes));
+        await closed;
+    }
+    await wait(50);
+    assert.deepEqual(unhandled, []);
+
+    // and it still serves
+    const client = new AnySocket();
+    t.after(() => stop(client));
+    await client.connect("ws", "127.0.0.1", port);
+});
+
 // ---- relay announcements ------------------------------------------------------
 
 async function viaRelay(t) {
