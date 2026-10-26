@@ -3,7 +3,6 @@ const constants = require("./_constants");
 const EventEmitter = require("../wrappers/events-wrapper");
 const Packet = require("./Packet");
 const AnyPacket = require("./AnyPacket");
-const AnyPacker = require("./AnyPacker");
 const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
@@ -48,20 +47,14 @@ module.exports = class AnyPeer extends EventEmitter {
                     apply: (target, thisArg, args) => {
                         let path = base.split("/").slice(1);
                         return new Promise((resolve, reject) => {
-                            // Between 1.0 peers a binary argument travels as
-                            // its own bytes, attached beside the call; to a
-                            // 0.4.x peer it still has to be base64 inside it.
-                            const native = this.protocolVersion() >= constants.PROTOCOL_VERSION;
+                            // A binary argument travels as its own bytes,
+                            // attached beside the call.
                             const attached = [];
                             let binary = [];
                             for (let item in args) {
                                 if (BufferUtils.isBuffer(args[item])) {
-                                    if (native) {
-                                        attached.push(args[item]);
-                                        args[item] = null;
-                                    } else {
-                                        args[item] = AnyPacker.packBytes(args[item]);
-                                    }
+                                    attached.push(args[item]);
+                                    args[item] = null;
                                     binary.push(item);
                                 }
                             }
@@ -87,7 +80,7 @@ module.exports = class AnyPeer extends EventEmitter {
                                             const attachedResult = packet.msg[Packet.ATTACHMENTS];
                                             result = attachedResult && attachedResult.length
                                                 ? attachedResult[0]
-                                                : AnyPacker.unpackBytes(result);
+                                                : null;
                                         }
                                         resolve(result);
                                     }
@@ -194,16 +187,16 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     /**
-     * The frame format and handshake this connection settled on: 1 when both
-     * ends speak 1.0, 0 against a 0.4.x peer.
+     * The frame format and handshake this connection settled on. Always 1
+     * since 1.1, which refuses a peer that speaks less.
      */
     protocolVersion() {
         return this[_protocol].protocolVersion;
     }
 
     /**
-     * Can this connection carry a relayed link? Relaying needs the 1.0 frame
-     * format, because a relayed frame is opaque bytes that each hop re-wraps.
+     * Can this connection carry a relayed link? Always true since 1.1: every
+     * connection is on the frame format a relay re-wraps.
      */
     supportsRelay() {
         return this[_protocol].supportsRelay();
@@ -216,6 +209,15 @@ module.exports = class AnyPeer extends EventEmitter {
      */
     isAuthenticated() {
         return !!this[_protocol].authenticated;
+    }
+
+    /**
+     * Did this peer's handshake arrive in the 1.0.x text format? True for a
+     * 1.0.x peer that dialled us: support for that goes in a future release, and
+     * this shows which connections still rely on it.
+     */
+    legacyHandshake() {
+        return !!this[_protocol].legacyHandshake;
     }
 
     /** The optional features both ends announced. */
@@ -232,7 +234,7 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].isOutbound();
     }
 
-    /** The peer's instance as it sent it in the handshake; null from a 0.4.x peer. */
+    /** The peer's instance as it sent it in the handshake; null if it sent none. */
     remoteInstanceID() {
         return this[_protocol].remoteInstanceID;
     }

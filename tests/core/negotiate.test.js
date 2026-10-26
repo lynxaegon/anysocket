@@ -1,13 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const constants = require("../../src/libs/_constants");
-const { pair, protocolOf, rawSocket, listen, stop, wait, AnySocket } = require("../helpers/loopback");
+const { pair, protocolOf, listen, stop, wait, disconnectReasons, AnySocket } = require("../helpers/loopback");
 const WebSocket = require("ws");
-const AnyPacker = require("../../src/libs/AnyPacker");
 
-const authFrame = (data) =>
-    String(constants.PACKET_LENGTH.FULL) + String(constants.PACKET_TYPE.AUTH) +
-    AnyPacker.packInt32(1) + JSON.stringify(data);
+// An AUTH in the 0.4.x text format: flag, type, a 4-character seq, then JSON.
+const textAuth = (data) =>
+    "1" + String(constants.PACKET_TYPE.AUTH) +
+    String.fromCharCode(0, 0, 0, 1) + JSON.stringify(data);
 
 test("capabilities are the intersection, and both ends agree", async (t) => {
     const link = await pair(t, {
@@ -62,24 +62,15 @@ test("a peer announcing a newer version is clamped to what we speak", async (t) 
     assert.equal(protocol.remoteProtocolVersion, 99);
 });
 
-test("a peer announcing nothing is treated as legacy", async (t) => {
+// The version is never negotiated down: what speaks less is refused before this.
+test("a nonsense version leaves the connection on the one we speak", async (t) => {
     const link = await pair(t);
     const protocol = protocolOf(link.clientPeer);
 
-    protocol._negotiate({});
-
-    assert.equal(protocol.protocolVersion, constants.PROTOCOL_VERSION_LEGACY);
-});
-
-test("a nonsense version does not produce a negative one", async (t) => {
-    const link = await pair(t);
-    const protocol = protocolOf(link.clientPeer);
-
-    for (const pv of [-5, "1", null, 1.5, NaN]) {
+    for (const pv of [undefined, -5, "1", null, 1.5, NaN]) {
         protocol._negotiate({ pv });
-        assert.ok(protocol.protocolVersion >= constants.PROTOCOL_VERSION_LEGACY,
-            "pv " + String(pv) + " gave " + protocol.protocolVersion);
-        assert.ok(protocol.protocolVersion <= constants.PROTOCOL_VERSION);
+        assert.equal(protocol.protocolVersion, constants.PROTOCOL_VERSION, "pv " + String(pv));
+        assert.equal(protocol.remoteProtocolVersion, Number.isInteger(pv) ? pv : null);
     }
 });
 
@@ -93,25 +84,36 @@ test("nonsense capabilities are ignored rather than trusted", async (t) => {
     }
 });
 
-// A handshake that carries no version is exactly what 0.4.x sends.
-test("a handshake with no version lands on legacy framing", async (t) => {
-    const server = new AnySocket();
-    t.after(() => stop(server));
+// A handshake that carries no version is exactly what 0.4.x sends. It used to put the
+// connection on the old text format; since 1.1 it is refused, and says why.
+for (const [name, data] of [
+    ["no version", { id: "0123456789abcdef0123456789abcdef" }],
+    ["version 0", { id: "0123456789abcdef0123456789abcdef", pv: 0 }]
+]) {
+    test("a handshake with " + name + " is refused", async (t) => {
+        const reasons = disconnectReasons(t);
+        const server = new AnySocket();
+        t.after(() => stop(server));
 
-    let serverPeer = null;
-    server.on("connected", (peer) => { serverPeer = peer; });
+        let serverPeer = null;
+        let asked = false;
+        server.on("connected", (peer) => { serverPeer = peer; });
+        server.onAuth = () => { asked = true; return true; };
 
-    const port = await listen(server);
-    const socket = new WebSocket("ws://127.0.0.1:" + port + "/");
-    await new Promise((resolve) => socket.on("open", resolve));
+        const port = await listen(server);
+        const socket = new WebSocket("ws://127.0.0.1:" + port + "/");
+        await new Promise((resolve) => socket.on("open", resolve));
+        const closed = new Promise((resolve) => socket.on("close", resolve));
 
-    socket.send(authFrame({ id: "0123456789abcdef0123456789abcdef" }));
-    await wait(200);
+        socket.send(textAuth(data));
+        await closed;
+        await wait(50);
 
-    assert.ok(serverPeer, "the handshake should have completed");
-    assert.equal(serverPeer.protocolVersion(), constants.PROTOCOL_VERSION_LEGACY);
-    socket.close();
-});
+        assert.equal(serverPeer, null, "the handshake must not complete");
+        assert.equal(asked, false, "onAuth is never asked about a peer that is refused anyway");
+        assert.ok(reasons.some((r) => /Protocol version 1 required/.test(r)), "dropped for: " + reasons);
+    });
+}
 
 test("the dial direction is reported but is not what drives negotiation", async (t) => {
     const link = await pair(t);
@@ -121,4 +123,12 @@ test("the dial direction is reported but is not what drives negotiation", async 
     // ...and the negotiated result is identical regardless.
     assert.equal(link.clientPeer.protocolVersion(), link.serverPeer.protocolVersion());
     assert.deepEqual(link.clientPeer.capabilities(), link.serverPeer.capabilities());
+});
+
+// Shows which connections still came in through the 1.0.x text AUTH, which a future
+// release stops reading. Between two 1.1 peers, neither did.
+test("a 1.1 dialler's handshake is not reported as legacy", async (t) => {
+    const link = await pair(t);
+    assert.equal(link.serverPeer.legacyHandshake(), false);
+    assert.equal(link.clientPeer.legacyHandshake(), false);
 });

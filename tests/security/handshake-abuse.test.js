@@ -3,13 +3,12 @@ const assert = require("node:assert");
 const net = require("net");
 const crypto = require("crypto");
 const Frame = require("../../src/libs/Frame");
-const Utils = require("../../src/libs/utils");
 const { stop, wait, AnySocket } = require("../helpers/loopback");
 
 /**
  * A raw tcp connection that speaks 1.0 frames by hand, so a test can send what
- * no well-behaved peer would: a second AUTH, a legacy SWITCH on a 1.0 link, a
- * length hint for a message that never comes.
+ * no well-behaved peer would: a second AUTH, a SWITCH that is not an e2e offer,
+ * a length hint for a message that never comes.
  */
 function rawPeer(t, port) {
     const socket = net.connect(port, "127.0.0.1");
@@ -92,9 +91,10 @@ test("a second AUTH on a connection is refused, so a peer cannot be used to sign
     assert.equal(forged, null, "W must not accept a connection as V");
 });
 
-// Between 1.0 peers the legacy exchange never actually encrypts: it only marked
-// the connection encrypted, satisfied requireE2E, and everything went in clear.
-test("a legacy e2e switch on a 1.0 connection drops it, whatever allowLegacyE2E says", async (t) => {
+// The 0.4.x exchange is gone. Accepted on a 1.0 connection it only ever marked the
+// connection encrypted and satisfied requireE2E, while everything went in clear; a
+// SWITCH in its shape has to drop the connection, not be ignored or half-run.
+test("a SWITCH that is not an e2e offer drops the connection", async (t) => {
     const victim = new AnySocket();
     t.after(() => stop(victim));
     const port = await victim.listen("tcp", { port: 0, requireE2E: true });
@@ -104,9 +104,8 @@ test("a legacy e2e switch on a 1.0 connection drops it, whatever allowLegacyE2E 
 
     const attacker = rawPeer(t, port);
     await attacker.ready;
-    const legacy = await Utils.generateAESKey();
     attacker.send(AUTH, { id: crypto.randomBytes(16).toString("hex"), pv: 1, caps: [] });
-    attacker.send(SWITCH, { type: 2, key: legacy.public, nonce: legacy.nonce });
+    attacker.send(SWITCH, { type: 2, key: crypto.randomBytes(133).toString("base64"), nonce: crypto.randomBytes(32).toString("hex") });
 
     await attacker.closed;
     assert.equal(connected, false);

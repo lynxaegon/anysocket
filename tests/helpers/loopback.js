@@ -117,6 +117,23 @@ function freePort() {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Every reason a connection in this process is dropped for, while the test runs. A
+ * listener refuses a dialler before there is a peer to emit "disconnected" for, so
+ * this is the only place that reason shows.
+ */
+function disconnectReasons(t) {
+    const AnyProtocol = require("../../src/libs/AnyProtocol");
+    const original = AnyProtocol.prototype.disconnect;
+    const reasons = [];
+    AnyProtocol.prototype.disconnect = function (reason) {
+        reasons.push(reason instanceof Error ? reason.message : String(reason));
+        return original.call(this, reason);
+    };
+    t.after(() => { AnyProtocol.prototype.disconnect = original; });
+    return reasons;
+}
+
+/**
  * The client turns e2e on; resolves once BOTH ends are encrypted. The client's e2e()
  * settles when its own side is done, and the server may still be deriving its keys
  * then: a test that went on to look at the server raced it.
@@ -128,4 +145,4 @@ function e2e(link) {
     return link.clientPeer.e2e().then((peer) => server && server.then(() => peer) || peer);
 }
 
-module.exports = { e2e, pair, expectRefused, stop, listen, rawSocket, protocolOf, wait, freePort, AnySocket };
+module.exports = { e2e, pair, expectRefused, stop, listen, rawSocket, protocolOf, wait, freePort, disconnectReasons, AnySocket };

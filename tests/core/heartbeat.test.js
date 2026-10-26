@@ -1,8 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const net = require("net");
-const { e2e, pair, stop, wait, freePort, listen, protocolOf, AnySocket } = require("../helpers/loopback");
-const LegacyAnySocket = require("anysocket-legacy");
+const { e2e, pair, stop, wait, listen, protocolOf, AnySocket } = require("../helpers/loopback");
+const PreviousAnySocket = require("anysocket-1-0");
 
 /**
  * The heartbeat ends a link that has gone silent: a quiet link is probed every
@@ -95,23 +95,22 @@ test("with the heartbeat off, a silent link is left to the transport", async (t)
     assert.deepEqual(ended, { client: null, server: null });
 });
 
-// A 0.4.x peer answers probes even with its own heartbeat off, so a 1.0 peer that
+// A 1.0.x peer answers probes even with its own heartbeat off, so a peer that
 // probes it does not drop it — in either direction of the dial.
-for (const legacyListens of [true, false]) {
-    test(`a 1.0 peer probing an idle 0.4.32 ${legacyListens ? "server" : "client"} with its heartbeat off keeps the link`, async (t) => {
+for (const previousListens of [true, false]) {
+    test(`a peer probing an idle 1.0.1 ${previousListens ? "server" : "client"} with its heartbeat off keeps the link`, async (t) => {
         const modern = new AnySocket();
-        const legacy = new LegacyAnySocket();
-        t.after(() => stop(modern, legacy));
+        const previous = new PreviousAnySocket();
+        t.after(() => stop(modern, previous));
         let dropped = false;
         modern.on("disconnected", () => { dropped = true; });
-        legacy.on("disconnected", () => { dropped = true; });
-        if (legacyListens) {
-            const port = await freePort();   // 0.4.32 cannot listen on port 0
-            await legacy.listen("ws", { port, heartbeatEnabled: false });
+        previous.on("disconnected", () => { dropped = true; });
+        if (previousListens) {
+            const port = await previous.listen("ws", { port: 0, heartbeatEnabled: false });
             await modern.connect("ws", "127.0.0.1", port, HB);
         } else {
             const port = await listen(modern, HB);
-            await legacy.connect("ws", "127.0.0.1", port, { heartbeatEnabled: false });
+            await previous.connect("ws", "127.0.0.1", port, { heartbeatEnabled: false });
         }
         await wait(BUDGET * 3);
         assert.equal(dropped, false);

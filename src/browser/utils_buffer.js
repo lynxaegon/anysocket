@@ -19,21 +19,6 @@ module.exports = window._x = {
         }
         return window.btoa(array.join(''));
     },
-    bufferToHex(buf) {
-        return buf.reduce((memo, i) => {return memo + this.i2hex(i)}, '');
-    },
-    i2hex(i) {
-        return ('0' + i.toString(16)).slice(-2);
-    },
-    bufferFromHex(buf) {
-        let view = new Uint8Array(buf.length / 2);
-
-        for (let i = 0; i < buf.length; i += 2) {
-            view[i / 2] = parseInt(buf.substring(i, i + 2), 16);
-        }
-
-        return view;
-    },
     isBuffer(buf) {
         return !!(buf.buffer instanceof ArrayBuffer && buf.BYTES_PER_ELEMENT);
     }

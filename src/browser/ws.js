@@ -1,6 +1,11 @@
 module.exports = class BrowserWS {
-    constructor(...args) {
-        this.ws = new WebSocket(...args);
+    constructor(url, protocols) {
+        // The second argument is the subprotocols, and a browser throws a
+        // SyntaxError on anything but a string or a list of them. Node's ws takes
+        // an options object there, so one reaching us is dropped, not passed on.
+        const valid = typeof protocols == "string" ||
+            (Array.isArray(protocols) && protocols.every((p) => typeof p == "string"));
+        this.ws = valid ? new WebSocket(url, protocols) : new WebSocket(url);
         // Binary frames should arrive as bytes we can read synchronously; the
         // default is Blob, which would have to be awaited.
         this.ws.binaryType = "arraybuffer";

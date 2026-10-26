@@ -1,40 +1,10 @@
 const BufferUtils = require("../wrappers/utils_buffer");
 
+/**
+ * Bytes as base64 text and back: what AnySocket.Packer exposes. Deprecated, and
+ * kept only so code calling it keeps working; bytes travel as bytes without it.
+ */
 class AnyPacker {
-    packInt32(int) {
-        const arr = new ArrayBuffer(4);
-        const view = new DataView(arr);
-        view.setInt32(0, int, false);
-        return String.fromCharCode.apply(String, new Uint8Array(arr));
-    }
-
-    unpackInt32(bytes) {
-        const arr = new ArrayBuffer(4);
-        const bufView = new Uint8Array(arr);
-        for (let i in bytes) {
-            bufView[i] = bytes.charCodeAt(i);
-        }
-        const view = new DataView(arr);
-        return view.getInt32(0);
-    }
-
-    packHex(hex) {
-        let str = '';
-        for (let n = 0; n < hex.length; n += 2) {
-            str += String.fromCharCode(parseInt(hex.substr(n, 2), 16));
-        }
-        return str;
-    }
-
-    unpackHex(bytes) {
-        let str = '';
-        for (let n = 0; n < bytes.length; n++) {
-            let hex = Number(bytes.charCodeAt(n)).toString(16);
-            str += (hex.length === 1) ? '0' + hex : hex;
-        }
-        return str;
-    }
-
     packBytes(bytes) {
         if(bytes == null) {
             return null;

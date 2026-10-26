@@ -25,7 +25,7 @@ const CODES = {
     SUPERSEDED: "ESUPERSEDED",
     // The caller gave up on a call through its AbortSignal.
     ABORTED: "EABORTED",
-    // Refused by local policy, e.g. the old e2e exchange when it is disabled.
+    // Refused by policy, e.g. a relayed link the relay or the far end will not carry.
     REFUSED: "EREFUSED",
     // A connection that closed before it was established; `reason` says why.
     CONNECTION_FAILED: "ECONNFAILED",
@@ -56,7 +56,7 @@ function reasonText(reason) {
 
 /**
  * An RPC failure as the peer reported it: { error, details, code } on the wire, with
- * an HTTP-style code, which is what a 0.4.x peer sends too. Raised as an
+ * an HTTP-style code. Raised as an
  * AnySocketError, keeping `error` and `details`, with the wire code as `status`.
  */
 function rpcError(msg) {

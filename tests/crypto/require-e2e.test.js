@@ -1,9 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const LegacyAnySocket = require("anysocket-legacy");
 const constants = require("../../src/libs/_constants");
 const Frame = require("../../src/libs/Frame");
-const AnyPacker = require("../../src/libs/AnyPacker");
 const { listen, stop, wait, rawSocket, AnySocket } = require("../helpers/loopback");
 
 async function link(t, serverOptions, clientOptions, ctor = {}) {
@@ -90,41 +88,6 @@ test("e2e that cannot be agreed fails the connection rather than leaving it in c
         client.connect("ws", "127.0.0.1", port, { requireE2E: true, e2eCiphers: ["chacha20-poly1305"] }),
         "a connection that required e2e and could not get it must not come up"
     );
-});
-
-// 0.4.x cannot know about the requirement, but it can still do the old e2e,
-// which this side starts — unless that is turned off too.
-test("against a 0.4.x peer it falls back to the old exchange when that is allowed", async (t) => {
-    const server = new AnySocket();
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(server, legacy));
-
-    let serverPeer = null;
-    server.on("connected", (p) => { serverPeer = p; });
-
-    const port = await listen(server, { requireE2E: true });
-    await legacy.connect("ws", "127.0.0.1", port);
-    await wait(400);
-
-    assert.ok(serverPeer, "the old peer should get in");
-    assert.equal(serverPeer.isE2EEnabled(), true);
-    assert.equal(serverPeer.e2eInfo().cipher, "aes-256-cbc");
-});
-
-test("and refuses a 0.4.x peer when the old exchange is off as well", async (t) => {
-    const server = new AnySocket();
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(server, legacy));
-
-    let arrived = false;
-    server.on("connected", () => { arrived = true; });
-
-    const port = await listen(server, { requireE2E: true, allowLegacyE2E: false });
-    const gone = new Promise((resolve) => legacy.once("disconnected", resolve));
-    legacy.connect("ws", "127.0.0.1", port).catch(() => {});
-
-    await Promise.race([gone, wait(2000)]);
-    assert.equal(arrived, false, "a peer that cannot be encrypted must never be handed over");
 });
 
 // Both ends start the exchange on their own, so the peer's offer can arrive while our keys

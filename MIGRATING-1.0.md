@@ -1,3 +1,17 @@
+# Migrating to anysocket 1.1
+
+1.1 talks to every 1.0.x peer, in both directions of the dial, and not to 0.4.x.
+Code that ran on 1.0.x runs unchanged; `allowLegacyE2E` is ignored and
+`AnySocket.Packer` is deprecated but still works.
+
+**Every peer must be on 1.0.x first.** A 0.4.x peer is refused, whichever end
+dials.
+
+A 1.0.x dialler still sends its first handshake packet in the old text format,
+and 1.1 still accepts that one packet. A future release will stop accepting it,
+so move every peer to 1.1 or later before then.
+`peer.legacyHandshake()` is true on each connection that still came in that way.
+
 # Migrating to anysocket 1.0
 
 0.4.x code keeps working, and a 1.0 peer still talks to a 0.4.x peer on the

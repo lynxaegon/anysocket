@@ -356,37 +356,3 @@ test("opening with a different header fails", async (t) => {
 
     await assert.rejects(async () => E2E.open(right.recvKey, 0, new Uint8Array([1, 2, 0, 0, 0, 1]), sealed));
 });
-
-// A 0.4.x peer cannot do any of the above, so that link keeps the old
-// exchange and cipher — and says so, rather than claiming the new suite.
-test("a 0.4.x link reports the old suite and has no binding", async (t) => {
-    const LegacyAnySocket = require("anysocket-legacy");
-    const { listen, stop, AnySocket } = require("../helpers/loopback");
-
-    const server = new AnySocket();
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(server, legacy));
-
-    let serverPeer = null;
-    server.on("connected", (peer) => { serverPeer = peer; });
-
-    const port = await listen(server);
-    const peer = await legacy.connect("ws", "127.0.0.1", port);
-    await wait(150);
-
-    assert.equal(serverPeer.protocolVersion(), constants.PROTOCOL_VERSION_LEGACY);
-    assert.equal(serverPeer.e2eInfo(), null, "nothing is encrypted yet");
-
-    const up = new Promise((resolve) => peer.on("e2e", resolve));
-    peer.e2e();
-    await up;
-    await wait(50);
-
-    assert.deepEqual(serverPeer.e2eInfo(), {
-        protocolVersion: 0,
-        kex: "secp521r1",
-        cipher: "aes-256-cbc"
-    });
-    assert.equal(serverPeer.getChannelBinding(), null,
-        "the old exchange has nothing to bind to");
-});

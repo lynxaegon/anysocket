@@ -26,8 +26,7 @@ class WS extends AbstractTransport {
                 // `ws` allows 100MB per frame by default, which an
                 // unauthenticated peer can make us buffer. Derived from the
                 // frame size so raising maxPacketSize does not quietly start
-                // tripping the transport limit; doubled because a 0.4.x
-                // encrypted payload is hex.
+                // tripping the transport limit.
                 maxPayload: this._maxPayload()
             });
             this.ws.on("connection", socket => {
@@ -56,26 +55,45 @@ class WS extends AbstractTransport {
     onConnect(plain) {
         return new Promise((resolve, reject) => {
             let connected = false;
-            let opts = null;
-            if(this.options.cookies) {
-                opts = {
-                    headers: {
-                        Cookie: this._formatCookies(this.options.cookies)
-                    }
+            const url = (plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/';
+
+            let ws;
+            let timer = null;
+            let timedOut = false;
+            if(inBrowser) {
+                // Only the URL. A browser's WebSocket reads a second argument as
+                // its subprotocols and throws on anything else, so the node
+                // options below broke every dial that set connectTimeout or
+                // cookies. It has no handshake timeout of its own either, so
+                // connectTimeout is a timer here: a dial that has not opened in
+                // time is closed and treated as failed, as node treats its own
+                // handshake timeout: the secure attempt falls back to plain ws.
+                ws = new WebSocket(url);
+                if(this.options.connectTimeout) {
+                    timer = setTimeout(() => {
+                        if (connected) return;
+                        timedOut = true;
+                        try { ws.close(); } catch (_) {}
+                        if (!plain) this.onConnect(true).then(resolve).catch(reject);
+                        else reject(new Error("Opening handshake has timed out"));
+                    }, this.options.connectTimeout);
                 }
+            } else {
+                let opts = { maxPayload: this._maxPayload() };   // the limit we announce
+                if(this.options.cookies) {
+                    opts.headers = { Cookie: this._formatCookies(this.options.cookies) };
+                }
+                // connectTimeout means the same here as on tcp: a dial that never
+                // answers is abandoned rather than left to the OS's own timeout.
+                if(this.options.connectTimeout) {
+                    opts.handshakeTimeout = this.options.connectTimeout;
+                }
+                ws = new WebSocket(url, opts);
             }
-            // connectTimeout means the same here as on tcp: a dial that never
-            // answers is abandoned rather than left to the OS's own timeout.
-            if(this.options.connectTimeout) {
-                opts = Object.assign(opts || {}, { handshakeTimeout: this.options.connectTimeout });
-            }
-            // The same limit as a listener's, and the one we announce. A browser sets
-            // its own and takes no options here.
-            if(!inBrowser) {
-                opts = Object.assign(opts || {}, { maxPayload: this._maxPayload() });
-            }
-            let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
+
             ws.on('open', socket => {
+                clearTimeout(timer);
+                if (timedOut) return;
                 connected = true;
                 this._applyTcpKeepAlive(ws);
                 this.addPeer(this._peer(ws));
@@ -83,6 +101,10 @@ class WS extends AbstractTransport {
             });
 
             ws.on('error', err => {
+                clearTimeout(timer);
+                // Closing a dial that timed out can raise an error of its own; that
+                // must not start the plain-ws retry.
+                if (timedOut) return;
                 if (!plain && !connected) {
                     this.onConnect(true).then(resolve).catch(reject)
                 } else {
@@ -94,13 +116,14 @@ class WS extends AbstractTransport {
         });
     }
 
-    // How much may sit in the socket write buffer before a send waits for it
-    // to drain. Bounds memory on a large transfer without costing a round of
-    // latency per chunk.
+    // The largest message the socket takes in: a frame of maxPacketSize, with
+    // 1MB of headroom for its header, an e2e tag and a relay's wrapping, and
+    // never under 8MB. It used to be twice the frame size, for hex-encoded
+    // payloads that are no longer sent.
     _maxPayload() {
         if (this.options.maxPayload) return this.options.maxPayload;
         const frame = this.options.maxPacketSize || 4 * 1024 * 1024;
-        return Math.max(8 * 1024 * 1024, frame * 2 + 1024 * 1024);
+        return Math.max(8 * 1024 * 1024, frame + 1024 * 1024);
     }
 
     _peer(socket) {

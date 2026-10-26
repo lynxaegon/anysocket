@@ -14,18 +14,21 @@ A custom protocol over any transport — client/server agnostic, binary framed, 
 
 #### Important
 
-1.0 is the first stable release. Upgrading from 0.4.x? See
-[MIGRATING-1.0.md](MIGRATING-1.0.md) — a few behaviours changed, and one of them
-(`onAuth` is now actually awaited) can start refusing peers that used to connect.
+1.1 talks to every 1.0.x peer, in both directions of the dial. It does not talk
+to 0.4.x: a 0.4.x peer is refused, with a reason that says so.
 
-Releases come in two steps:
+| | talks to 1.0.x | talks to 0.4.x | |
+|---|---|---|---|
+| **1.0.x** | yes | yes | the bridge: upgrade a running fleet one process at a time |
+| **1.1** | yes | no | drops the 0.4.x wire format and its legacy e2e exchange |
 
-| | talks to 0.4.x | |
-|---|---|---|
-| **1.0.x** | yes | the bridge: upgrade a running fleet one process at a time |
-| **1.1** | no | drops the 0.4.x wire format and its legacy e2e exchange |
+A 1.0.x dialler's first handshake packet is still in the old text format, and 1.1
+still accepts it; a future release will not. Move every peer to 1.1 before then:
+`peer.legacyHandshake()` shows which connections still rely on it.
 
-Move every peer to 1.0 before any of them goes to 1.1.
+Upgrading from 0.4.x? Move every peer to 1.0.x first, then to 1.1 — see
+[MIGRATING-1.0.md](MIGRATING-1.0.md). Of the 1.0 changes, one (`onAuth` is now
+actually awaited) can start refusing peers that used to connect.
 
 <a name="features"></a>
 ## Features
@@ -46,36 +49,40 @@ Move every peer to 1.0 before any of them goes to 1.1.
   bundle
 * Transports: **ws/wss**, **tcp**, **ipc** (unix socket / named pipe), **http/https** —
   and tcp can share one port with ws/http
-* Talks to 0.4.x peers on the wire, for upgrading a fleet one peer at a time
-  (1.0.x only: 1.1 drops it — see [MIGRATING-1.0.md](MIGRATING-1.0.md))
+* Talks to 1.0.x peers on the wire, so a fleet moves to 1.1 one peer at a time
 * All peers have a UUIDv4 associated
 * Disconnect detection using a heartbeat
 * Tested: `npm test`, split into groups so iterating is quick
 
 ** _http_ transport is experimental
 
-_Info: Binary RPC arguments and responses are sent as bytes between 1.0 peers, and auto packed/unpacked (<a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>) for a 0.4.x peer._
+_Info: Binary RPC arguments and responses are sent as bytes. <a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a> is deprecated._
 
 ## Benchmarks
 
-`npm run bench` measures 1.0 against the published 0.4.32, plain and encrypted,
-on loopback, interleaving the two and reporting the median of several runs
-(`BENCH_RUNS`). Median of 5 (node 24, x64, ws):
+`npm run bench` measures 1.1 against the published 1.0.1, both ends of each link
+on the same version, plain and encrypted, on loopback, interleaving the two and
+reporting the median of several runs (`BENCH_RUNS`). Between two peers of the same
+version 1.1 puts the same frames on the wire as 1.0.1, so the two measure the same
+within the noise of a loopback run. Median of 5 (node 24, x64, ws):
 
-| | 0.4.32 | 1.0 | |
-|---|---|---|---|
-| connect + authenticate | 13.4 ms | 13.5 ms | about the same |
-| e2e handshake | 7.7 ms | **1.8 ms** | 4.2x faster |
-| 2KB messages, plain | 25.6k msg/s | **35.8k msg/s** | 1.4x faster (noisy) |
-| 2KB messages, encrypted | 14.4k msg/s | **29.0k msg/s** | 2.0x faster, 2x fewer bytes |
-| 32MB of text, plain | 136 MB/s | **151 MB/s** | 1.1x faster |
-| 32MB of text, encrypted | 52.6 MB/s | **123 MB/s** | 2.3x faster, 2x fewer bytes |
-| 32MB of bytes, plain | 103 MB/s | **239 MB/s** | 2.3x faster, 1.3x fewer bytes |
-| 32MB of bytes, encrypted | 40.2 MB/s | **181 MB/s** | 4.5x faster, 2.7x fewer bytes |
+| | 1.0.1 | 1.1 |
+|---|---|---|
+| connect + authenticate | 13.4 ms | 14.2 ms |
+| e2e handshake | 1.7 ms | 1.6 ms |
+| 2KB messages, plain | 55.5k msg/s | 58.8k msg/s |
+| 2KB messages, encrypted | 32.9k msg/s | 24.7k msg/s * |
+| 32MB of text, plain | 198 MB/s | 191 MB/s |
+| 32MB of text, encrypted | 156 MB/s | 159 MB/s |
+| 32MB of bytes, plain | 323 MB/s | 448 MB/s * |
+| 32MB of bytes, encrypted | 257 MB/s | 247 MB/s |
 
-Turning e2e on costs about 26% of throughput (128MB of bytes: 233 MB/s plain,
-172 MB/s encrypted). tcp is faster still than ws; these are ws so both versions
-run the same transport.
+\* noisy: the samples ranged over 59–97% of the median. Measured alone, over 11
+samples, encrypted 2KB messages ran at 31.9k msg/s on 1.0.1 and 33.0k on 1.1.
+
+Turning e2e on costs about a third of throughput (128MB of bytes: 376 MB/s plain,
+243 MB/s encrypted). tcp is faster still than ws. For 1.0 against 0.4.32, see
+the 1.0.0 entry in [CHANGELOG.md](CHANGELOG.md).
 
 See also [benchmarks](benchmarks) for the http/ws server comparisons.
 
@@ -193,16 +200,16 @@ More in the `examples` folder.
 
 See [documentation](docs#api) and the [examples](examples) folder.
 
-Upgrading from 0.4.x? [MIGRATING-1.0.md](MIGRATING-1.0.md).
+Upgrading from 0.4.x? Through 1.0.x: [MIGRATING-1.0.md](MIGRATING-1.0.md).
 
 ## Tests
 
 ```
 npm run test:unit       # no sockets, ~0.3s — the quick loop
-npm run test:fast       # everything but the 0.4.32 interop pass
+npm run test:fast       # unit, core and wire: no crypto, security or interop
 npm run test:browser    # drives the built dist/ bundle
 npm test                # all of it
-npm run bench           # 1.0 vs 0.4.32, plain and encrypted
+npm run bench           # 1.1 vs 1.0.1, plain and encrypted
 ```
 
 <a name="future"></a>

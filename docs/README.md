@@ -5,7 +5,8 @@ both ends use the same API, and nothing below depends on which end dialled.
 
 Unencrypted by default; <a href="#AnyPeer.e2e">peer.e2e()</a> opts in.
 
-Upgrading from 0.4.x? See [MIGRATING-1.0.md](../MIGRATING-1.0.md).
+1.1 talks to every 1.0.x peer, both ways, not to 0.4.x. Upgrading from 0.4.x? Move to 1.0.x first: see
+[MIGRATING-1.0.md](../MIGRATING-1.0.md).
 
 <a name="api"></a>
 ## Api
@@ -38,7 +39,7 @@ Upgrading from 0.4.x? See [MIGRATING-1.0.md](../MIGRATING-1.0.md).
     * <a href="#AnyPacket.peer"><code><b>peer</b></code></a>
     * <a href="#AnyPacket.msg"><code><b>msg</b></code></a>
     * <a href="#AnyPacket.reply"><code><b>reply()</b></code></a>
-* <a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>
+* <a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a> (deprecated)
     * <a href="#AnySocket.Packer.pack"><code><b>pack()</b></code></a>
     * <a href="#AnySocket.Packer.unpack"><code><b>unpack()</b></code></a>
 * <a href="#AnyPeer.constructor"><code><b>AnyPeer()</b></code></a>
@@ -60,6 +61,7 @@ Upgrading from 0.4.x? See [MIGRATING-1.0.md](../MIGRATING-1.0.md).
     * <a href="#AnyPeer.supportsRelay"><code><b>supportsRelay()</b></code></a>
     * <a href="#AnyPeer.isOutbound"><code><b>isOutbound()</b></code></a>
     * <a href="#AnyPeer.isAuthenticated"><code><b>isAuthenticated()</b></code></a>
+    * <a href="#AnyPeer.legacyHandshake"><code><b>legacyHandshake()</b></code></a>
     * <a href="#AnyPeer.on.message"><code><b>event: _message_</b></code></a>
     * <a href="#AnyPeer.on.e2e"><code><b>event: _e2e_</b></code></a>
     * <a href="#AnyPeer.on.disconnected"><code><b>event: _disconnected_</b></code></a>
@@ -162,7 +164,7 @@ after `sniffTimeout` (30s).
     heartbeatEnabled: true, // app-level heartbeats
     heartbeatsMaxMissed: 2, // missed heartbeats before disconnecting
     disconnectOnReplyTimeout: false, // pre-1.0: a missed reply killed the connection
-    maxPacketSize: 4 * 1024 * 1024, // bytes per 1.0 frame
+    maxPacketSize: 4 * 1024 * 1024, // bytes per frame
     sendWindow: 8, // frames in flight while framing a message
     sendHighWaterMark: 16 * 1024 * 1024, // unflushed bytes before a send waits
     maxHandshakeMessageSize: 64 * 1024, // ceiling before a peer authenticates
@@ -171,7 +173,6 @@ after `sniffTimeout` (30s).
     capabilities: [], // narrow to opt out of a feature
     requireE2E: false, // not up until encrypted; either end asking is enough
     e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
-    allowLegacyE2E: true, // allow the old exchange with a 0.4.x peer
     maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
     duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
     tcpKeepAlive: false, // SO_KEEPALIVE on the socket
@@ -205,7 +206,7 @@ Connects to AnySocket Server
     heartbeatEnabled: true, // app-level heartbeats
     heartbeatsMaxMissed: 2, // missed heartbeats before disconnecting
     disconnectOnReplyTimeout: false, // pre-1.0: a missed reply killed the connection
-    maxPacketSize: 4 * 1024 * 1024, // bytes per 1.0 frame
+    maxPacketSize: 4 * 1024 * 1024, // bytes per frame
     sendWindow: 8, // frames in flight while framing a message
     sendHighWaterMark: 16 * 1024 * 1024, // unflushed bytes before a send waits
     maxHandshakeMessageSize: 64 * 1024, // ceiling before a peer authenticates
@@ -214,7 +215,6 @@ Connects to AnySocket Server
     capabilities: [], // narrow to opt out of a feature
     requireE2E: false, // not up until encrypted; either end asking is enough
     e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
-    allowLegacyE2E: true, // allow the old exchange with a 0.4.x peer
     maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
     duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
     tcpKeepAlive: false, // SO_KEEPALIVE on the socket
@@ -371,7 +371,7 @@ A method that throws or rejects makes the call reject with an
     message: "error message",
     error: "error message",
     details: "details",
-    status: 500 // the code on the wire: 404, 403 or 500, as a 0.4.x peer also sends
+    status: 500 // the code on the wire: 404, 403 or 500
 }
 ```
 
@@ -611,6 +611,9 @@ _note: you can only reply to a normal message, you **cannot** reply to a **reply
 <a name="AnySocket.Packer.pack"></a>
 ### AnySocket.Packer.pack(bytes)
 
+_Deprecated._ Bytes travel as bytes in messages and RPC; this base64 packing was
+only ever needed for a 0.4.x peer. Kept so existing code keeps working.
+
 Packs the bytes
 
 **Arguments:**
@@ -623,6 +626,8 @@ Packs the bytes
 -------------------------------------------------------
 <a name="AnySocket.Packer.unpack"></a>
 ### AnySocket.Packer.unpack(bytes)
+
+_Deprecated_, as <a href="#AnySocket.Packer.pack">pack()</a> is.
 
 Unpacks the bytes
 
@@ -709,7 +714,7 @@ not a property on `rpc`, so it cannot collide with a remote method name.
 <a name="AnyPeer.e2e"></a>
 ### AnyPeer.e2e()
 
-Enables E2E encryption: an x25519 key exchange, then AES-256-GCM (or ChaCha20-Poly1305 between node peers), with keys that exist only for this connection. A 0.4.x peer gets its own exchange, ECDH secp521r1 and AES-256-CBC.
+Enables E2E encryption: an x25519 key exchange, then AES-256-GCM (or ChaCha20-Poly1305 between node peers), with keys that exist only for this connection.
 
 **Returns** a Promise that resolves once the link is encrypted, or rejects if it could not be.
 
@@ -724,8 +729,7 @@ Sends a message to the peer
 **Arguments:**
 * `message` - a JSON stringifiable value (`0`, `false` and `""` arrive as
   themselves), or a `Uint8Array`/`Buffer`, which travels as those bytes
-  between 1.0 peers (no base64). For a 0.4.x peer use
-  <a href="#AnySocket.Packer.pack"><code>AnySocket.Packer</code></a>.
+  (no base64).
 * `awaitReply` - set to true if a reply is expected (optional) - default: false.
   Anything other than a boolean rejects with a `TypeError`; answer a message
   with <a href="#AnyPacket.reply">reply()</a>
@@ -830,8 +834,7 @@ same connection._
 What the connection settled on, or `null` if it is not encrypted.
 
 ```javascript
-{ protocolVersion: 1, kex: "x25519", cipher: "aes-256-gcm" }
-{ protocolVersion: 0, kex: "secp521r1", cipher: "aes-256-cbc" }   // a 0.4.x peer
+{ protocolVersion: 1, kex: "x25519", cipher: "aes-256-gcm", authenticated: false }
 ```
 
 [back to top](#api)
@@ -840,9 +843,8 @@ What the connection settled on, or `null` if it is not encrypted.
 <a name="AnyPeer.protocolVersion"></a>
 ### AnyPeer.protocolVersion()
 
-`1` when both ends speak 1.0, `0` against a 0.4.x peer. Both ends announce a
-version in the handshake and the lower one wins, so an old peer is never sent a
-frame it cannot read.
+Always `1`. Both ends announce a version in the handshake, and since 1.1 a peer
+that announces less — a 0.4.x peer announces none — is refused.
 
 [back to top](#api)
 
@@ -860,10 +862,18 @@ sent it.
 <a name="AnyPeer.supportsRelay"></a>
 ### AnyPeer.supportsRelay()
 
-Whether this connection can carry a relayed link. Relaying needs the 1.0 frame
-format on every hop, because a relayed frame is opaque bytes that each hop
-re-wraps — <a href="#AnySocket.proxy">proxy()</a> rejects with a reason when a
-hop is 0.4.x.
+Whether this connection can carry a relayed link. Always `true` since 1.1:
+every connection is on the frame format a relay re-wraps.
+
+[back to top](#api)
+
+-------------------------------------------------------
+<a name="AnyPeer.legacyHandshake"></a>
+### AnyPeer.legacyHandshake()
+
+`true` when this peer is a 1.0.x dialler whose first handshake packet came in the
+old text format. 1.1 still accepts that packet; a future release will not, so a
+peer for which this is true has to move to 1.1 or later before then.
 
 [back to top](#api)
 

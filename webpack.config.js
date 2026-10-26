@@ -44,8 +44,9 @@ module.exports = {
         new webpack.NormalModuleReplacementPlugin(/^debug$/, function(resource) {
             resource.request = path.resolve(__dirname, 'src/browser/', "debug.js")
         }),
+        // e2e uses WebCrypto in the browser; node's crypto is only a fast path.
         new webpack.NormalModuleReplacementPlugin(/^crypto$/, function(resource) {
-            resource.request = path.resolve(__dirname, 'src/browser/', "crypto.js")
+            resource.request = path.resolve(__dirname, 'src/browser/', "empty.js")
         }),
         new webpack.NormalModuleReplacementPlugin(/^ws$/, function(resource) {
             resource.request = path.resolve(__dirname, 'src/browser/', "ws.js")

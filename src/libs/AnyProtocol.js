@@ -2,18 +2,13 @@ const debug = require('debug')('AnyProtocol');
 const EventEmitter = require("../wrappers/events-wrapper");
 const SerialQueue = require("./SerialQueue");
 const Packet = require("./Packet");
-const Utils = require("../wrappers/utils");
-const AnyPacker = require("./AnyPacker");
 const constants = require("./_constants");
 const Frame = require("./Frame");
 const E2E = require("./E2E");
 const Auth = require("./Auth");
+const LegacyAuth = require("./LegacyAuth");
 const { errors } = require("./errors");
-const ENCRYPTION_SECRET = Symbol("secret key");
-const ENCRYPTION_PRIVATE = Symbol("private key");
 const AUTH_RECEIVED = Symbol("auth received");
-const ENCRYPTION_NONCE = Symbol("nonce");
-const ENCRYPTION_STARTING = Symbol("e2e starting");
 const E2E_OFFER = Symbol("our e2e offer");
 const E2E_OFFERING = Symbol("our e2e offer, being made");
 const E2E_SESSION = Symbol("e2e session");
@@ -40,6 +35,10 @@ const MIN_FRAME = 64 * 1024;
 // What a listener accepts per frame before it has answered the AUTH: the AUTH itself,
 // with room for its framing.
 const HANDSHAKE_HEADROOM = 4 * 1024;
+// Why a peer that sends something other than a frame is dropped.
+const NOT_A_FRAME = "Not an anysocket frame";
+// Why a peer announcing no protocol version, or one below 1, is refused.
+const VERSION_REFUSED = "Protocol version 1 required (0.4.x peers are not supported since anysocket 1.1)";
 
 module.exports = class AnyProtocol extends EventEmitter {
     constructor(anysocket, peer, options) {
@@ -47,10 +46,6 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         this._seq = 0;
 
-        this[ENCRYPTION_SECRET] = null;
-        this[ENCRYPTION_PRIVATE] = null;
-        this[ENCRYPTION_NONCE] = null;
-        this[ENCRYPTION_STARTING] = false;
         this[E2E_OFFER] = null;
         this[E2E_SESSION] = null;
         this[E2E_PENDING] = null;
@@ -63,9 +58,12 @@ module.exports = class AnyProtocol extends EventEmitter {
         // Settled in the handshake from both ends' requireE2E.
         this.e2eRequired = false;
 
-        // Negotiated in the AUTH exchange (see _negotiate). 0 until then, and
-        // 0 for good against a 0.4.x peer.
-        this.protocolVersion = constants.PROTOCOL_VERSION_LEGACY;
+        // What this connection speaks. Always 1 now: everything goes out as frames,
+        // the first AUTH included, and a peer announcing less is refused (see
+        // _handleAuth). Kept as a field for what reads it.
+        this.protocolVersion = constants.PROTOCOL_VERSION;
+        // Did the peer's AUTH arrive in the old text format? See LegacyAuth.
+        this.legacyHandshake = false;
         this.remoteProtocolVersion = null;
         this.remoteInstanceID = null;
         this.capabilities = [];
@@ -79,7 +77,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[held] = [];
         this[preAuthParked] = 0;
         // The largest frame the peer will take, from its AUTH. null when it did not
-        // say (a 0.4.x peer, or one relayed by a relay that could not tell).
+        // say (a transport with no limit, or a relay that could not tell).
         this.remoteMaxFrame = null;
 
         this.peerID = peer.id;
@@ -123,12 +121,10 @@ module.exports = class AnyProtocol extends EventEmitter {
             // Chunks allowed in flight while framing a message. More overlaps
             // framing and encryption with the writes; fewer holds less memory.
             sendWindow: 8,
-            // Bytes per 1.0 frame. Measured: on an encrypted 128MB transfer,
+            // Bytes per frame. Measured: on an encrypted 128MB transfer,
             // 1MB frames manage ~105MB/s and 4MB frames ~170MB/s, because the
             // per-frame work stops dominating. 8MB is a little quicker again
-            // but holds noticeably more. Only applies to 1.0 frames — a 0.4.x
-            // peer keeps 1MB chunks, since its hex-encoded e2e payload would
-            // otherwise double past the frame limit.
+            // but holds noticeably more.
             maxPacketSize: 4 * 1024 * 1024,
             // How much may sit unflushed in the socket write buffer before a
             // send waits. Measured: 4MB costs about a quarter of the
@@ -137,13 +133,6 @@ module.exports = class AnyProtocol extends EventEmitter {
             // What we announce in the handshake. Narrow it to opt out of a
             // feature; the peer is then never sent it.
             capabilities: constants.CAPABILITIES,
-            // The e2e a 0.4.x peer can do: an unauthenticated secp521r1
-            // exchange, then AES-256-CBC with no integrity, keyed per packet
-            // by PBKDF2 at one iteration. Allowed by default so a fleet can be
-            // upgraded a peer at a time; turn it off once it has been, and a
-            // 0.4.x peer can no longer be encrypted with it — in either
-            // direction.
-            allowLegacyE2E: true,
             // Ciphers to offer for e2e, most preferred first. Left unset, this
             // machine ranks them by measuring which it runs faster. Setting it
             // pins a choice — the negotiation still only ever picks one both
@@ -192,10 +181,9 @@ module.exports = class AnyProtocol extends EventEmitter {
         }
         if (this.peerID) {
             // A relayed link has no AUTH exchange of its own to negotiate
-            // from: it exists because a relay confirmed 1.0 on both of its
-            // hops, so both of its endpoints speak 1.0 by construction.
+            // from: both of its hops completed one, so both of its endpoints
+            // speak version 1 by construction.
             if (this.isProxy()) {
-                this.protocolVersion = constants.PROTOCOL_VERSION;
                 this.remoteProtocolVersion = constants.PROTOCOL_VERSION;
                 // There is no handshake to carry the requirement, so a relayed
                 // link takes it from the connection it is relayed over.
@@ -223,9 +211,9 @@ module.exports = class AnyProtocol extends EventEmitter {
         }
     }
 
-    /** Can this connection carry a relayed link? */
+    /** Can this connection carry a relayed link? Every connection can, since 1.1. */
     supportsRelay() {
-        return this.protocolVersion >= constants.PROTOCOL_VERSION;
+        return true;
     }
 
     isConnected() {
@@ -274,17 +262,13 @@ module.exports = class AnyProtocol extends EventEmitter {
         const window = Math.max(1, this.options.sendWindow);
         const chunkSize = this._frameSize();
 
-        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
-            const frame = packet.singleFrame(chunkSize);
-            if (frame) {
-                this._packetQueue.push({ packet: frame, resolve: () => resolve(), reject: reject });
-                return;
-            }
+        const frame = packet.singleFrame(chunkSize);
+        if (frame) {
+            this._packetQueue.push({ packet: frame, resolve: () => resolve(), reject: reject });
+            return;
         }
 
-        const chunks = packet.chunks(
-            chunkSize, this._encrypt.bind(this), this.protocolVersion
-        );
+        const chunks = packet.chunks(chunkSize);
 
         let inFlight = 0;
         let drained = null;
@@ -333,7 +317,6 @@ module.exports = class AnyProtocol extends EventEmitter {
      * receiver's transport allowed was disconnected with nothing delivered.
      */
     _frameSize() {
-        if (this.protocolVersion < constants.PROTOCOL_VERSION) return constants.MAX_PACKET_SIZE;
         const ours = this.options.maxPacketSize;
         if (!this.remoteMaxFrame) return ours;
         return Math.max(MIN_FRAME, Math.min(ours, this.remoteMaxFrame - FRAME_HEADROOM));
@@ -359,33 +342,8 @@ module.exports = class AnyProtocol extends EventEmitter {
         });
     }
 
-    /**
-     * Drop the connection rather than run the 0.4.x exchange, and say so.
-     *
-     * Between 1.0 peers it is refused whatever allowLegacyE2E says: a 1.0
-     * connection never encrypts with the legacy keys — its frames are sealed
-     * only by a 1.0 session — so accepting it would mark the connection
-     * encrypted, satisfy requireE2E and settle e2e(), while everything went on
-     * in clear. Anyone able to inject one frame before e2e could arrange that.
-     */
-    _refusesLegacyE2E() {
-        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
-            this.disconnect("Legacy e2e refused on a 1.0 connection");
-            return true;
-        }
-        if (!this.options.allowLegacyE2E) {
-            this.disconnect("Legacy e2e refused");
-            return true;
-        }
-        return false;
-    }
-
     hasE2EEnabled() {
-        // The legacy keys only ever encrypt a 0.4.x connection.
-        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
-            return !!(this[E2E_SESSION] && this[E2E_SESSION].ready);
-        }
-        return !!this[ENCRYPTION_PRIVATE] || !!(this[E2E_SESSION] && this[E2E_SESSION].ready);
+        return !!(this[E2E_SESSION] && this[E2E_SESSION].ready);
     }
 
     /**
@@ -400,18 +358,14 @@ module.exports = class AnyProtocol extends EventEmitter {
 
     e2eInfo() {
         const session = this[E2E_SESSION];
-        if (!session || !session.ready) {
-            return this[ENCRYPTION_PRIVATE]
-                ? { protocolVersion: 0, kex: "secp521r1", cipher: "aes-256-cbc" }
-                : null;
-        }
+        if (!session || !session.ready) return null;
         return { protocolVersion: 1, kex: session.kex, cipher: session.cipher, authenticated: !!session.authenticated };
     }
 
     /**
      * Encrypt this connection, resolving once it is live.
      *
-     * Either end may call it and both may call it at once: the 1.0 exchange
+     * Either end may call it and both may call it at once: the exchange
      * is symmetric, so the two offers simply cross and each side derives the
      * same keys from them. There is no initiator to elect, which is what the
      * caller used to have to do for itself.
@@ -431,18 +385,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             return promise;
         }
 
-        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
-            this._offerE2E().catch((e) => this.disconnect(e));
-        } else {
-            if (!this.options.allowLegacyE2E) {
-                this[E2E_PENDING].reject(errors.refused(
-                    "Legacy e2e is disabled, and this peer cannot do the 1.0 exchange"));
-                this[E2E_PENDING] = null;
-                return promise;
-            }
-            this._legacyE2E();
-        }
-
+        this._offerE2E().catch((e) => this.disconnect(e));
         return promise;
     }
 
@@ -529,35 +472,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         this._e2eSettled();
     }
 
-    _legacyE2E() {
-        // Idempotent. A second call while a switch is in flight — or after one
-        // finished — used to start a second key exchange and desync the two
-        // ends. Both sides calling e2e() at once is still the caller's problem
-        // until 1.0 lands initiator election.
-        if (this[ENCRYPTION_STARTING] ||
-            this[ENCRYPTION_PRIVATE] ||
-            this.state == constants.PROTOCOL_STATES.SWITCHING_PROTOCOL ||
-            this.ENCRYPTION_STATE == constants.PROTOCOL_ENCRYPTION.E2EE) {
-            return;
-        }
-        this[ENCRYPTION_STARTING] = true;
-
-        Utils.generateAESKey().then((result) => {
-            this[ENCRYPTION_PRIVATE] = result.private;
-            this[ENCRYPTION_NONCE] = result.nonce;
-
-            this.changeState(constants.PROTOCOL_STATES.SWITCHING_PROTOCOL);
-            this.send(Packet.data({
-                type: constants.PROTOCOL_ENCRYPTION.E2EE,
-                key: result.public,
-                nonce: result.nonce
-            }).setType(Packet.TYPE.SWITCH));
-        }).catch((e) => {
-            this.disconnect(e);
-        });
-    }
-
-    onPacket(peer, recv, encryptionState) {
+    onPacket(peer, recv) {
         return new Promise((resolve, reject) => {
             let invalidPacket = true;
 
@@ -598,7 +513,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                 // whole of it is allocated at once — so the total, not only
                 // what has arrived, has to fit the cap.
                 packet.maxTotal = cap;
-                packet.deserialize(recv, encryptionState, this._decrypt.bind(this))
+                packet.deserialize(recv)
                     .catch((e) => {
                         // Whatever went wrong decoding a frame (a failed
                         // allocation included) ends the connection — and is
@@ -654,46 +569,12 @@ module.exports = class AnyProtocol extends EventEmitter {
                                             data: packet.data
                                         });
                                         resolve();
-                                    } else if (packet.type == Packet.TYPE.SWITCH) {
+                                    } else if (packet.type == Packet.TYPE.SWITCH && this._isE2EOffer(packet.data)) {
+                                        // A SWITCH that is anything else is an invalid packet.
                                         invalidPacket = false;
-
-                                        if (this._isE2EOffer(packet.data)) {
-                                            this._acceptE2E(packet.data)
-                                                .then(resolve)
-                                                .catch((e) => { this._e2eFailed(e); resolve(); });
-                                            break;
-                                        }
-
-                                        if (this._refusesLegacyE2E()) {
-                                            resolve();
-                                            break;
-                                        }
-
-                                        Utils.generateAESKey().then((result) => {
-                                            this[ENCRYPTION_PRIVATE] = result.private;
-                                            this[ENCRYPTION_NONCE] = packet.data.nonce + result.nonce;
-                                            return Utils.getAESSessionKey(this[ENCRYPTION_NONCE], this.peerID, 0)
-                                                .then((nonce) => {
-                                                    this[ENCRYPTION_NONCE] = nonce;
-                                                    return Utils.computeAESsecret(this[ENCRYPTION_PRIVATE], packet.data.key)
-                                                        .then((secret) => {
-                                                            this[ENCRYPTION_SECRET] = secret;
-                                                            this.send(Packet.data({
-                                                                type: constants.PROTOCOL_ENCRYPTION.E2EE,
-                                                                key: result.public,
-                                                                nonce: result.nonce
-                                                            }).setType(Packet.TYPE.SWITCH)).then(() => {
-                                                                this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2EE;
-                                                                this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                                                this.emit("e2e", this);
-                                                                this._e2eSettled();
-                                                                resolve();
-                                                            });
-                                                        });
-                                                });
-                                        }).catch((e) => {
-                                            this.disconnect(e);
-                                        });
+                                        this._acceptE2E(packet.data)
+                                            .then(resolve)
+                                            .catch((e) => { this._e2eFailed(e); resolve(); });
                                     } else if (packet.type == Packet.TYPE.HEARTBEAT) {
                                         invalidPacket = false;
                                         this._heartbeatPong(packet.data);
@@ -701,40 +582,11 @@ module.exports = class AnyProtocol extends EventEmitter {
                                     }
                                     break;
                                 case constants.PROTOCOL_STATES.SWITCHING_PROTOCOL:
-                                    if (packet.type == Packet.TYPE.SWITCH) {
+                                    if (packet.type == Packet.TYPE.SWITCH && this._isE2EOffer(packet.data)) {
                                         invalidPacket = false;
-
-                                        if (this._isE2EOffer(packet.data)) {
-                                            this._acceptE2E(packet.data)
-                                                .then(resolve)
-                                                .catch((e) => { this._e2eFailed(e); resolve(); });
-                                            break;
-                                        }
-
-                                        if (this._refusesLegacyE2E()) {
-                                            resolve();
-                                            break;
-                                        }
-                                        this[ENCRYPTION_NONCE] = this[ENCRYPTION_NONCE] + packet.data.nonce;
-                                        Utils.getAESSessionKey(this[ENCRYPTION_NONCE], this.anysocket.id, 0)
-                                            .then((nonce) => {
-                                                this[ENCRYPTION_NONCE] = nonce;
-                                                return Utils.computeAESsecret(this[ENCRYPTION_PRIVATE], packet.data.key)
-                                                    .then((secret) => {
-                                                        this[ENCRYPTION_SECRET] = secret;
-                                                        this.ENCRYPTION_STATE = constants.PROTOCOL_ENCRYPTION.E2EE;
-                                                        this.changeState(constants.PROTOCOL_STATES.CONNECTED);
-                                                        this.emit("e2e", this);
-                                                        // e2e() returns a promise in 1.0; the old
-                                                        // exchange never settled it, so awaiting
-                                                        // e2e() against a 0.4.x peer hung.
-                                                        this._e2eSettled();
-                                                        resolve();
-                                                    })
-                                            })
-                                            .catch((e) => {
-                                                this.disconnect(e);
-                                            });
+                                        this._acceptE2E(packet.data)
+                                            .then(resolve)
+                                            .catch((e) => { this._e2eFailed(e); resolve(); });
                                     } else if (packet.type == Packet.TYPE.HEARTBEAT) {
                                         // A probe or reply that crossed our offer. Dropping it
                                         // costs the sender one missed beat; refusing it used to
@@ -769,7 +621,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _isE2EOffer(data) {
-        return this.protocolVersion >= constants.PROTOCOL_VERSION && !!data && data.v === 1;
+        return !!data && data.v === 1;
     }
 
     _e2eFailed(reason) {
@@ -871,17 +723,17 @@ module.exports = class AnyProtocol extends EventEmitter {
      * so the order each side happened to declare cannot change the outcome,
      * which matters once the result is folded into a transcript hash.
      *
-     * A 0.4.x peer sends no `pv`, which reads as legacy and keeps the whole
-     * connection on the old frame format.
+     * The version itself is not negotiated down: a peer below version 1 is
+     * refused before this runs, and one above it still speaks 1 to us, so the
+     * connection is on version 1 either way.
      */
     _negotiate(data) {
-        const remote = Number.isInteger(data && data.pv) ? data.pv : constants.PROTOCOL_VERSION_LEGACY;
         const remoteCaps = Array.isArray(data && data.caps) ? data.caps : [];
 
-        this.remoteProtocolVersion = remote;
+        this.remoteProtocolVersion = Number.isInteger(data && data.pv) ? data.pv : null;
         this.remoteInstanceID = typeof (data && data.inst) === "string" ? data.inst : null;
         this.remoteMaxFrame = Number.isInteger(data && data.mf) && data.mf > 0 ? data.mf : null;
-        this.protocolVersion = Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
+        this.protocolVersion = constants.PROTOCOL_VERSION;
         this.capabilities = (this.options.capabilities || [])
             .filter((cap) => remoteCaps.indexOf(cap) != -1)
             .sort();
@@ -914,6 +766,13 @@ module.exports = class AnyProtocol extends EventEmitter {
             return this.disconnect("Invalid Auth Packet!");
         }
         this[AUTH_RECEIVED] = true;
+
+        // Refused before onAuth sees it, and with a reason that says why.
+        const pv = packet.data && packet.data.pv;
+        if (!Number.isInteger(pv) || pv < constants.PROTOCOL_VERSION) {
+            debug("refused: peer announced protocol version", pv);
+            return this.disconnect(VERSION_REFUSED);
+        }
 
         let ok = false;
         try {
@@ -1158,7 +1017,6 @@ module.exports = class AnyProtocol extends EventEmitter {
         // The peer turns encryption on as soon as it has our offer, so anything sent in
         // clear after it is refused there; a large message in flight went that way.
         if (this.state == constants.PROTOCOL_STATES.SWITCHING_PROTOCOL &&
-            this.protocolVersion >= constants.PROTOCOL_VERSION &&
             !(Frame.isFrame(item.packet) && Frame.getType(item.packet) == Packet.TYPE.SWITCH)) {
             this[held].push(item);
             return cb(null, null);
@@ -1192,6 +1050,8 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processRecvPacketQueue(item, cb) {
+        if (!Frame.isFrame(item.recv)) return this._notAFrame(item, cb);
+
         // Whether this frame came in encrypted, decided before it is opened —
         // after that it looks the same either way, and a frame queued during
         // the switch is only delivered once encryption is up.
@@ -1222,12 +1082,33 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _arrivedEncrypted(item) {
-        if (Frame.isFrame(item.recv)) {
-            return !!(Frame.asBytes(item.recv)[0] & Frame.FLAGS.ENCRYPTED);
+        return !!(Frame.asBytes(item.recv)[0] & Frame.FLAGS.ENCRYPTED);
+    }
+
+    /**
+     * Something that is not a frame. The one thing read that way is a 1.0.x
+     * dialler's first AUTH, before ours has been received (see LegacyAuth);
+     * anything else drops the connection.
+     */
+    _notAFrame(item, cb) {
+        const expecting = !this[AUTH_RECEIVED] &&
+            (this.state == constants.PROTOCOL_STATES.ESTABLISHED ||
+             this.state == constants.PROTOCOL_STATES.AUTHING);
+        const packet = expecting ? LegacyAuth.read(item.recv, this.options.maxHandshakeMessageSize) : null;
+
+        if (!packet) {
+            debug(this.peerID, "not a frame, in state", this.state);
+            this.disconnect(NOT_A_FRAME);
+            return cb(null, null);
         }
-        // A legacy frame carries its encryption inside the payload; what
-        // counts is the state it was received in.
-        return item.state == constants.PROTOCOL_ENCRYPTION.E2EE;
+
+        this.legacyHandshake = true;
+        debug("AUTH in the 1.0.x text format, from", packet.data.id);
+        this._handleAuth(packet, this.state == constants.PROTOCOL_STATES.AUTHING).then(() => cb(null, null), (e) => {
+            debug(this.peerID, "auth failed:", e && e.message);
+            this.disconnect("Invalid Auth Packet!");
+            cb(null, null);
+        });
     }
 
     _routeRecvPacket(item, cb) {
@@ -1264,70 +1145,12 @@ module.exports = class AnyProtocol extends EventEmitter {
      * leaving the rejection unhandled, which took the whole process down.
      */
     _deliver(item, cb) {
-        this.onPacket(item.peer, item.recv, item.state).then(() => {
+        this.onPacket(item.peer, item.recv).then(() => {
             cb(null, null);
         }, (e) => {
             debug(this.peerID, "invalid packet:", e && e.message);
             this.disconnect("Invalid packet");
             cb(null, null);
-        });
-    }
-
-    _encrypt(packet, seq) {
-        // On a 1.0 connection the frame is sealed as a whole further down, in
-        // wire order; the per-chunk hook is only the 0.4.x path.
-        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
-            return Promise.resolve(packet);
-        }
-
-        return new Promise(resolve => {
-            switch (this.ENCRYPTION_STATE) {
-                case constants.PROTOCOL_ENCRYPTION.PLAIN:
-                    resolve(packet);
-                    break;
-                case constants.PROTOCOL_ENCRYPTION.E2EE:
-                    Utils.getAESSessionKey(this[ENCRYPTION_SECRET], this[ENCRYPTION_NONCE], seq)
-                        .then((secretKey) => {
-                            // A 1.0 frame carries bytes, and hex-encoding
-                            // them would double every encrypted message.
-                            if (typeof packet != "string") {
-                                return Utils.encryptAESBytes(secretKey, packet).then(resolve);
-                            }
-                            return Utils.encryptAES(secretKey, packet).then(resolve);
-                        }).catch((e) => {
-                        this.disconnect(e);
-                    });
-                    break;
-                default:
-                    throw new Error("[encrypt] Encryption state '" + this.ENCRYPTION_STATE + "' not implemented!");
-            }
-        });
-    }
-
-    _decrypt(encryptionState, packet, seq) {
-        if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
-            return Promise.resolve(packet);
-        }
-
-        return new Promise(resolve => {
-            switch (encryptionState) {
-                case constants.PROTOCOL_ENCRYPTION.PLAIN:
-                    resolve(packet);
-                    break;
-                case constants.PROTOCOL_ENCRYPTION.E2EE:
-                    Utils.getAESSessionKey(this[ENCRYPTION_SECRET], this[ENCRYPTION_NONCE], seq)
-                        .then((secretKey) => {
-                            if (typeof packet != "string") {
-                                return Utils.decryptAESBytes(secretKey, packet).then(resolve);
-                            }
-                            return Utils.decryptAES(secretKey, packet).then(resolve);
-                        }).catch((e) => {
-                        this.disconnect(e);
-                    });
-                    break;
-                default:
-                    throw new Error("[decrypt] Encryption state '" + encryptionState + "' not implemented!");
-            }
         });
     }
 
@@ -1354,7 +1177,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     /**
-     * Encrypt a 1.0 frame on its way out.
+     * Encrypt a frame on its way out.
      *
      * Done here, in the queue that feeds the socket, because this is the only
      * point where frames are in their final order — two messages serialising
@@ -1389,7 +1212,7 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     /**
-     * Decrypt a 1.0 frame on the way in, in arrival order.
+     * Decrypt a frame on the way in, in arrival order.
      *
      * Once encryption is up every frame must be encrypted, and before it is up
      * none may be: either mismatch is a downgrade attempt and drops the
@@ -1429,19 +1252,11 @@ module.exports = class AnyProtocol extends EventEmitter {
      * Wrap a relayed frame for the next hop.
      *
      * Addresses are anysocket ids — UUIDv4, so 32 hex characters — and travel
-     * as the 16 bytes they actually are. On a 1.0 hop the whole thing is a
-     * proper frame, so the relayed payload keeps its own bytes and does not
-     * have to survive being read as text.
+     * as the 16 bytes they actually are. The whole thing is a proper frame, so
+     * the relayed payload keeps its own bytes and does not have to survive
+     * being read as text.
      */
     _encodeForwardPacket(to, from, msg) {
-        if (this.protocolVersion < constants.PROTOCOL_VERSION) {
-            return Packet.TYPE.FORWARD +
-                AnyPacker.packHex(to) +
-                AnyPacker.packHex(from) +
-                msg
-                ;
-        }
-
         return Frame.encode({
             flags: Frame.FLAGS.FINAL | Frame.FLAGS.FIRST | Frame.FLAGS.BINARY,
             type: Packet.TYPE.FORWARD,
@@ -1455,15 +1270,6 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     _decodeForwardPacket(recv) {
-        if (!Frame.isFrame(recv)) {
-            const text = Frame.legacyText(recv);
-            return {
-                to: AnyPacker.unpackHex(text.substr(1, 16)),
-                from: AnyPacker.unpackHex(text.substr(17, 16)),
-                msg: text.substr(33)
-            };
-        }
-
         const payload = Frame.decode(recv).payload;
         return {
             to: Frame.idFromBytes(payload, 0),

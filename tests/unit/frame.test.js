@@ -76,50 +76,47 @@ test("a truncated frame is rejected rather than misread", (t) => {
     assert.throws(() => Frame.decode(new Uint8Array([1, 2, 3])));
 });
 
-// A frame is read the way it was written, decided from the data, so neither
-// format can be mistaken for the other even when both arrive as bytes.
-test("the two frame formats are told apart by their first byte", (t) => {
-    const legacy = String(constants.PACKET_LENGTH.FULL) + "3" + "\0\0\0\1" + "{}";
+// Decided from the data, so a frame and a 1.0.x dialler's text AUTH cannot be
+// mistaken for each other even when both arrive as bytes.
+test("a frame and text are told apart by their first byte", (t) => {
+    const legacy = "1" + "1" + "\0\0\0\1" + "{}";
     assert.equal(Frame.isFrame(legacy), false);
-    assert.equal(Frame.isFrame(Frame.bytes(legacy)), false, "a legacy frame handed over as bytes");
+    assert.equal(Frame.isFrame(Frame.bytes(legacy)), false, "text handed over as bytes");
 
     const frame = Frame.encode({ flags: Frame.FLAGS.FINAL, type: 3, seq: 1, payload: Frame.bytes("{}") });
     assert.equal(Frame.isFrame(frame), true);
 });
 
-test("a legacy frame delivered as bytes still decodes", async (t) => {
-    const out = Packet.data({ hello: "world" }).setType(Packet.TYPE.LINK).setSeq(5);
-    const chunks = await out.serialize(constants.MAX_PACKET_SIZE, (p) => Promise.resolve(p), 0);
+// A 1.0.x dialler's first AUTH is the one text packet still read, and over tcp it
+// arrives as bytes.
+test("a text AUTH delivered as bytes is still read", (t) => {
+    const auth = "1" + String(Packet.TYPE.AUTH) + "\0\0\0\1" +
+        JSON.stringify({ id: "a", pv: 1 });
 
-    assert.equal(typeof chunks[0], "string", "version 0 must stay on the legacy string format");
-
-    const back = Packet.buffer();
-    assert.equal(await back.deserialize(Frame.bytes(chunks[0]), constants.PROTOCOL_ENCRYPTION.PLAIN), true);
-    assert.deepEqual(back.data, { hello: "world" });
+    const packet = require("../../src/libs/LegacyAuth").read(Frame.bytes(auth), 64 * 1024);
+    assert.ok(packet);
+    assert.deepEqual(packet.data, { id: "a", pv: 1 });
 });
 
-test("version 1 serializes to binary frames, version 0 to legacy strings", async (t) => {
-    const packet = () => Packet.data({ a: 1 }).setType(Packet.TYPE.LINK).setSeq(3);
-    const passthrough = (p) => Promise.resolve(p);
-
-    const modern = await packet().serialize(constants.MAX_PACKET_SIZE, passthrough, constants.PROTOCOL_VERSION);
-    assert.ok(modern[0] instanceof Uint8Array);
-
-    const legacy = await packet().serialize(constants.MAX_PACKET_SIZE, passthrough, 0);
-    assert.equal(typeof legacy[0], "string");
+test("every packet serializes to binary frames", async (t) => {
+    for (const data of [{ a: 1 }, "text", 0, new Uint8Array([1, 2])]) {
+        const chunks = await Packet.data(data).setType(Packet.TYPE.LINK).setSeq(3).serialize(1024 * 1024);
+        assert.ok(chunks[0] instanceof Uint8Array);
+        assert.ok(Frame.isFrame(chunks[0]));
+    }
 });
 
 test("a binary payload round-trips without a base64 detour", async (t) => {
     const payload = new Uint8Array([0, 1, 2, 250, 251, 255]);
     const out = Packet.data(payload).setType(Packet.TYPE.LINK).setSeq(11);
-    const chunks = await out.serialize(constants.MAX_PACKET_SIZE, (p) => Promise.resolve(p), constants.PROTOCOL_VERSION);
+    const chunks = await out.serialize(1024 * 1024);
 
     // bytes on the wire, not a base64 or JSON expansion of them: the header,
     // one byte saying what kind of body follows, and the bytes themselves
     assert.equal(chunks[0].length, Frame.HEADER_SIZE + 1 + payload.length);
 
     const back = Packet.buffer();
-    assert.equal(await back.deserialize(chunks[0], constants.PROTOCOL_ENCRYPTION.PLAIN), true);
+    assert.equal(await back.deserialize(chunks[0]), true);
     assert.equal(back.binary, true);
     assert.deepEqual(Array.from(back.data), Array.from(payload));
 });
@@ -129,14 +126,14 @@ test("a chunked binary payload is rejoined byte for byte", async (t) => {
     for (let i = 0; i < payload.length; i++) payload[i] = i % 256;
 
     const out = Packet.data(payload).setType(Packet.TYPE.LINK).setSeq(12);
-    const chunks = await out.serialize(1000, (p) => Promise.resolve(p), constants.PROTOCOL_VERSION);
+    const chunks = await out.serialize(1000);
     // 5000 bytes plus the one-byte body kind, in 1000-byte frames
     assert.equal(chunks.length, 6);
 
     const back = Packet.buffer();
     let done = false;
     for (const chunk of chunks) {
-        done = await back.deserialize(chunk, constants.PROTOCOL_ENCRYPTION.PLAIN);
+        done = await back.deserialize(chunk);
     }
 
     assert.equal(done, true);
@@ -148,14 +145,14 @@ test("a chunked binary payload is rejoined byte for byte", async (t) => {
 test("a multi-byte character survives being chunked", async (t) => {
     const data = { text: "€".repeat(500) };
     const out = Packet.data(data).setType(Packet.TYPE.LINK).setSeq(13);
-    const chunks = await out.serialize(100, (p) => Promise.resolve(p), constants.PROTOCOL_VERSION);
+    const chunks = await out.serialize(100);
 
     assert.ok(chunks.length > 1);
 
     const back = Packet.buffer();
     let done = false;
     for (const chunk of chunks) {
-        done = await back.deserialize(chunk, constants.PROTOCOL_ENCRYPTION.PLAIN);
+        done = await back.deserialize(chunk);
     }
 
     assert.equal(done, true);
@@ -171,7 +168,7 @@ test("an undecodable binary frame is flagged, not delivered", async (t) => {
     });
 
     const back = Packet.buffer();
-    assert.equal(await back.deserialize(frame, constants.PROTOCOL_ENCRYPTION.PLAIN), true);
+    assert.equal(await back.deserialize(frame), true);
     assert.equal(back.parseError, true);
     assert.equal(back.data, null);
 });

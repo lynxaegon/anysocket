@@ -10,6 +10,8 @@ AnySocket.Transport = {
     "TCP": stream.TCP,
     "IPC": stream.IPC
 };
+// Deprecated. Bytes in a message, an RPC argument or an RPC result travel as
+// bytes, so there is nothing left to pack them for.
 AnySocket.Packer = {
     pack: AnyPacker.packBytes.bind(AnyPacker),
     unpack: AnyPacker.unpackBytes.bind(AnyPacker)

@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const LegacyAnySocket = require("anysocket-legacy");
+const PreviousAnySocket = require("anysocket-1-0");
 const { listen, stop, wait, AnySocket } = require("../helpers/loopback");
 
 const SECRET = "shared";
@@ -91,19 +91,19 @@ test("e2e is bound to the secret on an authenticated connection", async (t) => {
 
 // --- the reason it exists: moving a live fleet ----------------------------
 
-test("an optional peer still talks to a 0.4.x peer during a migration", async (t) => {
+test("an optional peer still talks to a 1.0.1 peer without a secret during a migration", async (t) => {
     const server = new AnySocket(optional);
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(server, legacy));
+    const previous = new PreviousAnySocket();
+    t.after(() => stop(server, previous));
 
     let serverPeer = null;
     server.on("connected", (p) => { serverPeer = p; });
 
     const port = await listen(server);
-    const peer = await legacy.connect("ws", "127.0.0.1", port);
+    const peer = await previous.connect("ws", "127.0.0.1", port);
     await wait(150);
 
-    assert.ok(serverPeer, "the old peer must still get in");
+    assert.ok(serverPeer, "the peer that has not moved must still get in");
     assert.equal(serverPeer.isAuthenticated(), false, "and is reported as not authenticated");
 
     const atServer = new Promise((resolve) => server.once("message", (p) => resolve(p.msg)));

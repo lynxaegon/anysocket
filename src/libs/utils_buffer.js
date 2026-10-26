@@ -15,12 +15,6 @@ module.exports = {
     bufferToBase64: (buf) => {
         return asBuffer(buf).toString('base64');
     },
-    bufferToHex(buf) {
-        return asBuffer(buf).toString('hex');
-    },
-    bufferFromHex(buf) {
-        return Buffer.from(buf, 'hex');
-    },
     // Any bytes, not only a Buffer — matching what the browser build accepts.
     // A plain Uint8Array RPC argument used to slip past this on node and go
     // through JSON as {"0":9,"1":8}.

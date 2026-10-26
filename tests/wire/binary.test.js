@@ -1,9 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const LegacyAnySocket = require("anysocket-legacy");
+const net = require("net");
+const WebSocket = require("ws");
 const Frame = require("../../src/libs/Frame");
 const constants = require("../../src/libs/_constants");
-const { pair, listen, stop, rawSocket, wait, AnySocket } = require("../helpers/loopback");
+const { pair, listen, stop, rawSocket, protocolOf, wait, AnySocket } = require("../helpers/loopback");
 
 /** Record whether each outgoing message leaves as bytes or as a string. */
 function watchWire(peer) {
@@ -29,25 +30,53 @@ test("two 1.0 peers put binary frames on the wire", async (t) => {
     assert.deepEqual(sent, ["binary"]);
 });
 
-// The format is chosen per connection from what the peer announced, so an old
-// peer cannot be handed a frame it has no way to read.
-test("a 0.4.x peer is still sent legacy text frames", async (t) => {
-    const server = new AnySocket();
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(server, legacy));
+// A 1.0.x dialler writes its first AUTH as text, not knowing yet what the other end
+// speaks. Nothing here does: a 1.0.x listener reads a frame AUTH as it reads any
+// frame, and there is no older listener left to write text for.
+test("a dialler's first AUTH is a binary frame, over ws", async (t) => {
+    const server = new WebSocket.Server({ port: 0 });
+    t.after(() => server.close());
+    await new Promise((resolve) => server.on("listening", resolve));
+    const first = new Promise((resolve) => server.on("connection", (socket) => {
+        socket.once("message", (data, isBinary) => resolve({ data, isBinary }));
+    }));
 
-    let serverPeer = null;
-    server.on("connected", (peer) => { serverPeer = peer; });
+    const client = new AnySocket();
+    t.after(() => stop(client));
+    client.connect("ws", "127.0.0.1", server.address().port, { authTimeout: 500 }).catch(() => {});
 
-    const port = await listen(server);
-    await legacy.connect("ws", "127.0.0.1", port);
-    await wait(150);
+    const { data, isBinary } = await first;
+    assert.notEqual(typeof data, "string", "sent as a text message");
+    if (isBinary !== undefined) assert.equal(isBinary, true);
+    assert.ok(Frame.isFrame(data));
+    const frame = Frame.decode(data);
+    assert.equal(frame.type, constants.PACKET_TYPE.AUTH);
+    assert.equal(JSON.parse(Frame.text(frame.payload)).pv, constants.PROTOCOL_VERSION);
+});
 
-    const sent = watchWire(serverPeer);
-    await serverPeer.send({ hello: "legacy" });
-    await wait(50);
+test("a dialler's first AUTH is a binary frame, over tcp", async (t) => {
+    const server = net.createServer();
+    t.after(() => server.close());
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const first = new Promise((resolve) => server.on("connection", (socket) => {
+        socket.on("error", () => {});
+        let buffered = Buffer.alloc(0);
+        socket.on("data", (d) => {
+            buffered = Buffer.concat([buffered, d]);
+            if (buffered.length >= 4 && buffered.length >= 4 + buffered.readUInt32BE(0)) {
+                resolve(buffered.subarray(4, 4 + buffered.readUInt32BE(0)));
+                socket.destroy();
+            }
+        });
+    }));
 
-    assert.deepEqual(sent, ["text"]);
+    const client = new AnySocket();
+    t.after(() => stop(client));
+    client.connect("tcp", "127.0.0.1", server.address().port, { authTimeout: 500 }).catch(() => {});
+
+    const data = await first;
+    assert.ok(Frame.isFrame(data), "starts with " + data[0]);
+    assert.equal(Frame.decode(data).type, constants.PACKET_TYPE.AUTH);
 });
 
 test("a Uint8Array arrives as bytes, not as a JSON-ified object", async (t) => {
@@ -93,7 +122,7 @@ test("bytes cost no more on the wire than they are", async (t) => {
 
 test("a large binary payload survives chunking", async (t) => {
     const link = await pair(t);
-    const payload = new Uint8Array(constants.MAX_PACKET_SIZE + 2048);
+    const payload = new Uint8Array(protocolOf(link.clientPeer).options.maxPacketSize + 2048);
     for (let i = 0; i < payload.length; i++) payload[i] = i % 256;
 
     const received = new Promise((resolve) => link.server.once("message", (packet) => resolve(packet.msg)));
@@ -208,30 +237,4 @@ test("a chunked payload survives a relayed link", async (t) => {
     const got = await received;
     assert.equal(got.length, payload.length);
     assert.deepEqual(Array.from(got.subarray(-16)), Array.from(payload.subarray(-16)));
-});
-
-test("a relay refuses to carry a link for a 0.4.x peer", async (t) => {
-    const LegacyAnySocket = require("anysocket-legacy");
-
-    const relay = new AnySocket();
-    const modern = new AnySocket();
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(relay, modern, legacy));
-
-    relay.canProxy = () => true;
-
-    const port = await listen(relay);
-    await modern.connect("ws", "127.0.0.1", port);
-    await legacy.connect("ws", "127.0.0.1", port);
-    await wait(200);
-
-    // Refused with a reason rather than silently producing a link that cannot
-    // carry the frames either end would put on it.
-    await assert.rejects(
-        modern.proxy(legacy.id, relay.id),
-        (e) => {
-            assert.match(String(e), /protocol version 1/i);
-            return true;
-        }
-    );
 });

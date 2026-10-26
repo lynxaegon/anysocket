@@ -2,8 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const LegacyAnySocket = require("anysocket-legacy");
-const { e2e, pair, listen, stop, rawSocket, wait, freePort, AnySocket } = require("../helpers/loopback");
+const { e2e, pair, rawSocket, freePort } = require("../helpers/loopback");
 
 /** Total bytes a peer puts on the wire while `fn` runs. */
 async function bytesSent(peer, fn) {
@@ -94,26 +93,15 @@ test("binary RPC still works over an encrypted link", async (t) => {
     assert.deepEqual(Array.from(result), [4, 3, 2, 1]);
 });
 
-// A 0.4.x peer can only read base64, so that is what it must still get.
-test("binary RPC to and from a 0.4.x peer still uses base64", async (t) => {
-    const server = new AnySocket();
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(server, legacy));
+// Binary arguments only travel as attachments now. A call that lists one it did not
+// attach used to have its argument read as base64, for a 0.4.x caller; it is refused.
+test("an RPC naming a binary argument it did not attach is refused", async (t) => {
+    let ran = false;
+    const link = await pair(t, { configure: (server) => server.setRPC({ echo: () => { ran = true; } }) });
 
-    server.setRPC({ echo: (b) => Buffer.concat([b, Buffer.from([7])]) });
-    legacy.setRPC({ twice: (b) => Buffer.concat([b, b]) });
-
-    let serverPeer = null;
-    server.on("connected", (p) => { serverPeer = p; });
-
-    const port = await listen(server);
-    const peer = await legacy.connect("ws", "127.0.0.1", port);
-    await wait(150);
-
-    // old -> new
-    assert.deepEqual(Array.from(await peer.rpc.echo(Buffer.from([1, 2]))), [1, 2, 7]);
-    // new -> old
-    assert.deepEqual(Array.from(await serverPeer.rpc.twice(Buffer.from([5]))), [5, 5]);
+    const answer = await link.clientPeer.sendInternal({ type: 3, method: ["echo"], params: ["AAEC"], bin: ["0"] }, true);
+    assert.match(String(answer.msg.error), /binary arguments missing/i);
+    assert.equal(ran, false);
 });
 
 // Lock in that a failed dial cannot take the process down the way a failed

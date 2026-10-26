@@ -1,25 +1,21 @@
 /**
- * The 1.0 frame codec.
+ * The frame codec.
  *
- * Legacy frames are JS strings sent as WebSocket text messages, with the header
- * written as characters and every payload forced through JSON — so bytes cost
- * a base64 detour and encrypted payloads, which are hex, cost double. A 1.0
- * frame is a binary message with a fixed 6-byte header:
+ * A frame is a binary message with a fixed 6-byte header:
  *
  *   u8  flags
  *   u8  type
  *   u32 seq (big endian, always the absolute value — REPLY says what it means)
  *   ..  payload
  *
- * Only used once both ends announce protocol version 1 (see AnyProtocol's
- * negotiation), so a 0.4.x peer never receives one.
+ * Everything is sent and received as frames; anything else drops the connection.
  *
  * Written against Uint8Array/DataView rather than Buffer, because this runs in
  * the browser build too.
  */
 
 const FLAGS = {
-    // Last (or only) chunk of a message; the legacy format spelled this "eol".
+    // Last (or only) chunk of a message.
     FINAL: 1,
     ENCRYPTED: 2,
     // Payload is raw bytes rather than JSON text.
@@ -28,8 +24,8 @@ const FLAGS = {
     // with a 4-byte total length so the receiving side can allocate once
     // instead of collecting every chunk and joining them afterwards.
     FIRST: 16,
-    // seq is a reply-to. The legacy format negated the seq to mean this, which
-    // cost a bit of the range and could not be told from a decode slip.
+    // seq is a reply-to. A flag rather than a negative seq, which would cost a
+    // bit of the range and could not be told from a decode slip.
     REPLY: 8
 };
 
@@ -87,15 +83,12 @@ const concat = (parts) => {
 };
 
 /**
- * Is what we received a 1.0 frame rather than a legacy one?
+ * Is what we received a frame?
  *
- * Decided from the data, not from the negotiated version, so a frame is always
- * read the way it was written. A legacy frame starts with the ASCII digit "1"
- * or "2" (0x31/0x32); a 1.0 frame starts with a flags byte, which only uses the
- * low bits. That keeps the two apart even when the transport hands us bytes
- * for both — ws 7 gives a string for a text message, ws 8 a Buffer — and it
- * does not rely on the transport distinguishing text from binary at all,
- * which tcp, udp and ipc do not.
+ * A frame starts with a flags byte, which only uses the low bits, so anything
+ * starting at 0x30 or above is not one, and neither is a string, which is what
+ * ws 7 hands over for a text message. Decided from the data, so it does not
+ * rely on the transport telling text from binary, which tcp and ipc do not.
  */
 const isFrame = (recv) => {
     if (typeof recv == "string") return false;
@@ -126,8 +119,6 @@ const idFromBytes = (bytes, at) => {
     return hex;
 };
 
-/** A legacy frame as the string the legacy codec expects. */
-const legacyText = (recv) => (typeof recv == "string" ? recv : decoder.decode(asBytes(recv)));
 
 /**
  * `payload` may be one buffer or a list of them. A list is written straight into
@@ -201,8 +192,8 @@ function decode(recv) {
     return {
         flags: flags,
         type: bytes[1],
-        // Restores the legacy meaning of a negative seq, so nothing above the
-        // codec has to care which format a packet arrived in.
+        // A reply is handed upwards as a negative seq, which is what everything
+        // above the codec keys replies on.
         seq: (flags & FLAGS.REPLY) ? -seq : seq,
         payload: bytes.subarray(HEADER_SIZE),
         final: !!(flags & FLAGS.FINAL),
@@ -229,7 +220,6 @@ module.exports = {
     idFromBytes,
     MAX_SEQ,
     isFrame,
-    legacyText,
     encode,
     decode,
     range,

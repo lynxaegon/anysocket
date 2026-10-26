@@ -1,54 +1,77 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const AnySocket = require("../../src/index.js");
-const LegacyAnySocket = require("anysocket-legacy");
-const { stop, wait, freePort } = require("../helpers/loopback");
+const PreviousAnySocket = require("anysocket-1-0");
+const { stop, wait } = require("../helpers/loopback");
 
 /**
- * A 1.0 peer and a 0.4.x peer that dial each other at once.
+ * A 1.1 and a 1.0.1 peer that dial each other at once.
  *
- * 1.0 keeps the connection dialled by the lower id; 0.4.x keeps whichever became ready
- * first on its side. Applying our rule against it, the two ends often dropped opposite
- * connections and lost both — over and over, for as long as a fleet was mid-upgrade. Against
- * a 0.4.x peer we now let it choose, and adopt the one it keeps.
+ * Both keep the connection dialled by the lower id, so both have to settle on
+ * the same one of the two — whether that is 1.1's frame-AUTH dial or 1.0.1's
+ * text-AUTH one. If they chose differently, each would close the other's keeper
+ * and both connections would die, every time the two dialled each other.
  */
-async function round(t) {
+async function round(t, scheme, ids) {
     const modern = new AnySocket();
-    const legacy = new LegacyAnySocket();
-    t.after(() => stop(modern, legacy));
+    const previous = new PreviousAnySocket();
+    [modern.id, previous.id] = ids;
+    t.after(() => stop(modern, previous));
 
-    const modernPort = await modern.listen("ws", { port: 0 });
-    const legacyPort = await freePort();
-    await legacy.listen("ws", legacyPort);
+    const modernPort = await modern.listen(scheme, { port: 0 });
+    const previousPort = await previous.listen(scheme, { port: 0 });
 
-    const drops = { modern: 0, legacy: 0 };
-    modern.on("disconnected", () => drops.modern++);
-    legacy.on("disconnected", () => drops.legacy++);
+    const drops = [];
+    modern.on("disconnected", (_p, reason) => drops.push(reason));
+    previous.on("disconnected", (_p, reason) => drops.push(reason));
 
-    await Promise.allSettled([
-        modern.connect("ws", "127.0.0.1", legacyPort),
-        legacy.connect("ws", "127.0.0.1", modernPort)
+    const [toPrevious, toModern] = await Promise.allSettled([
+        modern.connect(scheme, "127.0.0.1", previousPort),
+        previous.connect(scheme, "127.0.0.1", modernPort)
     ]);
-    await wait(500);
+    await wait(300);
 
-    return { modern, legacy, drops };
+    return { modern, previous, drops, toPrevious, toModern };
 }
 
-test("a 1.0 and a 0.4.x peer dialling each other keep a connection", async (t) => {
-    for (let i = 0; i < 8; i++) {
-        const { modern, legacy, drops } = await round(t);
+for (const scheme of ["ws", "tcp"]) {
+    test("a 1.1 and a 1.0.1 peer dialling each other keep one connection, over " + scheme, async (t) => {
+        const low = "0".repeat(32);
+        const high = "f".repeat(32);
+        // Alternate which end has the lower id, so each end is the designated dialler.
+        for (let i = 0; i < 6; i++) {
+            const ids = i % 2 ? [low, high] : [high, low];
+            const { modern, previous, drops, toPrevious, toModern } = await round(t, scheme, ids);
+            const at = "round " + i + ": ";
 
-        assert.ok(modern.hasPeer(legacy.id), "round " + i + ": the 1.0 peer lost the 0.4.x peer");
-        assert.ok(legacy.hasPeer(modern.id), "round " + i + ": the 0.4.x peer lost the 1.0 peer");
+            // A dial that lost the race still resolves, with the connection that was kept.
+            assert.equal(toPrevious.status, "fulfilled", at + "1.1's dial: " + (toPrevious.reason && toPrevious.reason.message));
+            assert.equal(toModern.status, "fulfilled", at + "1.0.1's dial: " + (toModern.reason && toModern.reason.message));
+            assert.ok(modern.hasPeer(previous.id), at + "1.1 lost the 1.0.1 peer");
+            assert.ok(previous.hasPeer(modern.id), at + "1.0.1 lost the 1.1 peer");
 
-        // Messages cross both ways on whatever connection survived.
-        const toLegacy = new Promise((resolve) => legacy.on("message", (p) => resolve(p.msg)));
-        const toModern = new Promise((resolve) => modern.on("message", (p) => resolve(p.msg)));
-        modern.broadcast({ round: i, from: "modern" });
-        legacy.broadcast({ round: i, from: "legacy" });
-        assert.deepEqual(await Promise.race([toLegacy, wait(2000).then(() => "nothing")]), { round: i, from: "modern" });
-        assert.deepEqual(await Promise.race([toModern, wait(2000).then(() => "nothing")]), { round: i, from: "legacy" });
+            // Both ends kept the same one: the one the lower id dialled.
+            const lowerIsModern = modern.id < previous.id;
+            const kept = modern.getPeer(previous.id);
+            assert.equal(kept.isOutbound(), lowerIsModern, at + "1.1 kept the wrong one");
+            assert.equal(previous.getPeer(modern.id).isOutbound(), !lowerIsModern, at + "1.0.1 kept the wrong one");
+            assert.equal(kept.legacyHandshake(), !lowerIsModern, at + "legacyHandshake() names the wrong connection");
 
-        await stop(modern, legacy);
-    }
-});
+            // The only peer either end may have dropped is a duplicate it retired for the
+            // agreed connection, which it announces as such.
+            for (const reason of drops) {
+                assert.match(String(reason), /Superseded/, at + "a peer was dropped for: " + reason);
+            }
+
+            // Messages cross both ways on whatever connection survived.
+            const toP = new Promise((resolve) => previous.once("message", (p) => resolve(p.msg)));
+            const toM = new Promise((resolve) => modern.once("message", (p) => resolve(p.msg)));
+            modern.broadcast({ round: i, from: "1.1" });
+            previous.broadcast({ round: i, from: "1.0.1" });
+            assert.deepEqual(await Promise.race([toP, wait(2000).then(() => "nothing")]), { round: i, from: "1.1" });
+            assert.deepEqual(await Promise.race([toM, wait(2000).then(() => "nothing")]), { round: i, from: "1.0.1" });
+
+            await stop(modern, previous);
+        }
+    });
+}

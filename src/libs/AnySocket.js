@@ -107,15 +107,8 @@ const _private = {
     httpServer: Symbol("HTTPServer"),
     httpServers: Symbol("HTTP servers by port"),
     maintainers: Symbol("maintainers"),
-    standby: Symbol("standby duplicates of 0.4.x peers"),
-    holdStandby: Symbol("holdStandby"),
     stops: Symbol("stop() calls so far")
 };
-
-// How long a duplicate connection to a 0.4.x peer is held while that peer picks which of the
-// two it keeps. It decides as soon as it sees the second, so this only bounds a standby the
-// peer never closed.
-const LEGACY_STANDBY_MS = 10000;
 
 const AnyPeer = require("./AnyPeer");
 const AnyProtocol = require("./AnyProtocol");
@@ -144,7 +137,6 @@ class AnySocket extends EventEmitter {
         this[_private.httpServer] = null;
         this[_private.httpServers] = new Map();
         this[_private.maintainers] = new Set();
-        this[_private.standby] = new Map();
         this[_private.stops] = 0;
         if (typeof window === 'undefined') {
             // nodejs
@@ -203,10 +195,6 @@ class AnySocket extends EventEmitter {
                 // TODO: this requires to implement a full network graph (map)
                 // TODO: this will enable to send messages without having multiple forward headers
                 reject(errors.refused("Cannot proxy via a proxy!"));
-                return;
-            }
-            if(!this[_private.peers][throughPeerID].supportsRelay()) {
-                reject(errors.refused("Cannot proxy: the relay connection is not protocol version 1"));
                 return;
             }
 
@@ -664,7 +652,7 @@ class AnySocket extends EventEmitter {
      */
     [_private.probeExisting](existing, protocol, resolve, reject) {
         protocol[_private.probed] = true;
-        // Paused, as a standby is, so nothing that arrives on it meanwhile is lost.
+        // Paused, so nothing that arrives on it meanwhile is lost.
         protocol._recvPacketQueue.pause();
         protocol._recvLinkPacketQueue.pause();
 
@@ -685,9 +673,6 @@ class AnySocket extends EventEmitter {
 
     [_private.onProtocolReady](protocol, resolve, reject) {
         const existing = this[_private.peers][protocol.peerID];
-        if(existing && !protocol.isProxy() && protocol.protocolVersion < constants.PROTOCOL_VERSION) {
-            return this[_private.holdStandby](existing, protocol, resolve);
-        }
         if(existing && !protocol.isProxy() && !existing.isProxy() && !protocol[_private.probed] &&
             existing.remoteInstanceID() && protocol.remoteInstanceID &&
             existing.remoteInstanceID() !== protocol.remoteInstanceID) {
@@ -780,58 +765,10 @@ class AnySocket extends EventEmitter {
         return anypeer;
     }
 
-    /**
-     * A second connection to a 0.4.x peer that already has one.
-     *
-     * Between 1.0 peers both ends keep the connection dialled by the lower id. A 0.4.x peer
-     * does not: it keeps whichever became ready first on its side and drops the other — and
-     * nothing we do changes which. Applying our rule against it, the two ends often dropped
-     * opposite connections and the peer lost both, every time they dialled each other.
-     *
-     * So against a 0.4.x peer we do not choose. The new connection is held, its input paused
-     * so nothing on it is lost, until that peer closes one of the two: closing this one ends
-     * it; closing the one in use promotes this one in its place.
-     */
-    [_private.holdStandby](existing, protocol, resolve) {
-        const id = protocol.peerID;
-        const prior = this[_private.standby].get(id);
-        if (prior) {
-            clearTimeout(prior.timer);
-            this[_private.standby].delete(id);
-            prior.protocol.peerID = null;
-            prior.protocol.disconnect("Duplicated AnySocket ID found!");
-        }
-
-        protocol._recvPacketQueue.pause();
-        protocol._recvLinkPacketQueue.pause();
-        const entry = { protocol: protocol };
-        entry.timer = setTimeout(() => {
-            if (this[_private.standby].get(id) !== entry) return;
-            this[_private.standby].delete(id);
-            protocol.peerID = null;
-            protocol.disconnect("Duplicated AnySocket ID found!");
-        }, LEGACY_STANDBY_MS);
-        if (entry.timer.unref) entry.timer.unref();
-        this[_private.standby].set(id, entry);
-
-        debug("Holding a duplicate connection to 0.4.x peer", id);
-        if (resolve) resolve(existing);
-    }
-
     [_private.onPeerDisconnected](peer, reason) {
         // Documented as text; an Error reached here from some paths.
         reason = reasonText(reason);
         debug("Peer disconnected", reason, peer.id);
-
-        // A held duplicate of a 0.4.x peer closing: that peer kept the other one.
-        for (const [id, entry] of this[_private.standby]) {
-            if (entry.protocol.connectionID !== peer.connectionID) continue;
-            clearTimeout(entry.timer);
-            this[_private.standby].delete(id);
-            delete this[_private.peersConnected][peer.connectionID];
-            peer.disconnect();
-            return;
-        }
 
         let anypeerID = null;
         const protocol = this[_private.peersConnected][peer.connectionID];
@@ -880,18 +817,6 @@ class AnySocket extends EventEmitter {
                     if (relayed && relayed.isProxy() && relayed.relayID === anypeer.id) {
                         this[_private.onPeerDisconnected](relayed, "Relay disconnected");
                     }
-                }
-            }
-
-            // The 0.4.x peer kept the duplicate we were holding: it is the connection now.
-            const held = this[_private.standby].get(anypeer.id);
-            if (held) {
-                clearTimeout(held.timer);
-                this[_private.standby].delete(anypeer.id);
-                if (held.protocol.isConnected()) {
-                    this[_private.onProtocolReady](held.protocol);
-                    held.protocol._recvPacketQueue.resume();
-                    held.protocol._recvLinkPacketQueue.resume();
                 }
             }
         } else if (protocol && protocol.isConnected()) {
@@ -957,20 +882,6 @@ class AnySocket extends EventEmitter {
                     });
                     // TODO: this requires to implement a full network graph (map)
                     // TODO: this will enable to send messages without having multiple forward headers
-                    return;
-                }
-
-                // Both hops must speak 1.0. A relayed frame is opaque bytes the
-                // relay re-wraps for each hop, so its format has to be one that
-                // every hop can carry — and an endpoint cannot see the version
-                // of a hop further along. Requiring it here is what makes the
-                // relayed link's format knowable at both ends.
-                if(!this[_private.peers][packet.peer.id].supportsRelay() ||
-                    !this[_private.peers][packet.msg.id].supportsRelay()) {
-                    packet.reply({
-                        ok: false,
-                        reason: "relaying needs protocol version 1 on both hops"
-                    });
                     return;
                 }
 
@@ -1055,12 +966,13 @@ class AnySocket extends EventEmitter {
                 try {
                     const params = Array.isArray(packet.msg.params) ? packet.msg.params : [];
                     const bin = Array.isArray(packet.msg.bin) ? packet.msg.bin : [];
-                    // Attached bytes when the caller is 1.0, base64 when it is 0.4.x.
-                    const attached = packet.msg[Packet.ATTACHMENTS];
+                    // Binary arguments travel as attachments, in the order `bin` lists them.
+                    const attached = packet.msg[Packet.ATTACHMENTS] || [];
+                    if (bin.length > attached.length) {
+                        throw new Error("Binary arguments missing");
+                    }
                     bin.forEach((item, i) => {
-                        params[item] = attached && attached.length
-                            ? attached[i]
-                            : AnySocket.Packer.unpack(params[item]);
+                        params[item] = attached[i];
                     });
 
                     // The guard sees the decoded arguments, and runs before the
@@ -1090,14 +1002,10 @@ class AnySocket extends EventEmitter {
                                 return;
                             }
 
-                            // Bytes back as bytes to a 1.0 caller; base64 to 0.4.x.
-                            if(packet.peer.protocolVersion() >= constants.PROTOCOL_VERSION) {
-                                const reply = { result: null, bin: true };
-                                reply[Packet.ATTACHMENTS] = [result];
-                                packet.reply(reply);
-                            } else {
-                                packet.reply({ result: AnySocket.Packer.pack(result), bin: true });
-                            }
+                            // Bytes go back as an attachment.
+                            const reply = { result: null, bin: true };
+                            reply[Packet.ATTACHMENTS] = [result];
+                            packet.reply(reply);
                         })
                         .catch((e) => {
                             packet.reply({

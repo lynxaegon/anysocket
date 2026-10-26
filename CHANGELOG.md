@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.1.0
+
+Drops what 1.0.x carried only to talk to 0.4.x. Every 1.0.x peer is fully
+supported, in both directions of the dial; a 0.4.x peer is refused. Read
+[MIGRATING-1.0.md](MIGRATING-1.0.md) before upgrading.
+
+### Removed
+- The 0.4.x wire format. 1.1 sends only binary frames, its first AUTH included.
+- The 0.4.x e2e exchange and the `allowLegacyE2E` option, which is now ignored.
+- Base64 RPC bytes, 1MB chunking and hex relay addresses for a 0.4.x peer, and
+  the standby that let a 0.4.x peer choose between two connections.
+
+### Changed
+- A 1.0.x dialler writes its first AUTH in the 0.4.x text format, and 1.1 still
+  reads that one packet so 1.0.x peers can dial it. Any other text drops the
+  connection. A future release stops reading it; `AnyPeer.legacyHandshake()`
+  shows which connections still rely on it.
+- A peer whose AUTH announces no protocol version, or one below 1, is refused
+  with "Protocol version 1 required (0.4.x peers are not supported since
+  anysocket 1.1)". A dialler's `connect()` rejects with it.
+- ws `maxPayload` defaults to `maxPacketSize` + 1MB, at least 8MB. It was
+  twice `maxPacketSize`.
+- `protocolVersion()` is always 1 and `supportsRelay()` always true.
+- `AnySocket.Packer` is deprecated. It still packs and unpacks.
+- An RPC that lists a binary argument without attaching it fails.
+
+### Fixed
+- In the browser, `connect()` with `connectTimeout` or `cookies` passed node
+  options to the browser's WebSocket as its subprotocols, which throws. Only the
+  URL goes to it now, and `connectTimeout` is enforced with a timer.
+
+### New
+- `AnyPeer.legacyHandshake()`.
+
 ## 1.0.1
 
 ### Fixed

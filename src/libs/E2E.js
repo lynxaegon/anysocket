@@ -23,7 +23,7 @@
 const Frame = require("./Frame");
 
 // node's crypto, when present. In the browser build this require resolves to
-// the browser shim, which has no createCipheriv, so the WebCrypto path is used.
+// an empty module, which has no createCipheriv, so the WebCrypto path is used.
 const nodeCrypto = (() => {
     try {
         const c = require("crypto");

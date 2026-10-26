@@ -1,31 +1,32 @@
 #!/usr/bin/env node
 /**
- * anysocket 1.0 against the published 0.4.32, plain and encrypted.
+ * anysocket 1.1 against the published 1.0.1, plain and encrypted.
  *
  * Run with:  npm run bench
  *
  * Every figure is measured here and now, on loopback, in one process — so the
- * numbers are about protocol and framing cost, not about a network. The 0.4.32
- * column comes from the real published package (devDependency `anysocket-legacy`),
- * not from a reimplementation of it.
+ * numbers are about protocol and framing cost, not about a network. The 1.0.1
+ * column comes from the real published package (devDependency `anysocket-1-0`),
+ * not from a reimplementation of it. Both ends of every link run the version
+ * being measured.
  */
 
 const AnySocket = require("../src/index.js");
 
-let Legacy = null;
+let Previous = null;
 try {
-    Legacy = require("anysocket-legacy");
+    Previous = require("anysocket-1-0");
 } catch (e) {
-    console.error("anysocket-legacy is not installed; run `npm install` first.\n");
+    console.error("anysocket-1-0 is not installed; run `npm install` first.\n");
     process.exit(1);
 }
 
 const MB = 1024 * 1024;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function link(Client, opts = {}) {
-    const server = new AnySocket();
-    const client = new Client();
+async function link(Lib, opts = {}) {
+    const server = new Lib();
+    const client = new Lib();
     const wire = Object.assign({ maxPayload: 64 * MB }, opts);
 
     // port 0: a guessed port can be one another process holds on 127.0.0.1 while
@@ -66,13 +67,13 @@ const ms = (from) => Number(process.hrtime.bigint() - from) / 1e6;
  * listener, dialled repeatedly, stopping at the moment the listener has a
  * ready peer.
  */
-async function connectHandshake(Client, rounds) {
-    const server = new AnySocket();
+async function connectHandshake(Lib, rounds) {
+    const server = new Lib();
     const p = await server.listen("ws", { port: 0, maxPayload: 64 * MB });
 
     let total = 0;
     for (let i = 0; i < rounds; i++) {
-        const client = new Client();
+        const client = new Lib();
         const ready = new Promise((r) => server.once("connected", r));
 
         const t0 = process.hrtime.bigint();
@@ -87,10 +88,10 @@ async function connectHandshake(Client, rounds) {
     return { label: "ms", value: total / rounds };
 }
 
-async function e2eHandshake(Client, rounds) {
+async function e2eHandshake(Lib, rounds) {
     let total = 0;
     for (let i = 0; i < rounds; i++) {
-        const l = await link(Client);
+        const l = await link(Lib);
         const up = new Promise((r) => l.peer.on("e2e", r));
         const t0 = process.hrtime.bigint();
         l.peer.e2e();
@@ -101,8 +102,8 @@ async function e2eHandshake(Client, rounds) {
     return { label: "ms", value: total / rounds };
 }
 
-async function smallMessages(Client, count, encrypt) {
-    const l = await link(Client);
+async function smallMessages(Lib, count, encrypt) {
+    const l = await link(Lib);
     if (encrypt) {
         const up = new Promise((r) => l.peer.on("e2e", r));
         l.peer.e2e();
@@ -128,14 +129,9 @@ async function smallMessages(Client, count, encrypt) {
     return { label: "msg/s", value: count / (took / 1000), bytes: stats.bytes };
 }
 
-/**
- * `binary` sends each version's idiomatic representation of raw bytes: 0.4.32
- * has no path for them in a message, so they go through Packer (base64), which
- * is what its own documentation tells you to do. 1.0 sends the bytes.
- */
-async function throughput(Client, sizeMB, encrypt, binary) {
-    const legacy = Client === Legacy;
-    const l = await link(Client);
+/** `binary` sends raw bytes, which both versions carry as bytes. */
+async function throughput(Lib, sizeMB, encrypt, binary) {
+    const l = await link(Lib);
     if (encrypt) {
         const up = new Promise((r) => l.peer.on("e2e", r));
         l.peer.e2e();
@@ -143,10 +139,7 @@ async function throughput(Client, sizeMB, encrypt, binary) {
     }
 
     const bytes = sizeMB * MB;
-    let payload;
-    if (!binary) payload = { blob: "x".repeat(bytes) };
-    else if (legacy) payload = Legacy.Packer.pack(Buffer.alloc(bytes));
-    else payload = Buffer.alloc(bytes);
+    const payload = binary ? Buffer.alloc(bytes) : { blob: "x".repeat(bytes) };
 
     const received = new Promise((resolve) => l.server.once("message", (p) => resolve(p.msg)));
 
@@ -157,10 +150,7 @@ async function throughput(Client, sizeMB, encrypt, binary) {
     const took = ms(t0);
     await l.stop();
 
-    let length;
-    if (!binary) length = got.blob.length;
-    else if (legacy) length = Legacy.Packer.unpack(got).length;
-    else length = got.length;
+    const length = binary ? got.length : got.blob.length;
     if (length !== bytes) throw new Error("payload came back wrong: " + length);
 
     return { label: "MB/s", value: sizeMB / (took / 1000), bytes: stats.bytes };
@@ -224,7 +214,7 @@ function render() {
 
     const w = Math.max(...rows.map((r) => r.name.length), 28);
     console.log();
-    console.log("  " + pad("", w) + "  " + "0.4.32".padStart(12) + "  " + "1.0".padStart(12) + "   change");
+    console.log("  " + pad("", w) + "  " + "1.0.1".padStart(12) + "  " + "1.1".padStart(12) + "   change");
     console.log("  " + "-".repeat(w + 46));
 
     for (const row of rows) {
@@ -267,43 +257,42 @@ function bytesNote(before, after, payloadBytes) {
 }
 
 (async () => {
-    console.log("\nanysocket 1.0 vs 0.4.32 — loopback, node " + process.version + ", " + process.platform + "/" + process.arch + ", median of " + RUNS);
+    console.log("\nanysocket 1.1 vs 1.0.1 — loopback, node " + process.version + ", " + process.platform + "/" + process.arch + ", median of " + RUNS);
 
     // --- connection setup
     record("connect + authenticate",
-        ...await compare(() => connectHandshake(Legacy, 20), () => connectHandshake(AnySocket, 20)));
+        ...await compare(() => connectHandshake(Previous, 20), () => connectHandshake(AnySocket, 20)));
 
     record("e2e handshake",
-        ...await compare(() => e2eHandshake(Legacy, 20), () => e2eHandshake(AnySocket, 20)),
-        "0.4.32: secp521r1.  1.0: x25519 (p256 where unavailable)");
+        ...await compare(() => e2eHandshake(Previous, 20), () => e2eHandshake(AnySocket, 20)));
 
     // --- small messages
-    let [before, after] = await compare(() => smallMessages(Legacy, 3000, false), () => smallMessages(AnySocket, 3000, false));
+    let [before, after] = await compare(() => smallMessages(Previous, 3000, false), () => smallMessages(AnySocket, 3000, false));
     record("2KB messages, plain", before, after, bytesNote(before, after));
 
-    [before, after] = await compare(() => smallMessages(Legacy, 3000, true), () => smallMessages(AnySocket, 3000, true));
+    [before, after] = await compare(() => smallMessages(Previous, 3000, true), () => smallMessages(AnySocket, 3000, true));
     record("2KB messages, encrypted", before, after, bytesNote(before, after));
 
     // --- bulk, text
-    [before, after] = await compare(() => throughput(Legacy, 32, false, false), () => throughput(AnySocket, 32, false, false));
+    [before, after] = await compare(() => throughput(Previous, 32, false, false), () => throughput(AnySocket, 32, false, false));
     record("32MB of text, plain", before, after, bytesNote(before, after, 32 * MB));
 
-    [before, after] = await compare(() => throughput(Legacy, 32, true, false), () => throughput(AnySocket, 32, true, false));
+    [before, after] = await compare(() => throughput(Previous, 32, true, false), () => throughput(AnySocket, 32, true, false));
     record("32MB of text, encrypted", before, after, bytesNote(before, after, 32 * MB));
 
-    // --- bulk, binary: where 0.4.32 had no option but to inflate it
-    [before, after] = await compare(() => throughput(Legacy, 32, false, true), () => throughput(AnySocket, 32, false, true));
+    // --- bulk, binary
+    [before, after] = await compare(() => throughput(Previous, 32, false, true), () => throughput(AnySocket, 32, false, true));
     record("32MB of bytes, plain", before, after, bytesNote(before, after, 32 * MB));
 
-    [before, after] = await compare(() => throughput(Legacy, 32, true, true), () => throughput(AnySocket, 32, true, true));
+    [before, after] = await compare(() => throughput(Previous, 32, true, true), () => throughput(AnySocket, 32, true, true));
     record("32MB of bytes, encrypted", before, after, bytesNote(before, after, 32 * MB));
 
-    // --- 1.0 only: plain against encrypted, which is the cost of turning e2e on
+    // --- 1.1 only: plain against encrypted, which is the cost of turning e2e on
     const [plain, sealed] = await compare(() => throughput(AnySocket, 128, false, true), () => throughput(AnySocket, 128, true, true));
     render();
 
     console.log();
-    console.log("  Cost of turning e2e on, 1.0 only (128MB of bytes):");
+    console.log("  Cost of turning e2e on, 1.1 only (128MB of bytes):");
     console.log("    plain      " + plain.value.toFixed(0) + " MB/s");
     console.log("    encrypted  " + sealed.value.toFixed(0) + " MB/s   (" +
         ((1 - sealed.value / plain.value) * 100).toFixed(0) + "% slower)");

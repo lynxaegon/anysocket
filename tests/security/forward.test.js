@@ -1,18 +1,26 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const WebSocket = require("ws");
-const AnyPacker = require("../../src/libs/AnyPacker");
+const Frame = require("../../src/libs/Frame");
 const constants = require("../../src/libs/_constants");
-const { pair, listen, stop, wait, AnySocket } = require("../helpers/loopback");
+const { pair, listen, stop, wait, disconnectReasons, AnySocket } = require("../helpers/loopback");
 
-// FORWARD frame: type + to(16 bytes) + from(16 bytes) + the relayed frame.
-// Ids go on the wire as packed hex, so only a 32-hex id survives the trip.
+// FORWARD frame: a frame whose payload is to(16 bytes) + from(16 bytes) + the
+// relayed frame. Ids go on the wire as their 16 bytes, so only a 32-hex id
+// survives the trip.
 const hexId = () => require("crypto").randomBytes(16).toString("hex");
-const forwardFrame = (to, from, inner) =>
-    String(constants.PACKET_TYPE.FORWARD) + AnyPacker.packHex(to) + AnyPacker.packHex(from) + inner;
-const rpcFrame = (seq, method, params) =>
-    String(constants.PACKET_LENGTH.FULL) + String(constants.PACKET_TYPE.INTERNAL) + AnyPacker.packInt32(seq) +
-    JSON.stringify({ type: constants.INTERNAL_PACKET_TYPE.RPC, method, params, bin: [] });
+const forwardFrame = (to, from, inner) => Frame.encode({
+    flags: Frame.FLAGS.FIRST | Frame.FLAGS.FINAL | Frame.FLAGS.BINARY,
+    type: constants.PACKET_TYPE.FORWARD,
+    seq: 0,
+    payload: [Frame.idToBytes(to), Frame.idToBytes(from), inner]
+});
+const rpcFrame = (seq, method, params) => Frame.encode({
+    flags: Frame.FLAGS.FIRST | Frame.FLAGS.FINAL,
+    type: constants.PACKET_TYPE.INTERNAL,
+    seq,
+    payload: Frame.bytes(JSON.stringify({ type: constants.INTERNAL_PACKET_TYPE.RPC, method, params, bin: [] }))
+});
 
 /**
  * Regression for the hole this release exists to close: FORWARD frames were
@@ -21,6 +29,7 @@ const rpcFrame = (seq, method, params) =>
  * an RPC run as though it came from a peer the server already trusted.
  */
 test("a socket that never authenticated cannot have a relayed RPC run", async (t) => {
+    const reasons = disconnectReasons(t);
     const server = new AnySocket();
     const trusted = new AnySocket();
     server.id = hexId();
@@ -50,6 +59,7 @@ test("a socket that never authenticated cannot have a relayed RPC run", async (t
 
     assert.equal(ranAs, null, "an unauthenticated socket must not get an RPC executed");
     await closed; // and it should have been dropped
+    assert.ok(reasons.some((r) => /FORWARD before the handshake/.test(r)), "dropped for: " + reasons);
 });
 
 test("an authenticated peer cannot relay under another peer's name", async (t) => {

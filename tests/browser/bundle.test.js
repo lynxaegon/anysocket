@@ -21,8 +21,11 @@ const fs = require("fs");
 
 const BUNDLE = path.resolve(__dirname, "../../dist/anysocket.browser.js");
 
-/** Load the bundle with browser-shaped globals in place, then put them back. */
-function loadBundle() {
+/**
+ * Load the bundle with browser-shaped globals in place, then put them back.
+ * `WebSocketImpl` stands in for the browser's WebSocket; node's ws by default.
+ */
+function loadBundle(WebSocketImpl) {
     const saved = {
         window: global.window,
         WebSocket: global.WebSocket,
@@ -39,7 +42,7 @@ function loadBundle() {
         atob: globalThis.atob
     };
     global.self = global.window;
-    global.WebSocket = WS;
+    global.WebSocket = WebSocketImpl || WS;
 
     let AnySocket;
     try {
@@ -227,4 +230,91 @@ test("an async onAuth is enforced in the browser build too", async (t) => {
     }
 
     assert.ok(refused, "a browser peer refusing the server must not end up connected");
+});
+
+/**
+ * A WebSocket as strict as a browser's about its second argument, the
+ * subprotocols: anything but a string or a list of strings is a SyntaxError.
+ * node's ws takes an options object there, so standing in for the browser it let
+ * through what every browser refuses. `seen` collects what each construction got.
+ */
+function strictBrowserWebSocket(seen) {
+    const WS = require("ws");
+    return class BrowserWebSocket extends WS {
+        constructor(url, protocols) {
+            seen.push(protocols);
+            const valid = protocols === undefined || typeof protocols == "string" ||
+                (Array.isArray(protocols) && protocols.every((p) => typeof p == "string"));
+            if (!valid) {
+                throw new SyntaxError("Failed to construct 'WebSocket': The subprotocol '" + String(protocols) + "' is invalid.");
+            }
+            super(url, protocols);
+        }
+    };
+}
+
+// connectTimeout and cookies used to go to the browser's WebSocket as its
+// subprotocols, so every dial that set either threw before it started.
+test("a browser peer dials with connectTimeout and cookies set", async (t) => {
+    const NodeAnySocket = require("../../src/index.js");
+    const server = new NodeAnySocket();
+    const seen = [];
+    const loaded = loadBundle(strictBrowserWebSocket(seen));
+    t.after(async () => {
+        loaded.restore();
+        try { await server.stop(); } catch (_) {}
+    });
+
+    const port = await server.listen("ws", { port: 0 });
+    const browser = new loaded.AnySocket();
+    t.after(async () => { try { await browser.stop(); } catch (_) {} });
+
+    const peer = await browser.connect("ws", "127.0.0.1", port, { connectTimeout: 3000, cookies: { session: "abc" } });
+    assert.equal(peer.id, server.id);
+    assert.ok(seen.length >= 1);
+    assert.deepEqual(seen.filter((p) => p !== undefined), [], "only the URL reaches a browser WebSocket");
+
+    // The timer is gone once the link is up: it must not close a live connection.
+    await new Promise((r) => setTimeout(r, 50));
+    const atServer = new Promise((resolve) => server.once("message", (p) => resolve(p.msg)));
+    await peer.send({ still: "up" });
+    assert.deepEqual(await atServer, { still: "up" });
+});
+
+test("connectTimeout bounds a browser dial to a server that never upgrades", async (t) => {
+    const net = require("net");
+    const sockets = [];
+    const silent = net.createServer((socket) => { sockets.push(socket); socket.on("error", () => {}); });
+    await new Promise((resolve) => silent.listen(0, "127.0.0.1", resolve));
+    t.after(() => { sockets.forEach((s) => s.destroy()); silent.close(); });
+
+    const loaded = loadBundle(strictBrowserWebSocket([]));
+    t.after(loaded.restore);
+    const browser = new loaded.AnySocket();
+    t.after(async () => { try { await browser.stop(); } catch (_) {} });
+
+    const started = Date.now();
+    await assert.rejects(browser.connect("ws", "127.0.0.1", silent.address().port, { connectTimeout: 300 }));
+    const took = Date.now() - started;
+    // The secure attempt and the plain one each get the timeout, as on node.
+    assert.ok(took < 3000, "took " + took + "ms");
+    assert.ok(took >= 250, "gave up after " + took + "ms, before the timeout");
+});
+
+test("BrowserWS drops a second argument a browser would refuse", (t) => {
+    const seen = [];
+    const saved = global.WebSocket;
+    global.WebSocket = class { constructor(url, protocols) { seen.push(arguments.length, protocols); } };
+    t.after(() => { global.WebSocket = saved; });
+    const BrowserWS = require("../../src/browser/ws.js");
+
+    new BrowserWS("ws://x/", { handshakeTimeout: 5 });
+    new BrowserWS("ws://x/", ["chat", 3]);
+    new BrowserWS("ws://x/", null);
+    assert.deepEqual(seen, [1, undefined, 1, undefined, 1, undefined]);
+
+    seen.length = 0;
+    new BrowserWS("ws://x/", "chat");
+    new BrowserWS("ws://x/", ["chat", "v2"]);
+    assert.deepEqual(seen, [2, "chat", 2, ["chat", "v2"]]);
 });
