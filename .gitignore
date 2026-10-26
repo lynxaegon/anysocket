@@ -1,3 +1,5 @@
 node_modules/
 .idea/
 examples/*.pem
+# npm pack output
+*.tgz

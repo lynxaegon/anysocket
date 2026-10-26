@@ -1,3 +1,4 @@
+const debug = require("debug")("HTTPTransport");
 const AbstractTransport = require("../abstract/AbstractTransport");
 const Peer = require("./peer.js");
 const http = require("http");
@@ -28,26 +29,46 @@ class HTTP extends AbstractTransport {
         this.peers.get(this._getSocket(req).connectionID).emit("message", req, res);
     }
 
+    /**
+     * Resolves with the port actually bound. Port 0 asks the OS for a free one,
+     * which used to be impossible: `port || 80` turned 0 into 80.
+     */
     onListen() {
         return new Promise((resolve, reject) => {
-            if(
+            const secure = !!(
                 this.options.cert && this.options.key &&
                 fs.existsSync(this.options.cert) && fs.existsSync(this.options.key)
-            ) {
+            );
+            const requested = this.options.port == null ? (secure ? 443 : 80) : this.options.port;
+
+            if (secure) {
                 this.server = https.createServer({
                     key: fs.readFileSync(this.options.key).toString(),
                     cert: fs.readFileSync(this.options.cert).toString()
                 }, this._handler.bind(this));
                 this.isSecure = true;
-                this.server.listen(this.options.port || 443, this.options.host || "0.0.0.0", () => {
-                    resolve();
-                });
             } else {
                 this.server = http.createServer(this._handler.bind(this));
-                this.server.listen(this.options.port || 80, this.options.host || "0.0.0.0", () => {
-                    resolve();
-                });
             }
+
+            // Registered before listen() so a bind failure cannot slip past.
+            // Only the first outcome counts: an error after we are up is the
+            // server's business, not this promise's.
+            let settled = false;
+            this.server.on('error', err => {
+                debug("http server error", err && err.code || err);
+                if (settled) return;
+                settled = true;
+                reject(err);
+            });
+
+            this.server.listen(requested, this.options.host || "0.0.0.0", () => {
+                if (settled) return;
+                settled = true;
+                const address = this.server.address();
+                this.port = address && typeof address == "object" ? address.port : requested;
+                resolve(this.port);
+            });
 
             this.server.on('connection', socket => {
                 this.addPeer(new Peer(socket));
@@ -55,11 +76,6 @@ class HTTP extends AbstractTransport {
 
             this.server.on("upgrade", (req, socket) => {
                 this.peers.get(this._getSocket(req).connectionID).emit("upgrade", req, socket);
-            });
-
-            this.server.on('error', err => {
-                console.log("http err", err);
-                reject(err);
             });
         });
     }

@@ -8,6 +8,7 @@ const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
 const BufferUtils = require("../wrappers/utils_buffer");
+const { errors, rpcError } = require("./errors");
 
 const isBoolean = function (obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
@@ -26,46 +27,77 @@ module.exports = class AnyPeer extends EventEmitter {
         this.syncedTime = null;
         this.options = protocol.options;
 
-        const makeRPC = (rpc = {}, base = "") => {
+        const makeRPC = (rpc = {}, base = "", callOptions = {}) => {
             return new Proxy(() => {},
                 {
                     get: (target, name) => {
-                        const prop = target[name];
-                        if (prop != null) { return prop; }
-                        return makeRPC(rpc, base + "/" + name);
+                        // Not method names. Symbols are how the runtime probes
+                        // an object (inspect, iteration, coercion); "then"
+                        // would make `await peer.rpc` call the peer, and
+                        // "toJSON" would turn serializing anything holding a
+                        // peer into a remote call.
+                        if (typeof name === "symbol" || name === "then" || name === "toJSON") {
+                            return undefined;
+                        }
+                        // Everything else is a remote name — including "call",
+                        // "name" or "length", which the function behind the
+                        // proxy used to answer locally, so a remote method by
+                        // one of those names could not be called.
+                        return makeRPC(rpc, base + "/" + name, callOptions);
                     },
                     apply: (target, thisArg, args) => {
                         let path = base.split("/").slice(1);
                         return new Promise((resolve, reject) => {
+                            // Between 1.0 peers a binary argument travels as
+                            // its own bytes, attached beside the call; to a
+                            // 0.4.x peer it still has to be base64 inside it.
+                            const native = this.protocolVersion() >= constants.PROTOCOL_VERSION;
+                            const attached = [];
                             let binary = [];
                             for (let item in args) {
                                 if (BufferUtils.isBuffer(args[item])) {
-                                    args[item] = AnyPacker.packBytes(args[item]);
+                                    if (native) {
+                                        attached.push(args[item]);
+                                        args[item] = null;
+                                    } else {
+                                        args[item] = AnyPacker.packBytes(args[item]);
+                                    }
                                     binary.push(item);
                                 }
                             }
+                            const body = {
+                                type: constants.INTERNAL_PACKET_TYPE.RPC,
+                                method: path,
+                                params: args || null,
+                                bin: binary
+                            };
+                            if (attached.length) body[Packet.ATTACHMENTS] = attached;
+
                             const packet = Packet
-                                .data({
-                                    type: constants.INTERNAL_PACKET_TYPE.RPC,
-                                    method: path,
-                                    params: args || null,
-                                    bin: binary
-                                })
+                                .data(body)
                                 .setType(constants.PACKET_TYPE.INTERNAL);
 
-                            this._send(packet, true)
+                            this._send(packet, true, callOptions.timeout, callOptions.signal)
                                 .then((packet) => {
                                     if (packet.msg.error) {
-                                        reject(packet.msg);
+                                        reject(rpcError(packet.msg));
                                     } else {
                                         let result = packet.msg.result;
-                                        if (packet.msg.bin)
-                                            result = AnyPacker.unpackBytes(result);
+                                        if (packet.msg.bin) {
+                                            const attachedResult = packet.msg[Packet.ATTACHMENTS];
+                                            result = attachedResult && attachedResult.length
+                                                ? attachedResult[0]
+                                                : AnyPacker.unpackBytes(result);
+                                        }
                                         resolve(result);
                                     }
                                 })
                                 .catch((e) => {
-                                    reject(packet.data)
+                                    // The reason, not the request. Rejecting with
+                                    // packet.data handed the caller its own outgoing
+                                    // call — method and arguments, whatever secrets
+                                    // they held — in place of what went wrong.
+                                    reject(e);
                                 });
                         });
                     }
@@ -73,6 +105,20 @@ module.exports = class AnyPeer extends EventEmitter {
             );
         };
         this.rpc = makeRPC();
+
+        /**
+         * The same RPC proxy with options for these calls:
+         *
+         *   await peer.rpcWith({ timeout: 45000 }).reset("node-3");
+         *   await peer.rpcWith({ signal: controller.signal }).slow();
+         *
+         * `timeout` replaces replyTimeout, in either direction — a caller
+         * that has to wait longer than the default could not, and one that
+         * gave up sooner by racing its own timer left the call registered
+         * until the default ran out. A method, not a property on `rpc`,
+         * so it cannot collide with a remote method name.
+         */
+        this.rpcWith = (options) => makeRPC({}, "", Object.assign({}, options));
 
         protocol.on("internal", this.onInternalComs.bind(this));
         protocol.on("message", this.onMessage.bind(this));
@@ -86,6 +132,19 @@ module.exports = class AnyPeer extends EventEmitter {
 
     isProxy() {
         return this[_protocol].isProxy();
+    }
+
+    /**
+     * For a proxied peer, the id of the peer relaying it; null when we talk to
+     * it directly. Used to check that a relayed packet really arrived over the
+     * relay that peer belongs to.
+     */
+    get relayID() {
+        const protocol = this[_protocol];
+        if (!protocol.isProxy()) return null;
+
+        const relay = protocol.peer && protocol.peer.socket;
+        return (relay && relay.id) || null;
     }
 
     addLink(peer) {
@@ -134,12 +193,127 @@ module.exports = class AnyPeer extends EventEmitter {
         });
     }
 
+    /**
+     * The frame format and handshake this connection settled on: 1 when both
+     * ends speak 1.0, 0 against a 0.4.x peer.
+     */
+    protocolVersion() {
+        return this[_protocol].protocolVersion;
+    }
+
+    /**
+     * Can this connection carry a relayed link? Relaying needs the 1.0 frame
+     * format, because a relayed frame is opaque bytes that each hop re-wraps.
+     */
+    supportsRelay() {
+        return this[_protocol].supportsRelay();
+    }
+
+    /**
+     * Did this connection complete the built-in mutual auth? False when the
+     * instance has no secret, or when auth is optional and this peer did not
+     * offer it.
+     */
+    isAuthenticated() {
+        return !!this[_protocol].authenticated;
+    }
+
+    /** The optional features both ends announced. */
+    capabilities() {
+        return this[_protocol].capabilities.slice();
+    }
+
+    /**
+     * Did we dial this peer? Reportable metadata only — everything about how a
+     * peer is used is identical either way, and nothing in the protocol may
+     * depend on this.
+     */
+    isOutbound() {
+        return this[_protocol].isOutbound();
+    }
+
+    /** The peer's instance as it sent it in the handshake; null from a 0.4.x peer. */
+    remoteInstanceID() {
+        return this[_protocol].remoteInstanceID;
+    }
+
+    /** The largest frame the peer said it takes; null when it did not say. */
+    remoteMaxFrame() {
+        return this[_protocol].remoteMaxFrame;
+    }
+
+    /** Is the other end still answering? See AnyProtocol.probe. */
+    _probe(ms) {
+        return this[_protocol].probe(ms);
+    }
+
+    /** Answer message `seq`. What AnyPacket.reply() sends with. */
+    _reply(seq, message, type) {
+        const packet = Packet
+            .data(message)
+            .setType(type)
+            .setReplyTo(seq);
+
+        return this._send(packet, false);
+    }
+
+    /**
+     * Retire this peer in favour of another connection to the same id. Detached
+     * from its protocol first, so the resulting disconnect cannot be mistaken
+     * for the replacement going away.
+     */
+    _supersede(reason) {
+        // Anything still waiting on this connection would otherwise sit out
+        // the full reply timeout for an answer that can no longer arrive.
+        this._rejectPending(errors.superseded());
+        this[_protocol].peerID = null;
+        this[_protocol].disconnect(reason);
+    }
+
+    _rejectPending(reason) {
+        for (let seq in this[_packets]) {
+            clearTimeout(this[_packets][seq].timeout);
+            this[_packets][seq].reject(reason);
+        }
+        this[_packets] = {};
+    }
+
+    /**
+     * Encrypt this connection. Resolves once it is live.
+     *
+     * Either end may call it, and both may call it at once — the exchange is
+     * symmetric, so no caller has to work out which end it is.
+     */
     e2e() {
-        this[_protocol].e2e();
+        return this[_protocol].e2e();
+    }
+
+    /**
+     * A value unique to this encrypted channel, identical on both ends. An
+     * application can mix it into its own authentication so a proof is only
+     * good on the channel it was made for, which is what stops an on-path
+     * attacker from carrying a captured proof onto a channel of its own.
+     * Null until e2e is up.
+     */
+    getChannelBinding() {
+        return this[_protocol].getChannelBinding();
+    }
+
+    /** Which exchange and cipher this connection settled on, or null. */
+    e2eInfo() {
+        return this[_protocol].e2eInfo();
     }
 
     isE2EEnabled() {
         return this[_protocol].hasE2EEnabled();
+    }
+
+    /**
+     * Must this connection be encrypted before it is used? Either end asking
+     * is enough, so this can be true when our own options never said so.
+     */
+    requiresE2E() {
+        return !!this[_protocol].e2eRequired;
     }
 
     send(message, awaitReply, timeout) {
@@ -151,7 +325,7 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     forward(packet) {
-        this[_protocol].forward(packet);
+        return this[_protocol].forward(packet);
     }
 
     sendInternal(message, awaitReply, timeout) {
@@ -171,7 +345,7 @@ module.exports = class AnyPeer extends EventEmitter {
             return;
         }
 
-        this.emit("message", new AnyPacket(this, message, this.send.bind(this)));
+        this.emit("message", new AnyPacket(this, message, (reply) => this._reply(message.seq, reply, constants.PACKET_TYPE.LINK)));
     }
 
     onE2E() {
@@ -187,36 +361,50 @@ module.exports = class AnyPeer extends EventEmitter {
         }
 
         if (message.type == constants.PACKET_TYPE.INTERNAL) {
-            this.emit("internal", new AnyPacket(this, message, this.sendInternal.bind(this)));
+            this.emit("internal", new AnyPacket(this, message, (reply) => this._reply(message.seq, reply, constants.PACKET_TYPE.INTERNAL)));
         } else {
             debug("Dropped internal packet!", message);
         }
     }
 
     disconnect(reason) {
-        for (let seq in this[_packets]) {
-            clearTimeout(this[_packets][seq].timeout);
-            this[_packets][seq].reject("Peer disconnected!");
-        }
-        this[_packets] = {};
+        this._rejectPending(errors.disconnected());
 
         this[_protocol].disconnect(reason);
     }
 
-    _send(packet, awaitReply, timeout) {
+    _send(packet, awaitReply, timeout, signal) {
+        const result = this._sendInner(packet, awaitReply, timeout, signal);
+        // send() never settled before 1.0, so code everywhere calls it without
+        // awaiting or catching. Now that it can reject, an unhandled failure
+        // would crash the process under node's default. A handler on the very
+        // promise returned keeps that from happening, while a caller that does
+        // await it still sees the rejection.
+        result.catch(() => {});
+        return result;
+    }
+
+    _sendInner(packet, awaitReply, timeout, signal) {
         return new Promise((resolve, reject) => {
             if (!this[_protocol].isConnected()) {
-                reject("Cannot send message. Peer is disconnected");
+                reject(errors.notConnected());
                 return;
             }
 
-            if (!isBoolean(awaitReply) && awaitReply && awaitReply > 0) {
-                packet.setReplyTo(awaitReply);
+            // A number here used to make the message a reply to that seq, so
+            // send(msg, 5000) meant as a timeout went out as a reply instead.
+            // Replies go through packet.reply() now.
+            if (awaitReply != null && !isBoolean(awaitReply)) {
+                reject(new TypeError("awaitReply must be a boolean; answer a message with packet.reply()"));
+                return;
             }
 
-            this[_protocol].send(packet);
+            // Assigns packet.seq synchronously, so it is safe to key on below.
+            const sent = this[_protocol].send(packet);
 
             if (isBoolean(awaitReply) && awaitReply === true) {
+                // Resolves when the reply lands; a failed send still rejects.
+                sent.catch(reject);
                 this[_packets][packet.seq] = {
                     time: (new Date()).getTime(),
                     resolve: resolve,
@@ -225,12 +413,44 @@ module.exports = class AnyPeer extends EventEmitter {
                         if (this[_packets][packet.seq]) {
                             let msg = this[_packets][packet.seq];
                             delete this[_packets][packet.seq];
-                            this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " + packet.seq);
-                            msg.reject("Timeout!");
+                            // Only this call fails. Tearing down the connection
+                            // (pre-1.0 behaviour) also killed every other
+                            // in-flight call and any healthy traffic with it.
+                            if (this[_protocol].options.disconnectOnReplyTimeout) {
+                                this.disconnect("Missed reply timeout! Packet Type: " + Packet.TYPE._string(packet.type) + " - " + packet.seq);
+                            }
+                            msg.reject(errors.timeout({ after: timeout || this[_protocol].options.replyTimeout }));
                         }
                     }, timeout || this[_protocol].options.replyTimeout)
                 };
+
+                // The caller can give up early. The entry is removed rather than
+                // left for its timer, so a late reply is simply dropped.
+                if (signal) {
+                    const entry = this[_packets][packet.seq];
+                    const abort = () => {
+                        if (this[_packets][packet.seq] !== entry) return;
+                        clearTimeout(entry.timeout);
+                        delete this[_packets][packet.seq];
+                        entry.reject(errors.aborted(signal.reason));
+                    };
+                    // However the call settles, the listener goes with it: a
+                    // signal shared across many calls would otherwise keep every
+                    // one of them alive.
+                    const unhook = () => signal.removeEventListener("abort", abort);
+                    const { resolve: done, reject: failed } = entry;
+                    entry.resolve = (v) => { unhook(); done(v); };
+                    entry.reject = (e) => { unhook(); failed(e); };
+
+                    if (signal.aborted) abort();
+                    else signal.addEventListener("abort", abort, { once: true });
+                }
+                return;
             }
+
+            // Fire and forget: resolve once the transport has taken the packet.
+            // It used to never settle, so awaiting a plain send() hung forever.
+            sent.then(() => resolve(), reject);
         });
     }
 
@@ -250,6 +470,7 @@ module.exports = class AnyPeer extends EventEmitter {
             clearTimeout(tmp.timeout);
             tmp.resolve(new AnyPacket(this, message, () => {
                 debug("Cannot reply to a reply packet!");
+                return Promise.resolve();
             }));
             return true;
         }

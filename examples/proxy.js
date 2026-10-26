@@ -17,6 +17,8 @@ server.on("disconnected", (peer, reason) => {
 
 // CLIENT 1
 const client1 = new AnySocket();
+// relayed links are opt-in at the far end too (canProxy is the relay's half)
+client1.canAcceptProxy = () => true;
 client1.on("connected", (peer) => {
     console.log("[CLIENT1][" + peer.id + "] Connected");
 });

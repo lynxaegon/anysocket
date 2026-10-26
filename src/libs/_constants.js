@@ -5,7 +5,10 @@ const constants = {
         LINK: 3,
         SWITCH: 4,
         HEARTBEAT: 5,
-        FORWARD: 6
+        FORWARD: 6,
+        // Third message of the built-in mutual auth: the dialer proving
+        // itself against the challenge the listener just sent.
+        AUTH_CONFIRM: 7
     },
     PACKET_LENGTH: {
         FULL: 1,
@@ -29,6 +32,17 @@ const constants = {
         PLAIN: 1,
         E2EE: 2
     },
+    // The frame format and handshake this build speaks. Both sides announce it
+    // in their AUTH packet and the lower of the two wins, so a 1.0 peer and a
+    // 0.4.x peer still talk: 0.4.x never sends the field, reads as 0, and the
+    // connection stays on the legacy text format. Needed for a rolling upgrade,
+    // where old and new nodes share a cluster for the length of the roll.
+    PROTOCOL_VERSION: 1,
+    PROTOCOL_VERSION_LEGACY: 0,
+    // Optional features, announced by both sides and intersected. Names are
+    // permanent once released; a peer that does not list one must never be sent
+    // it. Populated as 1.0 lands each feature.
+    CAPABILITIES: [],
     MAX_PACKET_SIZE: 1024 * 1024,
     HTTP_CONTENT_TYPES: {
         txt: "text/plain;charset=utf-8",

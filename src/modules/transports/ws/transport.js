@@ -1,5 +1,6 @@
 let WebSocket;
-if (typeof window !== 'undefined' && typeof window.document !== 'undefined') {
+const inBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined';
+if (inBrowser) {
     WebSocket = require("../../../browser/ws");
 }
 else {
@@ -21,11 +22,17 @@ class WS extends AbstractTransport {
     onListen() {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket.Server({
-                server: this.options.server
+                server: this.options.server,
+                // `ws` allows 100MB per frame by default, which an
+                // unauthenticated peer can make us buffer. Derived from the
+                // frame size so raising maxPacketSize does not quietly start
+                // tripping the transport limit; doubled because a 0.4.x
+                // encrypted payload is hex.
+                maxPayload: this._maxPayload()
             });
-            this.ws.on('connection', socket => {
+            this.ws.on("connection", socket => {
                 this._applyTcpKeepAlive(socket);
-                this.addPeer(new Peer(socket));
+                this.addPeer(this._peer(socket));
             });
 
             this.ws.on('error', err => {
@@ -35,6 +42,14 @@ class WS extends AbstractTransport {
             this.ws.on('listening', () => {
                 resolve();
             });
+
+            // ws only forwards a *future* "listening" from the server it is
+            // attached to, so on a server that is already up — the http
+            // transport sharing its port, or one passed in — it would wait
+            // forever.
+            if (this.options.server && this.options.server.listening) {
+                resolve();
+            }
         });
     }
 
@@ -49,11 +64,21 @@ class WS extends AbstractTransport {
                     }
                 }
             }
+            // connectTimeout means the same here as on tcp: a dial that never
+            // answers is abandoned rather than left to the OS's own timeout.
+            if(this.options.connectTimeout) {
+                opts = Object.assign(opts || {}, { handshakeTimeout: this.options.connectTimeout });
+            }
+            // The same limit as a listener's, and the one we announce. A browser sets
+            // its own and takes no options here.
+            if(!inBrowser) {
+                opts = Object.assign(opts || {}, { maxPayload: this._maxPayload() });
+            }
             let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
             ws.on('open', socket => {
                 connected = true;
                 this._applyTcpKeepAlive(ws);
-                this.addPeer(new Peer(ws));
+                this.addPeer(this._peer(ws));
                 resolve();
             });
 
@@ -67,6 +92,23 @@ class WS extends AbstractTransport {
             });
 
         });
+    }
+
+    // How much may sit in the socket write buffer before a send waits for it
+    // to drain. Bounds memory on a large transfer without costing a round of
+    // latency per chunk.
+    _maxPayload() {
+        if (this.options.maxPayload) return this.options.maxPayload;
+        const frame = this.options.maxPacketSize || 4 * 1024 * 1024;
+        return Math.max(8 * 1024 * 1024, frame * 2 + 1024 * 1024);
+    }
+
+    _peer(socket) {
+        const peer = new Peer(socket);
+        peer.highWaterMark = this.options.sendHighWaterMark || 16 * 1024 * 1024;
+        // Announced in the handshake, so the other end chunks to fit it.
+        peer.maxPayload = this._maxPayload();
+        return peer;
     }
 
     // Enable SO_KEEPALIVE on the underlying TCP socket when the embedder

@@ -6,8 +6,30 @@ const endSymbol = Symbol("ended");
 const parseCookies = Symbol("parseCookies");
 const debug = require('debug')('AnyHTTPPeer');
 
-const url = require('url');
 const fs = require("fs");
+
+/**
+ * A request target's path and query, as url.parse(target, true) gave them —
+ * without url.parse, which node now warns about on every call. A path-shaped
+ * target is prefixed with an origin rather than resolved against one, so
+ * "//host/x" stays a path instead of becoming a host.
+ */
+const parseTarget = (target) => {
+    target = String(target || "/");
+    let parsed;
+    try {
+        parsed = new URL(target.startsWith("/") ? "http://localhost" + target : target, "http://localhost");
+    } catch (e) {
+        parsed = new URL("http://localhost/");
+    }
+    const query = Object.create(null);
+    for (const [key, value] of parsed.searchParams) {
+        if (!(key in query)) query[key] = value;
+        else if (Array.isArray(query[key])) query[key].push(value);
+        else query[key] = [query[key], value];
+    }
+    return { pathname: parsed.pathname, query: query };
+};
 //////////////////////////////////////////////////////////////
 // TODO: implement `formidable` package for parsing requests
 // https://www.npmjs.com/package/formidable
@@ -16,7 +38,7 @@ const fs = require("fs");
 module.exports = class AnyHTTPPeer {
     constructor(req, res) {
         let self = this;
-        let qs = url.parse(req.url, true);
+        let qs = parseTarget(req.url);
 
         self[reqSymbol] = req;
         self[resSymbol] = res;

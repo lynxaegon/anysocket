@@ -1,5 +1,5 @@
 # AnySocket
-An abstract networking layer over multiple transports, client/server agnostic with support for E2EE
+A custom protocol over any transport — client/server agnostic, binary framed, with authenticated end-to-end encryption
 
 [![NPM version](https://badge.fury.io/js/anysocket.svg)](https://www.npmjs.com/package/anysocket)
 ![Downloads](https://img.shields.io/npm/dm/anysocket.svg?style=flat)
@@ -14,39 +14,78 @@ An abstract networking layer over multiple transports, client/server agnostic wi
 
 #### Important
 
-This is a work in progress and [API](docs) is subject to change.
+1.0 is the first stable release. Upgrading from 0.4.x? See
+[MIGRATING-1.0.md](MIGRATING-1.0.md) — a few behaviours changed, and one of them
+(`onAuth` is now actually awaited) can start refusing peers that used to connect.
+
+Releases come in two steps:
+
+| | talks to 0.4.x | |
+|---|---|---|
+| **1.0.x** | yes | the bridge: upgrade a running fleet one process at a time |
+| **1.1** | no | drops the 0.4.x wire format and its legacy e2e exchange |
+
+Move every peer to 1.0 before any of them goes to 1.1.
 
 <a name="features"></a>
 ## Features
-* Client / Server agnostic
-* Support for request/reply
-* Custom AUTH method
-* E2EE between peers with forward secrecy
-* RPC support
-* NTP Sync between peers support 
+* Client / Server agnostic — once a link is up, both ends use the same API
+* Support for request/reply, with per-call timeouts and cancellation
+* **Authenticated E2EE** with forward secrecy — x25519 (p256 where unavailable),
+  AES-256-GCM or ChaCha20-Poly1305, and a channel binding to pin your own auth to
+* Built-in mutual authentication from a shared secret, which also binds the
+  encrypted channel to it — or bring your own; an optional mode for moving a live
+  fleet over to it
+* `requireE2E`: never be handed a peer you could talk to in clear
+* Binary frames: a `Uint8Array`/`Buffer` travels as those bytes, in messages and RPC
+* RPC support, with an `rpcGuard` to authorize every call in one place
+* NTP Sync between peers support
 * P2P using a proxy server (with support for direct E2EE between peers)
-* Binary support (_see: <a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>_)
-* **Browser support** - 31kb footprint (_see: ```/dist/anysocket.browser.js```_)
-* Multiple transports *(implemented atm: **ws/wss**, **http/https**)
+* `maintain()`: keep a peer connected, with backoff
+* **Browser support** (_see: ```/dist/anysocket.browser.js```_), tested as the built
+  bundle
+* Transports: **ws/wss**, **tcp**, **ipc** (unix socket / named pipe), **http/https** —
+  and tcp can share one port with ws/http
+* Talks to 0.4.x peers on the wire, for upgrading a fleet one peer at a time
+  (1.0.x only: 1.1 drops it — see [MIGRATING-1.0.md](MIGRATING-1.0.md))
 * All peers have a UUIDv4 associated
 * Disconnect detection using a heartbeat
-* **Not Battle Tested** ...yet
-
+* Tested: `npm test`, split into groups so iterating is quick
 
 ** _http_ transport is experimental
 
-_Info: Binary RPC arguments and responses are auto packed/unpacked (<a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer.pack</b></code></a>/<a href="docs/#AnySocket.Packer.unpack"><code><b>AnySocket.Packer.unpack</b></code></a>)._ 
+_Info: Binary RPC arguments and responses are sent as bytes between 1.0 peers, and auto packed/unpacked (<a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a>) for a 0.4.x peer._
 
 ## Benchmarks
 
-See [benchmarks](benchmarks)
+`npm run bench` measures 1.0 against the published 0.4.32, plain and encrypted,
+on loopback, interleaving the two and reporting the median of several runs
+(`BENCH_RUNS`). Median of 5 (node 24, x64, ws):
+
+| | 0.4.32 | 1.0 | |
+|---|---|---|---|
+| connect + authenticate | 13.4 ms | 13.5 ms | about the same |
+| e2e handshake | 7.7 ms | **1.8 ms** | 4.2x faster |
+| 2KB messages, plain | 25.6k msg/s | **35.8k msg/s** | 1.4x faster (noisy) |
+| 2KB messages, encrypted | 14.4k msg/s | **29.0k msg/s** | 2.0x faster, 2x fewer bytes |
+| 32MB of text, plain | 136 MB/s | **151 MB/s** | 1.1x faster |
+| 32MB of text, encrypted | 52.6 MB/s | **123 MB/s** | 2.3x faster, 2x fewer bytes |
+| 32MB of bytes, plain | 103 MB/s | **239 MB/s** | 2.3x faster, 1.3x fewer bytes |
+| 32MB of bytes, encrypted | 40.2 MB/s | **181 MB/s** | 4.5x faster, 2.7x fewer bytes |
+
+Turning e2e on costs about 26% of throughput (128MB of bytes: 233 MB/s plain,
+172 MB/s encrypted). tcp is faster still than ws; these are ws so both versions
+run the same transport.
+
+See also [benchmarks](benchmarks) for the http/ws server comparisons.
 
 <a name="installation"></a>
 ## Installation
 
-```javascript
+```
 npm install --save anysocket
 ```
+
 or
 ```html
 <script src="/dist/anysocket.browser.js"></script>
@@ -114,19 +153,68 @@ client.on("disconnected", (peer, reason) => {
     console.log("Disconnected", peer.id, "Reason:", reason);
 });
 ```
+### Authenticated and encrypted
+
+```javascript
+// both ends hold the same secret; each proves it to the other, and the
+// e2e keys are bound to it, so someone relaying the handshake cannot read on
+const server = new AnySocket({ auth: { secret: process.env.SHARED_SECRET } });
+await server.listen("tcp", { port: 3000, requireE2E: true });  // no "connected" until encrypted
+
+const client = new AnySocket({ auth: { secret: process.env.SHARED_SECRET } });
+const peer = await client.connect("tcp", "10.0.0.2", 3000);
+peer.e2eInfo();  // { protocolVersion: 1, kex: "x25519", cipher: "aes-256-gcm", authenticated: true }
+```
+
+### RPC, with one place to authorize it
+
+```javascript
+server.setRPC({
+    users: { get: async (id, peer) => db.users.get(id) },
+    admin: { wipe: async (peer) => db.wipe() }
+});
+// asked before every call; only `true` lets it run, anything else is a 403
+server.rpcGuard = (peer, path, args) => peer.isAuthenticated() && path[0] !== "admin";
+
+const user = await peer.rpc.users.get(42);
+await peer.rpcWith({ timeout: 5000 }).users.get(42);   // per-call timeout (or { signal })
+```
+
+### Staying connected
+
+```javascript
+const link = client.maintain("tcp", "10.0.0.2", 3000);   // dials, and re-dials with backoff
+link.on("connected", (peer) => { /* ... */ });
+```
+
 More in the `examples` folder.
 
 ## Documentation
 
-See [documentation](docs#api) and [examples](examples) folder
+See [documentation](docs#api) and the [examples](examples) folder.
+
+Upgrading from 0.4.x? [MIGRATING-1.0.md](MIGRATING-1.0.md).
+
+## Tests
+
+```
+npm run test:unit       # no sockets, ~0.3s — the quick loop
+npm run test:fast       # everything but the 0.4.32 interop pass
+npm run test:browser    # drives the built dist/ bundle
+npm test                # all of it
+npm run bench           # 1.0 vs 0.4.32, plain and encrypted
+```
 
 <a name="future"></a>
 ## Upcoming Features
 * Mesh Network
-* Multiple transports: **tcp**, **udp***, **ipc**
-* Client reconnection
+* **udp*** transport
 
 _* this will require a change in the protocol, as the protocol assumes the packets are sent using a reliable, ordered connection_
+
+_A transport has to deliver whole messages: ws does, and tcp and ipc length-prefix
+each one. The frame format itself is byte-oriented and does not depend on a
+transport distinguishing text from binary._
 
 <a name="license"></a>
 ## License

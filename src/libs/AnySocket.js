@@ -6,6 +6,87 @@ const BufferUtils = require("../wrappers/utils_buffer");
 const constants = require("./_constants");
 const AnyHTTPPeer = require("./AnyHTTPPeer");
 const AnyRouter = require("./AnyHTTPRouter");
+const Packet = require("./Packet");
+const Maintainer = require("./Maintainer");
+const { errors, reasonText } = require("./errors");
+
+/**
+ * A thrown Error has no enumerable fields, so JSON.stringify turned every
+ * rejected RPC into {} on the wire. Reduce whatever was thrown to a string
+ * the caller can actually read.
+ */
+const errorMessage = (e) => {
+    if (e instanceof Error) return e.message || e.name || "Error";
+    if (typeof e === "string") return e;
+    if (e && typeof e.message === "string") return e.message;
+    try { return JSON.stringify(e); } catch (_) { return String(e); }
+};
+
+/**
+ * Prototypes an RPC path never walks into. Their methods are on every object
+ * and function, so a path through them would hand any peer the language
+ * itself: `["constructor", "assign"]` reaches Object.assign, `["list", "push"]`
+ * mutates an exposed array, and each is called with our own AnyPeer as its last
+ * argument.
+ */
+const BUILTIN_PROTOTYPES = new Set([
+    Object.prototype, Function.prototype, Array.prototype, String.prototype,
+    Number.prototype, Boolean.prototype, Symbol.prototype, Date.prototype,
+    RegExp.prototype, Error.prototype, Promise.prototype, Map.prototype,
+    Set.prototype, WeakMap.prototype, WeakSet.prototype,
+    Object.getPrototypeOf(async function () {}),
+    Object.getPrototypeOf(function* () {}),
+    Object.getPrototypeOf(Uint8Array.prototype),
+    typeof Buffer !== "undefined" ? Buffer.prototype : Object.prototype
+]);
+const FORBIDDEN_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * The function an RPC path names in the exposed table, and the object it is a
+ * method of — or null. A step may land on an own property or on one inherited
+ * from the object's own classes, so `setRPC(new Service())` works, but never on
+ * one inherited from a built-in.
+ */
+const resolveRPC = (root, path) => {
+    if (!Array.isArray(path) || path.length === 0) return null;
+
+    let parent = null;
+    let node = root;
+    for (const name of path) {
+        if (typeof name !== "string" || FORBIDDEN_NAMES.has(name)) return null;
+        if (node === null || (typeof node !== "object" && typeof node !== "function")) return null;
+
+        let owner = node;
+        while (owner && !Object.prototype.hasOwnProperty.call(owner, name)) {
+            owner = Object.getPrototypeOf(owner);
+            if (owner && BUILTIN_PROTOTYPES.has(owner)) return null;
+        }
+        if (!owner) return null;
+
+        parent = node;
+        node = node[name];
+    }
+    return typeof node === "function" ? { parent, fn: node } : null;
+};
+
+/**
+ * A relayed link takes its options from the connection it is relayed over —
+ * including whether that connection had to be encrypted, which either of its
+ * ends may have asked for, so it is not always in our own options. `farEnd` is
+ * what the relay passed on about the other hop: a relayed link has to be
+ * encrypted when either hop had to be.
+ */
+const relayedOptions = (relay, farEnd, farMaxFrame) => Object.assign({}, relay.options, {
+    requireE2E: relay.requiresE2E() || farEnd === "required",
+    // A relayed frame crosses both hops, so it has to fit the smaller of the two
+    // limits: ours to the relay, and the far hop's, which only the relay knows.
+    relayMaxFrame: smallerLimit(relay.remoteMaxFrame(), farMaxFrame)
+});
+
+const smallerLimit = (a, b) => {
+    const known = [a, b].filter((n) => Number.isInteger(n) && n > 0);
+    return known.length ? Math.min(...known) : null;
+};
 
 const _private = {
     peersConnected: Symbol("peers connected"),
@@ -17,31 +98,54 @@ const _private = {
     onPeerDisconnected: Symbol("onPeerDisconnected"),
     onPeerInternalMessage: Symbol("onPeerInternalMessage"),
     findTransport: Symbol("findTransport"),
+    startTransport: Symbol("startTransport"),
+    httpServerFor: Symbol("httpServerFor"),
+    keepsExisting: Symbol("keepsExisting"),
+    probeExisting: Symbol("probeExisting"),
+    probed: Symbol("duplicate already probed"),
     httpBundle: Symbol("http bundle js"),
-    anymesh: Symbol("AnyMesh"),
-    httpServer: Symbol("HTTPServer")
+    httpServer: Symbol("HTTPServer"),
+    httpServers: Symbol("HTTP servers by port"),
+    maintainers: Symbol("maintainers"),
+    standby: Symbol("standby duplicates of 0.4.x peers"),
+    holdStandby: Symbol("holdStandby"),
+    stops: Symbol("stop() calls so far")
 };
 
+// How long a duplicate connection to a 0.4.x peer is held while that peer picks which of the
+// two it keeps. It decides as soon as it sees the second, so this only bounds a standby the
+// peer never closed.
+const LEGACY_STANDBY_MS = 10000;
+
 const AnyPeer = require("./AnyPeer");
-const AnyMesh = require("./AnyMesh");
 const AnyProtocol = require("./AnyProtocol");
 const ProxyPeer = require("./ProxyPeer");
 
 class AnySocket extends EventEmitter {
-    constructor() {
+    constructor(options) {
         super();
 
+        this.options = Object.assign({}, options);
         this._started = false;
         this.id = Utils.uuidv4();
+        // This instance, as opposed to the id, which an application may set and keep across
+        // restarts. Sent in the handshake so a peer can tell a restarted us from a duplicate.
+        this.instanceID = Utils.uuidv4();
         this.http = new AnyRouter();
         debug("AnySocketID:", this.id);
 
         this.rpc = {};
+        // Asked before every incoming RPC runs: (peer, path, args) => boolean,
+        // or a promise of one. Unset, every exposed method is callable.
+        this.rpcGuard = this.options.rpcGuard || null;
         this[_private.peersConnected] = {};
         this[_private.peers] = {};
         this[_private.transports] = {};
         this[_private.httpServer] = null;
-        this[_private.anymesh] = null;
+        this[_private.httpServers] = new Map();
+        this[_private.maintainers] = new Set();
+        this[_private.standby] = new Map();
+        this[_private.stops] = 0;
         if (typeof window === 'undefined') {
             // nodejs
             this[_private.httpBundle] = fs.readFileSync(__dirname + "/../../dist/anysocket.browser.js");
@@ -50,30 +154,20 @@ class AnySocket extends EventEmitter {
         return this;
     }
 
-    filter(options) {
-        // something smart to filter
-    }
-
     broadcast(message, awaitReply) {
         awaitReply = awaitReply || false;
 
-        return new Promise((resolve, reject) => {
-            const promises = [];
-            for (let p in this[_private.peers]) {
-                p = this[_private.peers][p];
-                promises.push(
-                    p.send(message, awaitReply)
-                );
-                Promise.all(promises).then(resolve).catch(reject);
-            }
-        });
-    }
+        // Resolves with one entry per peer — including an empty array when
+        // there are none. It used to await inside the loop and never settle
+        // for an instance with no peers.
+        const promises = [];
+        for (let id in this[_private.peers]) {
+            promises.push(this[_private.peers][id].send(message, awaitReply));
+        }
 
-    mesh() {
-        if(this._started)
-            throw new Error("Cannot enable Mesh while AnySocket is running. You must first stop AnySocket!");
-
-        this[_private.anymesh] = new AnyMesh(this);
+        const result = Promise.all(promises);
+        result.catch(() => {});
+        return result;
     }
 
     setRPC(rpc) {
@@ -84,30 +178,49 @@ class AnySocket extends EventEmitter {
         return false;
     }
 
+    /**
+     * May `relayID` hand us a link to `peerID` that it relays? Asked when a
+     * relay announces one. False by default, like canProxy(): relaying is opt-in
+     * at every hop. Without it, any connected peer could announce peers that
+     * do not exist, and speak for them.
+     */
+    canAcceptProxy(relayID, peerID) {
+        return false;
+    }
+
     proxy(peerID, throughPeerID) {
         return new Promise((resolve, reject) => {
             if(peerID == throughPeerID || peerID == this.id) {
-                reject("Cannot proxy loopback!");
+                reject(errors.refused("Cannot proxy loopback!"));
+                return;
+            }
+            if(!this[_private.peers][throughPeerID]) {
+                reject(errors.notConnected());
                 return;
             }
             if(this[_private.peers][throughPeerID].isProxy())
             {
                 // TODO: this requires to implement a full network graph (map)
                 // TODO: this will enable to send messages without having multiple forward headers
-                reject("Cannot proxy via a proxy! atm... :)");
+                reject(errors.refused("Cannot proxy via a proxy!"));
                 return;
             }
+            if(!this[_private.peers][throughPeerID].supportsRelay()) {
+                reject(errors.refused("Cannot proxy: the relay connection is not protocol version 1"));
+                return;
+            }
+
             this[_private.peers][throughPeerID].sendInternal({
                 type: constants.INTERNAL_PACKET_TYPE.PROXY,
                 action: "proxy",
                 id: peerID
             }, true).then((packet) => {
-                if(packet.msg.ok && !this[_private.peers][peerID]) {
-                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, this[_private.peers][throughPeerID]), this[_private.peers][throughPeerID].options);
-                    this[_private.onProtocolReady](protocol);
-                    resolve(this[_private.peers][peerID]);
+                const relay = this[_private.peers][throughPeerID];
+                if(packet.msg.ok && !this[_private.peers][peerID] && relay) {
+                    let protocol = new AnyProtocol(this, new ProxyPeer(true, this.id, peerID, relay), relayedOptions(relay, packet.msg.e2e, packet.msg.mf));
+                    this[_private.onProtocolReady](protocol, resolve, reject);
                 } else {
-                    reject("Cannot proxy!");
+                    reject(errors.refused("Cannot proxy" + (packet.msg.reason ? ": " + packet.msg.reason : "!")));
                 }
             }).catch(reject);
         })
@@ -116,17 +229,40 @@ class AnySocket extends EventEmitter {
     unproxy(peerID, throughPeerID, reason) {
         reason = reason || "Proxy Connection Closed";
         if(this[_private.peers][peerID] && this[_private.peers][peerID].isProxy() ) {
-            this[_private.peers][throughPeerID].sendInternal({
+            // The relay may already be gone; then there is no one to tell.
+            const relay = this[_private.peers][throughPeerID];
+            if (relay) relay.sendInternal({
                 type: constants.INTERNAL_PACKET_TYPE.PROXY,
                 action: "unproxy",
                 id: peerID
-            });
+            }).catch(() => {});
             this[_private.onPeerDisconnected](this[_private.peers][peerID], reason);
         }
     }
 
     hasPeer(id) {
         return !!this[_private.peers][id];
+    }
+
+    /** The connected peer with this id, or null. */
+    getPeer(id) {
+        return this[_private.peers][id] || null;
+    }
+
+    /**
+     * Keep a peer connected: dial it, and dial it again with backoff whenever the
+     * link drops. Returns a handle with connected / disconnected / retry /
+     * abandoned events, fail(reason) and stop(). See Maintainer for the policy
+     * options and what it does beyond a plain retry loop.
+     */
+    maintain(scheme, ip, port, options, policy) {
+        const handle = new Maintainer(this, { scheme: scheme, ip: ip, port: port, options: options }, policy);
+        this[_private.maintainers].add(handle);
+        return handle;
+    }
+
+    _forgetMaintainer(handle) {
+        this[_private.maintainers].delete(handle);
     }
 
     hasDirectPeer(id) {
@@ -138,6 +274,23 @@ class AnySocket extends EventEmitter {
         return this.listen(scheme, options);
     }
 
+    /**
+     * Start listening. Resolves with the port actually bound, so port 0
+     * ("any free port") is usable.
+     *
+     * ws rides on an http server, and http and ws asked for on the same
+     * port share one — that is how the http router and websocket upgrades
+     * live together. Three things used to go wrong here:
+     *
+     * - The http server was started without being awaited, so a failure
+     *   to bind raised a second rejection nobody could catch. Under node's
+     *   default that **crashes the process**, even when the caller handles
+     *   the error from listen() itself.
+     * - There was a single http-server slot, so a second ws listen —
+     *   another port, or a retry after a failure — reused the first server
+     *   and never bound anything.
+     * - `port || 80` made port 0 impossible.
+     */
     listen(scheme, options) {
         // server
         this._started = true;
@@ -147,36 +300,44 @@ class AnySocket extends EventEmitter {
         }
 
         options.ip = options.ip || "0.0.0.0";
-        if(["http", "ws"].indexOf(scheme.toLowerCase()) == -1 && !options.port)
+        // ipc listens on a path, not a port; everything else needs a port (or 0
+        // for any free one), except http and ws, which default to 80.
+        const kind = scheme.toLowerCase();
+        if(kind == "ipc") {
+            if(!options.path) throw new Error("ipc needs a path");
+        } else if(["http", "ws"].indexOf(kind) == -1 && options.port == null) {
             throw new Error("Invalid port!");
-
-        if(["ws"].indexOf(scheme.toLowerCase()) != -1) {
-            if(!this[_private.httpServer]) {
-                this.listen("http", options);
-            }
-
-            options = {
-                server: this[_private.httpServer]
-            };
         }
 
-        let transport = this[_private.findTransport](scheme);
-        transport = new transport("server", options);
-        this[_private.transports][transport.id] = transport;
-
-        // start transport
-        transport.on("connected", (peer) => {
-            this[_private.onPeerConnected](peer, transport.options);
-        });
-        transport.on("disconnected", (peer, reason) => {
-            this[_private.onPeerDisconnected](peer, reason);
-        });
-
-        let result = transport.listen();
-        if(scheme == "http") {
-            this[_private.httpServer] = transport.server;
+        if(scheme.toLowerCase() == "ws") {
+            return this[_private.httpServerFor](options).then(({ server, port }) => {
+                // Keep the caller's options and only add the server to them. They
+                // used to be replaced outright, so everything a listening side
+                // configured — auth/e2e timeouts, heartbeat settings, receive
+                // limits — was silently dropped for the ws transport, and only
+                // dialling peers ever had their options honoured.
+                return this[_private.startTransport]("ws", Object.assign({}, options, { server: server }))
+                    .then(() => port);
+            });
         }
-        return result;
+
+        if(scheme.toLowerCase() == "http") {
+            return this[_private.httpServerFor](options).then(({ port }) => port);
+        }
+
+        // tcp on a port this instance already serves http/ws on shares it: one
+        // port for browsers and ws peers, and for tcp peers. It used to fail as
+        // the port being in use.
+        if(kind == "tcp" && options.port && this[_private.httpServers].has(options.port)) {
+            return this[_private.httpServers].get(options.port).then(({ server, port }) => {
+                return this[_private.startTransport]("tcp", Object.assign({}, options, { server: server }))
+                    .then(() => port);
+            });
+        }
+
+        return this[_private.startTransport](scheme, options).then((result) => {
+            return result === undefined ? options.port : result;
+        });
     }
 
     connect(scheme, ip, port, options) {
@@ -190,14 +351,23 @@ class AnySocket extends EventEmitter {
             // client
             let transport = this[_private.findTransport](scheme);
             transport = new transport("client", options);
+            const stops = this[_private.stops];
 
             // start transport
             transport.on("connected", (peer) => {
+                // stop() ran while this dial was in flight: it must not bring a live peer
+                // back to an instance that was stopped.
+                if (this[_private.stops] !== stops) {
+                    peer.disconnect("Local Connection Closed");
+                    reject(errors.disconnected());
+                    return;
+                }
                 this[_private.transports][transport.id] = transport;
                 this[_private.onPeerConnected](peer, transport.options, resolve);
                 debug("Transports Added", transport.id, Object.keys(this[_private.transports]).length);
             });
             transport.on("disconnected", (peer, reason) => {
+                if (!this[_private.transports][transport.id]) return;   // never registered: see above
                 this[_private.transports][transport.id].stop();
                 delete this[_private.transports][transport.id];
                 this[_private.onPeerDisconnected](peer, reason);
@@ -205,7 +375,7 @@ class AnySocket extends EventEmitter {
 
                 // protocol was never ready
                 if(!this[_private.peers][peer.id]) {
-                    reject(reason);
+                    reject(errors.connectionFailed(reason));
                 }
             });
             transport.connect().catch(reject);
@@ -214,6 +384,9 @@ class AnySocket extends EventEmitter {
 
     stop() {
         this._started = false;
+        this[_private.stops]++;
+        // Before anything closes, or each closing link would be redialled.
+        for (const handle of Array.from(this[_private.maintainers])) handle.stop();
         return new Promise((resolve, reject) => {
             const promises = [];
             for (let id in this[_private.transports]) {
@@ -226,16 +399,40 @@ class AnySocket extends EventEmitter {
                 this[_private.peersConnected] = {};
                 this[_private.peers] = {};
                 this[_private.transports] = {};
+                // Closed servers must not be found by a later listen() on the
+                // same port, or the ws side would attach to one and wait forever.
+                this[_private.httpServer] = null;
+                this[_private.httpServers] = new Map();
 
                 resolve();
-            }).catch(err => {
-                throw err;
-            });
+            }).catch(reject);
         });
     }
 
     onAuth(packet) {
         return true;
+    }
+
+    /**
+     * The shared secret for the built-in mutual auth, if one was given as
+     * `new AnySocket({ auth: { secret } })`. With a secret set, a peer that
+     * cannot prove it is refused, and a peer that does not offer the
+     * built-in auth at all is refused too — otherwise an attacker could
+     * simply decline it.
+     */
+    authSecret() {
+        return (this.options.auth && this.options.auth.secret) || null;
+    }
+
+    /**
+     * `auth: { secret, optional: true }` offers the built-in auth to every peer
+     * but still accepts one that does not offer it back — for moving a live
+     * fleet onto it a peer at a time, where requiring it at once would split
+     * the fleet in two. peer.isAuthenticated() says which way each connection
+     * went; gate on that until the last peer has moved, then drop optional.
+     */
+    authOptional() {
+        return !!(this.options.auth && this.options.auth.optional);
     }
 
     authPacket() {
@@ -245,13 +442,78 @@ class AnySocket extends EventEmitter {
     //endregion
 
     //region Private Functions
+
+    /** Create a transport, wire it up, and start it listening. */
+    [_private.startTransport](scheme, options) {
+        let transport = this[_private.findTransport](scheme);
+        transport = new transport("server", options);
+        this[_private.transports][transport.id] = transport;
+
+        transport.on("connected", (peer) => {
+            this[_private.onPeerConnected](peer, transport.options);
+        });
+        transport.on("disconnected", (peer, reason) => {
+            this[_private.onPeerDisconnected](peer, reason);
+        });
+
+        return transport.listen().then((result) => {
+            if (scheme == "http") {
+                this[_private.httpServer] = transport.server;
+            }
+            return result === undefined ? transport.port : result;
+        }).catch((e) => {
+            // A transport that never came up must not linger, or stop() would
+            // try to stop it and a retry would trip over it.
+            delete this[_private.transports][transport.id];
+            throw e;
+        });
+    }
+
+    /**
+     * The http server a ws listen should ride on: the one already serving
+     * that port if there is one, otherwise a new one. Port 0 never shares —
+     * each such request is for a fresh port of its own.
+     */
+    [_private.httpServerFor](options) {
+        const requested = options.port == null ? 80 : options.port;
+        const shareable = requested !== 0;
+
+        if (shareable && this[_private.httpServers].has(requested)) {
+            return this[_private.httpServers].get(requested);
+        }
+
+        const starting = this[_private.startTransport]("http", Object.assign({}, options))
+            .then((port) => {
+                const transport = Object.values(this[_private.transports])
+                    .find((t) => t.type == "http" && t.port == port);
+                const entry = { server: transport ? transport.server : this[_private.httpServer], port: port };
+                // Also findable by the port it actually bound — which is the only
+                // way to share one that was asked for as port 0.
+                this[_private.httpServers].set(port, Promise.resolve(entry));
+                return entry;
+            })
+            .catch((e) => {
+                // Forget a server that failed to bind, so a retry starts clean.
+                if (shareable) this[_private.httpServers].delete(requested);
+                throw e;
+            });
+
+        if (shareable) this[_private.httpServers].set(requested, starting);
+        return starting;
+    }
     [_private.findTransport](scheme) {
         for (let name in AnySocket.Transport) {
             if(!AnySocket.Transport.hasOwnProperty(name))
                 continue;
 
-            if(AnySocket.Transport[name].scheme() == scheme) {
-                return AnySocket.Transport[name];
+            const candidate = AnySocket.Transport[name];
+            // The browser build stubs out the transports it cannot have, so not
+            // every entry is a transport class.
+            if(!candidate || typeof candidate.scheme != "function")
+                continue;
+
+            if(candidate.scheme() == scheme) {
+                return candidate;
             }
         }
 
@@ -304,27 +566,158 @@ class AnySocket extends EventEmitter {
         });
     }
 
+    /**
+     * A relayed packet, arriving over the connection we authenticated as
+     * `peerID`. Its `to`/`from` are written by the sender, so neither can be
+     * trusted on its own: `from` used to be taken at face value, which let a
+     * packet be delivered as though it came from any peer the receiver knew.
+     * Everything here is checked against `peerID`, the one thing the sender
+     * cannot choose.
+     */
     [_private.onForward](peerID, packet) {
+        const sender = this[_private.peers][peerID];
+
         if(this.id == packet.to) {
-            if(!this[_private.peers][packet.from]) {
-                this[_private.peers][peerID].disconnect("Invalid forward packet! Client doesn't exist!");
+            // Last hop. `from` must be a peer we reached *through this relay* —
+            // never a peer we talk to directly, and never one relayed by
+            // somebody else.
+            const origin = this[_private.peers][packet.from];
+            if(!origin || !origin.isProxy() || origin.relayID != peerID) {
+                debug("Dropping forward: " + packet.from + " is not relayed by " + peerID);
+                if(sender) sender.disconnect("Invalid forward packet!");
                 return;
             }
 
-            this[_private.peers][packet.from]._recvForward(packet);
+            origin._recvForward(packet);
+            return;
         }
-        else if(this.hasDirectPeer(packet.to)) {
-            this[_private.peers][packet.to].forward(packet);
-        } else {
-            console.error("FORWARD ERROR! We do not have the peer", packet.to);
+
+        // Relay hop. The sender may only ever speak for itself, and the route
+        // has to be one we actually allow.
+        if(packet.from != peerID) {
+            debug("Dropping forward: " + peerID + " tried to relay as " + packet.from);
+            if(sender) sender.disconnect("Invalid forward packet!");
+            return;
         }
+
+        if(!this.canProxy(packet.from, packet.to)) {
+            debug("Dropping forward: no permitted route from " + packet.from + " to " + packet.to);
+            if(sender) sender.disconnect("Invalid forward packet!");
+            return;
+        }
+
+        // A permitted route whose far end has just gone: frames already in flight to
+        // it are dropped, and the sender hears that it closed. Treating them as an
+        // attack dropped the sender too, and failed every relayed send it had queued.
+        if(!this.hasDirectPeer(packet.to)) {
+            debug("Dropping forward: " + packet.to + " is gone");
+            return;
+        }
+
+        this[_private.peers][packet.to].forward(packet).catch(() => {});
     }
 
-    [_private.onProtocolReady](protocol, resolve) {
-        if(this[_private.peers][protocol.peerID]) {
-            protocol.peerID = null;
-            protocol.disconnect("Duplicated AnySocket ID found!");
-            return;
+    /**
+     * Two peers that dial each other end up with two connections, and both ends
+     * have to retire the same one. Each end used to drop whichever became ready
+     * second, which is a local race: the two ends routinely chose opposite
+     * connections, each closed the other's keeper, and **both** connections
+     * died. An application that re-dials would then do it again, which looks
+     * like a peer that will not stay connected.
+     *
+     * So the choice is made from the two ids instead, which both ends know: the
+     * surviving connection is the one dialled by the peer whose id sorts lower.
+     * No timing involved, and nothing depending on which end is asking.
+     *
+     * Only consulted when there is actually a duplicate — a single connection is
+     * kept whichever way it was dialled.
+     */
+    [_private.keepsExisting](existing, incoming) {
+        // A different instance behind the same id is that peer restarted: what we hold is
+        // the dead process's connection, which may not have closed yet. Keeping it refused
+        // the new one, and once the old one did close, neither end was connected.
+        const existingInstance = existing.remoteInstanceID();
+        if (existingInstance && incoming.remoteInstanceID && existingInstance !== incoming.remoteInstanceID) return false;
+
+        const existingOutbound = existing.isOutbound();
+        const incomingOutbound = incoming.isOutbound();
+
+        // Can't tell a direction, or both run the same way (an application that
+        // dialled twice): keep what we have, as before.
+        if (typeof existingOutbound != "boolean" || typeof incomingOutbound != "boolean") return true;
+        if (existingOutbound === incomingOutbound) return true;
+
+        // The lower id is the designated dialler, so our keeper is outbound
+        // exactly when our own id is the lower one.
+        const weShouldDial = String(this.id) < String(incoming.peerID);
+        return existingOutbound === weShouldDial;
+    }
+
+    /**
+     * A new instance of a peer we already hold a connection to. Either that peer
+     * restarted, and what we hold is its dead process's connection, not yet closed; or
+     * two live processes share one id. The connection we hold is asked whether it is
+     * still there: answering, it is kept and the new one refused, as a duplicate always
+     * was; silent, it is the leftover, and is replaced. Replacing it outright let any
+     * client that claimed a connected peer's id take its place, and two processes
+     * sharing an id took it from each other forever.
+     */
+    [_private.probeExisting](existing, protocol, resolve, reject) {
+        protocol[_private.probed] = true;
+        // Paused, as a standby is, so nothing that arrives on it meanwhile is lost.
+        protocol._recvPacketQueue.pause();
+        protocol._recvLinkPacketQueue.pause();
+
+        existing._probe(protocol.options.duplicateProbeTimeout).then((alive) => {
+            if (!protocol.isConnected()) return;
+            if (alive && this[_private.peers][protocol.peerID] === existing) {
+                debug("Refusing a second instance of", protocol.peerID, "- the connection we hold still answers");
+                if (resolve) resolve(existing);
+                protocol.peerID = null;
+                protocol.disconnect("Duplicated AnySocket ID found!");
+                return;
+            }
+            this[_private.onProtocolReady](protocol, resolve, reject);
+            protocol._recvPacketQueue.resume();
+            protocol._recvLinkPacketQueue.resume();
+        });
+    }
+
+    [_private.onProtocolReady](protocol, resolve, reject) {
+        const existing = this[_private.peers][protocol.peerID];
+        if(existing && !protocol.isProxy() && protocol.protocolVersion < constants.PROTOCOL_VERSION) {
+            return this[_private.holdStandby](existing, protocol, resolve);
+        }
+        if(existing && !protocol.isProxy() && !existing.isProxy() && !protocol[_private.probed] &&
+            existing.remoteInstanceID() && protocol.remoteInstanceID &&
+            existing.remoteInstanceID() !== protocol.remoteInstanceID) {
+            return this[_private.probeExisting](existing, protocol, resolve, reject);
+        }
+        if(existing) {
+            if(this[_private.keepsExisting](existing, protocol)) {
+                // A dial that got as far as authenticating has reached that peer;
+                // it just was not the connection both ends kept. So it succeeds
+                // with the one that was. Rejecting it left a caller that had only
+                // ever lost this race unable to learn it was connected at all.
+                //
+                // Resolved before the disconnect, not after: the disconnect runs
+                // the transport's own handler synchronously, and that rejects the
+                // same promise — after which resolving does nothing.
+                if(resolve) resolve(existing);
+                protocol.peerID = null;
+                protocol.disconnect("Duplicated AnySocket ID found!");
+                return;
+            }
+
+            // The incoming connection is the one both ends will settle on, so
+            // retire ours here. Unhooked from the map first so its own
+            // disconnect cannot take the replacement down with it.
+            debug("Replacing the duplicate connection to", protocol.peerID);
+            delete this[_private.peers][existing.id];
+            existing._supersede("Superseded by the agreed connection");
+            // The application may hold this peer object, so tell it that one is
+            // gone; the replacement arrives as its own "connected" below.
+            this.emit("disconnected", existing, "Superseded by the agreed connection");
         }
 
         debug("Peer ready");
@@ -339,21 +732,109 @@ class AnySocket extends EventEmitter {
         });
         anypeer.on("internal",this[_private.onPeerInternalMessage].bind(this));
 
-        if(resolve) {
-            resolve(anypeer);
+        const announce = () => {
+            if(resolve) {
+                resolve(anypeer);
+            }
+
+            // allow resolve to run before emitting event
+            setTimeout(() => {
+                // Deferred, so the peer may already be gone — dropped by the far
+                // end, or retired by the duplicate rule. Announcing it then would
+                // hand out a dead peer, after its own "disconnected".
+                if (this[_private.peers][anypeer.id] !== anypeer) return;
+                this.emit("connected", anypeer);
+            }, 0);
+        };
+
+        // A direct link that requires e2e only gets here once it has it. A
+        // relayed one has no handshake to wait in, and has to be registered
+        // first — its e2e frames are routed to it through the peers map — so it
+        // is announced only when e2e is up. Until then nobody holds a peer
+        // they could talk to in clear.
+        //
+        // Only the end that asked for the link starts it. The other end's
+        // half of the link may not exist yet when an offer of ours would reach
+        // it — it is set up when the relay answers — and an offer it never saw
+        // leaves the two ends out of step. So that end waits for the offer.
+        if(protocol.isProxy() && protocol.e2eRequired && !protocol.hasE2EEnabled()) {
+            const fail = (e) => {
+                const reason = "e2e is required, and could not be established: " + (e && e.message || e);
+                if(reject) reject(errors.connectionFailed(reason));
+                if (this[_private.peers][anypeer.id] === anypeer) anypeer.disconnect(reason);
+            };
+
+            if (protocol.isOutbound()) {
+                protocol.e2e().then(announce, fail);
+            } else {
+                const timer = setTimeout(() => fail("timed out"), protocol.options.e2eTimeout);
+                protocol.once("e2e", () => {
+                    clearTimeout(timer);
+                    if (this[_private.peers][anypeer.id] === anypeer) announce();
+                });
+            }
+            return anypeer;
         }
 
-        // allow resolve to run before emitting event
-        setTimeout(() => {
-            this.emit("connected", anypeer);
-        }, 0);
-
+        announce();
         return anypeer;
     }
 
+    /**
+     * A second connection to a 0.4.x peer that already has one.
+     *
+     * Between 1.0 peers both ends keep the connection dialled by the lower id. A 0.4.x peer
+     * does not: it keeps whichever became ready first on its side and drops the other — and
+     * nothing we do changes which. Applying our rule against it, the two ends often dropped
+     * opposite connections and the peer lost both, every time they dialled each other.
+     *
+     * So against a 0.4.x peer we do not choose. The new connection is held, its input paused
+     * so nothing on it is lost, until that peer closes one of the two: closing this one ends
+     * it; closing the one in use promotes this one in its place.
+     */
+    [_private.holdStandby](existing, protocol, resolve) {
+        const id = protocol.peerID;
+        const prior = this[_private.standby].get(id);
+        if (prior) {
+            clearTimeout(prior.timer);
+            this[_private.standby].delete(id);
+            prior.protocol.peerID = null;
+            prior.protocol.disconnect("Duplicated AnySocket ID found!");
+        }
+
+        protocol._recvPacketQueue.pause();
+        protocol._recvLinkPacketQueue.pause();
+        const entry = { protocol: protocol };
+        entry.timer = setTimeout(() => {
+            if (this[_private.standby].get(id) !== entry) return;
+            this[_private.standby].delete(id);
+            protocol.peerID = null;
+            protocol.disconnect("Duplicated AnySocket ID found!");
+        }, LEGACY_STANDBY_MS);
+        if (entry.timer.unref) entry.timer.unref();
+        this[_private.standby].set(id, entry);
+
+        debug("Holding a duplicate connection to 0.4.x peer", id);
+        if (resolve) resolve(existing);
+    }
+
     [_private.onPeerDisconnected](peer, reason) {
+        // Documented as text; an Error reached here from some paths.
+        reason = reasonText(reason);
         debug("Peer disconnected", reason, peer.id);
+
+        // A held duplicate of a 0.4.x peer closing: that peer kept the other one.
+        for (const [id, entry] of this[_private.standby]) {
+            if (entry.protocol.connectionID !== peer.connectionID) continue;
+            clearTimeout(entry.timer);
+            this[_private.standby].delete(id);
+            delete this[_private.peersConnected][peer.connectionID];
+            peer.disconnect();
+            return;
+        }
+
         let anypeerID = null;
+        const protocol = this[_private.peersConnected][peer.connectionID];
         if (this[_private.peersConnected][peer.connectionID]) {
             anypeerID = this[_private.peersConnected][peer.connectionID].peerID;
             delete this[_private.peersConnected][peer.connectionID];
@@ -363,8 +844,11 @@ class AnySocket extends EventEmitter {
             anypeerID = peer.id;
         }
 
-        if (anypeerID) {
-            const anypeer = this[_private.peers][anypeerID];
+        let anypeer = anypeerID ? this[_private.peers][anypeerID] : null;
+        // Only the connection the peer is using may take it down — never another one that
+        // happens to carry the same id.
+        if (anypeer && anypeer.connectionID !== peer.connectionID) anypeer = null;
+        if (anypeer) {
             delete this[_private.peers][anypeerID];
 
             const links = anypeer.getLinks();
@@ -384,6 +868,36 @@ class AnySocket extends EventEmitter {
 
             anypeer.disconnect();
             this.emit("disconnected", anypeer, reason);
+            // The peer's own event, as documented: the protocol never emitted the one AnyPeer
+            // re-emits, so it never fired.
+            anypeer.emit("disconnected", anypeer, reason);
+
+            // The links it relayed for us went with it. Left in place they looked connected
+            // and swallowed whatever was sent on them.
+            if (!anypeer.isProxy()) {
+                for (const id of Object.keys(this[_private.peers])) {
+                    const relayed = this[_private.peers][id];
+                    if (relayed && relayed.isProxy() && relayed.relayID === anypeer.id) {
+                        this[_private.onPeerDisconnected](relayed, "Relay disconnected");
+                    }
+                }
+            }
+
+            // The 0.4.x peer kept the duplicate we were holding: it is the connection now.
+            const held = this[_private.standby].get(anypeer.id);
+            if (held) {
+                clearTimeout(held.timer);
+                this[_private.standby].delete(anypeer.id);
+                if (held.protocol.isConnected()) {
+                    this[_private.onProtocolReady](held.protocol);
+                    held.protocol._recvPacketQueue.resume();
+                    held.protocol._recvLinkPacketQueue.resume();
+                }
+            }
+        } else if (protocol && protocol.isConnected()) {
+            // Gone before it was ready. The protocol has to hear it too: left out, a
+            // handshake step still in flight carried it on to "connected".
+            protocol.disconnect(reason);
         } else {
             peer.disconnect();
         }
@@ -391,19 +905,40 @@ class AnySocket extends EventEmitter {
 
     [_private.onPeerInternalMessage](packet) {
         if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.NETWORK) {
+            const relay = this[_private.peers][packet.peer.id];
+            const id = packet.msg.id;
             if(packet.msg.action == "connected") {
-                if(!this[_private.peers][packet.msg.id]) {
-                    let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, packet.msg.id, this[_private.peers][packet.peer.id]));
-                    this[_private.onProtocolReady](protocol);
+                if(typeof id !== "string" || id == this.id || id == packet.peer.id || !relay || relay.isProxy()) {
+                    packet.peer.disconnect("Invalid proxy request!");
+                    return;
                 }
+                if(this[_private.peers][id]) {
+                    packet.reply({ ok: false, reason: "already connected" });
+                    return;
+                }
+                if(!this.canAcceptProxy(packet.peer.id, id)) {
+                    debug("refused a relayed link to", id, "from", packet.peer.id);
+                    packet.reply({ ok: false, reason: "refused by the peer" });
+                    return;
+                }
+                // The relay connection's options, as on the dialling side —
+                // not the defaults, which would drop its limits and requireE2E.
+                let protocol = new AnyProtocol(this, new ProxyPeer(false, this.id, id, relay), relayedOptions(relay, packet.msg.e2e, packet.msg.mf));
+                this[_private.onProtocolReady](protocol);
+                // Our hop's requirement goes back, so the dialler knows to start e2e.
+                packet.reply({ ok: true, e2e: protocol.e2eRequired ? "required" : undefined });
             }
             else if(packet.msg.action == "disconnected") {
-                if(!this[_private.peers][packet.msg.id]) {
+                // Only the relay that carries a link may say it has closed. Any
+                // other peer could otherwise end our direct connections, or
+                // someone else's relayed ones.
+                const target = this[_private.peers][id];
+                if(!target || !target.isProxy() || target.relayID != packet.peer.id) {
                     packet.peer.disconnect("Invalid proxy request!");
                     return;
                 }
 
-                this[_private.onPeerDisconnected](this[_private.peers][packet.msg.id], "Proxy Connection Closed");
+                this[_private.onPeerDisconnected](target, "Proxy Connection Closed");
             }
         }
         else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.PROXY) {
@@ -417,31 +952,81 @@ class AnySocket extends EventEmitter {
                 if(this[_private.peers][packet.msg.id].isProxy())
                 {
                     packet.reply({
-                        ok: false
+                        ok: false,
+                        reason: "cannot relay through a relayed peer"
                     });
                     // TODO: this requires to implement a full network graph (map)
                     // TODO: this will enable to send messages without having multiple forward headers
                     return;
                 }
 
-                this[_private.peers][packet.msg.id].addLink(this[_private.peers][packet.peer.id]);
-                this[_private.peers][packet.peer.id].addLink(this[_private.peers][packet.msg.id]);
+                // Both hops must speak 1.0. A relayed frame is opaque bytes the
+                // relay re-wraps for each hop, so its format has to be one that
+                // every hop can carry — and an endpoint cannot see the version
+                // of a hop further along. Requiring it here is what makes the
+                // relayed link's format knowable at both ends.
+                if(!this[_private.peers][packet.peer.id].supportsRelay() ||
+                    !this[_private.peers][packet.msg.id].supportsRelay()) {
+                    packet.reply({
+                        ok: false,
+                        reason: "relaying needs protocol version 1 on both hops"
+                    });
+                    return;
+                }
 
-                this[_private.peers][packet.msg.id].sendInternal({
+                const from = this[_private.peers][packet.peer.id];
+                const to = this[_private.peers][packet.msg.id];
+
+                // Linked before asking, so the target's first frames on the new
+                // link — its e2e offer, say — have a route the moment it accepts.
+                to.addLink(from);
+                from.addLink(to);
+
+                // The target decides too (canAcceptProxy), and the dialler is
+                // answered with that decision — not told "ok" for a link the far
+                // end then refuses, which would leave it holding a peer nothing
+                // reaches.
+                const unlink = () => {
+                    to.removeLink(from);
+                    from.removeLink(to);
+                };
+                // Each hop's e2e requirement is carried to the other end, the way
+                // a direct handshake carries it: either one requiring it is
+                // enough, and both ends then wait for it.
+                // Each end is told the frame limit of the hop it cannot see.
+                to.sendInternal({
                     type: constants.INTERNAL_PACKET_TYPE.NETWORK,
                     action: "connected",
-                    id: packet.peer.id
-                });
-                packet.reply({
-                    ok: true
+                    id: packet.peer.id,
+                    e2e: from.requiresE2E() ? "required" : undefined,
+                    mf: from.remoteMaxFrame() || undefined
+                }, true).then((answer) => {
+                    if(answer.msg && answer.msg.ok === true) {
+                        packet.reply({
+                            ok: true,
+                            e2e: (to.requiresE2E() || answer.msg.e2e === "required") ? "required" : undefined,
+                            mf: to.remoteMaxFrame() || undefined
+                        });
+                        return;
+                    }
+                    unlink();
+                    packet.reply({
+                        ok: false,
+                        reason: (answer.msg && answer.msg.reason) || "refused by the peer"
+                    });
+                }, (e) => {
+                    unlink();
+                    packet.reply({ ok: false, reason: "the peer did not answer" });
                 });
             }
             else if(packet.msg.action == "unproxy") {
                 // destroy mesh
-                if(!this.canProxy(packet.peer.id, packet.msg.id) || !this[_private.peers][packet.msg.id]) {
+                if(!this.canProxy(packet.peer.id, packet.msg.id)) {
                     packet.peer.disconnect("Invalid proxy request!");
                     return;
                 }
+                // The far end went first: nothing left to tear down.
+                if(!this[_private.peers][packet.msg.id]) return;
 
                 this[_private.peers][packet.msg.id].removeLink(this[_private.peers][packet.peer.id]);
                 this[_private.peers][packet.peer.id].removeLink(this[_private.peers][packet.msg.id]);
@@ -450,65 +1035,90 @@ class AnySocket extends EventEmitter {
                     type: constants.INTERNAL_PACKET_TYPE.NETWORK,
                     action: "disconnected",
                     id: packet.peer.id
-                });
+                }).catch(() => {});
             }
         }
         else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC) {
             // RUN RPC, send reply
-            let parent = false;
-            let tmp = this.rpc;
-            for(let key in packet.msg.method){
-                parent = tmp;
-                tmp = tmp[packet.msg.method[key]];
-                if(!tmp)
-                    break;
-            }
+            const path = packet.msg.method;
+            const details = "method: '" + path + "'";
+            const target = resolveRPC(this.rpc, path);
 
             // method not found
-            if(!parent || !tmp || typeof tmp != "function") {
+            if(!target) {
                 packet.reply({
                     error: "Method not found!",
-                    details: "method: '" + packet.msg.method + "'",
+                    details: details,
                     code: 404
                 });
             } else {
                 try {
-                    for(let item of packet.msg.bin) {
-                        packet.msg.params[item] = AnySocket.Packer.unpack(packet.msg.params[item]);
-                    }
+                    const params = Array.isArray(packet.msg.params) ? packet.msg.params : [];
+                    const bin = Array.isArray(packet.msg.bin) ? packet.msg.bin : [];
+                    // Attached bytes when the caller is 1.0, base64 when it is 0.4.x.
+                    const attached = packet.msg[Packet.ATTACHMENTS];
+                    bin.forEach((item, i) => {
+                        params[item] = attached && attached.length
+                            ? attached[i]
+                            : AnySocket.Packer.unpack(params[item]);
+                    });
 
-                    Promise.resolve(tmp.apply(parent, [...packet.msg.params, packet.peer]))
-                        .then((result) => {
-                            let binary = false;
-                            if(BufferUtils.isBuffer(result)) {
-                                result = AnySocket.Packer.pack(result)
-                                binary = true;
+                    // The guard sees the decoded arguments, and runs before the
+                    // method does. Refused, the method never runs.
+                    const guard = this.rpcGuard;
+                    const allowed = guard
+                        ? Promise.resolve().then(() => guard(packet.peer, path.slice(), params.slice()))
+                        : Promise.resolve(true);
+
+                    allowed
+                        .then((ok) => {
+                            if (ok !== true) {
+                                const refused = new Error("Forbidden");
+                                refused.forbidden = true;
+                                throw refused;
                             }
-                            packet.reply({
-                                result: result,
-                                bin: binary
-                            });
+                            return target.fn.apply(target.parent, [...params, packet.peer]);
+                        }, (e) => {
+                            // A guard that throws refuses, with its reason.
+                            const refused = new Error(errorMessage(e));
+                            refused.forbidden = true;
+                            throw refused;
+                        })
+                        .then((result) => {
+                            if(!BufferUtils.isBuffer(result)) {
+                                packet.reply({ result: result, bin: false });
+                                return;
+                            }
+
+                            // Bytes back as bytes to a 1.0 caller; base64 to 0.4.x.
+                            if(packet.peer.protocolVersion() >= constants.PROTOCOL_VERSION) {
+                                const reply = { result: null, bin: true };
+                                reply[Packet.ATTACHMENTS] = [result];
+                                packet.reply(reply);
+                            } else {
+                                packet.reply({ result: AnySocket.Packer.pack(result), bin: true });
+                            }
                         })
                         .catch((e) => {
                             packet.reply({
-                                error: e,
-                                details: "method: '" + packet.msg.method + "'",
-                                code: 500
+                                error: errorMessage(e),
+                                details: details,
+                                code: e && e.forbidden ? 403 : 500
                             });
                         });
                 }
                 catch(e) {
                     packet.reply({
-                        error: e.message,
-                        details: "method: '" + packet.msg.method + "'",
+                        error: errorMessage(e),
+                        details: details,
                         code: 500
                     });
                 }
             }
         }
         else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.RPC_NOTIFY) {
-            // RUN RPC, don't reply
-            console.log("RPC_NOTIFY", packet.msg);
+            // Never implemented. Ignored rather than logged: the peer decides how often.
+            debug("RPC_NOTIFY ignored");
         }
         else if(packet.msg.type == constants.INTERNAL_PACKET_TYPE.SYNCED_TIME) {
             packet.reply({

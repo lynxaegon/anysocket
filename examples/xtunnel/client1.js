@@ -4,6 +4,8 @@ const PASSWORD = "1234";
 const SECRET_AUTH = "SECRET_TOKEN_HERE";
 
 const anysocket = new AnySocket();
+// relayed links are opt-in at the far end too (canProxy is the relay's half)
+anysocket.canAcceptProxy = () => true;
 console.log("AnySocket.ID", anysocket.id);
 
 anysocket.connect("ws", "127.0.0.1",3000);

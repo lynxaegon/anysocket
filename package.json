@@ -1,10 +1,24 @@
 {
   "name": "anysocket",
-  "version": "0.4.32",
-  "description": "An abstract networking layer over multiple transports, client/server agnostic with support for E2EE",
+  "version": "1.0.0",
+  "description": "A custom protocol over any transport: client/server agnostic, binary framed, with authenticated end-to-end encryption",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test --test-timeout=30000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\" \"tests/crypto/*.test.js\" \"tests/security/*.test.js\" \"tests/browser/*.test.js\" \"tests/interop/*.test.js\"",
+    "test:unit": "node --test --test-timeout=10000 \"tests/unit/*.test.js\"",
+    "test:core": "node --test --test-timeout=15000 \"tests/core/*.test.js\"",
+    "test:wire": "node --test --test-timeout=15000 \"tests/wire/*.test.js\"",
+    "test:crypto": "node --test --test-timeout=20000 \"tests/crypto/*.test.js\"",
+    "test:security": "node --test --test-timeout=20000 \"tests/security/*.test.js\"",
+    "test:interop": "node --test --test-timeout=30000 \"tests/interop/*.test.js\"",
+    "test:fast": "node --test --test-timeout=20000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\"",
+    "bench": "node benchmarks/run.js",
+    "build": "webpack",
+    "test:browser": "node --test --test-timeout=20000 \"tests/browser/*.test.js\"",
+    "prepublishOnly": "npm run build && npm test"
   },
   "repository": {
     "type": "git",
@@ -21,7 +35,6 @@
     "tcp",
     "http",
     "https",
-    "udp",
     "binary",
     "end-to-end",
     "encrypted",
@@ -38,15 +51,26 @@
   "homepage": "https://github.com/lynxaegon/anysocket#readme",
   "dependencies": {
     "debug": "^4.3.2",
-    "fastq": "^1.11.0",
     "ws": "^7.5.7"
   },
   "devDependencies": {
     "@babel/core": "^7.12.10",
     "@babel/plugin-proposal-class-properties": "^7.12.1",
+    "anysocket-legacy": "npm:anysocket@0.4.32",
     "babel-loader": "^8.2.2",
     "null-loader": "^4.0.1",
     "webpack": "^5.105.4",
     "webpack-cli": "^6.0.1"
+  },
+  "files": [
+    "src/",
+    "dist/",
+    "README.md",
+    "MIGRATING-1.0.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "optionalDependencies": {
+    "bufferutil": "^4.1.0"
   }
 }

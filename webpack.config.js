@@ -6,9 +6,21 @@ module.exports = {
     mode: 'production',
     entry: './src/index.js',
     output: {
-        library: "AnySocket",
-        path: path.resolve(__dirname, 'dist'),
-        filename: 'anysocket.browser.js'
+        // UMD rather than a bare global, so the bundle works from a <script>
+        // tag (still defining window.AnySocket), from a bundler, and from a
+        // require() — which is also what lets the tests drive the real built
+        // artifact instead of only the source it was built from.
+        library: {
+            name: "AnySocket",
+            type: "umd"
+        },
+        globalObject: "typeof self !== 'undefined' ? self : this",
+        path: path.resolve(__dirname, "dist"),
+        filename: "anysocket.browser.js",
+        // Always write it. webpack skips an output identical to what is on disk,
+        // which leaves dist/ with an old timestamp after a rebuild and makes a
+        // fresh bundle impossible to tell from a forgotten one.
+        compareBeforeEmit: false
     },
     module: {
         rules: [
@@ -46,6 +58,10 @@ module.exports = {
         }),
         new webpack.NormalModuleReplacementPlugin(/.+transports\/http\/.*$/, function(resource) {
             resource.request = path.resolve(__dirname, 'src/browser/', "empty.js")
+        }),
+        // tcp and ipc need node sockets, which a browser does not have.
+        new webpack.NormalModuleReplacementPlugin(/.+transports\/tcp\/.*$/, function(resource) {
+            resource.request = path.resolve(__dirname, "src/browser/", "empty-stream.js")
         }),
         new webpack.NormalModuleReplacementPlugin(/.+AnyHTTPPeer$/, function(resource) {
             resource.request = path.resolve(__dirname, 'src/browser/', "empty.js")
