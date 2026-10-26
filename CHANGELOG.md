@@ -34,6 +34,13 @@ supported, in both directions of the dial; a 0.4.x peer is refused. Read
 ### New
 - `AnyPeer.legacyHandshake()`.
 
+## 1.0.2
+
+### Fixed
+- In the browser, a ws connect with `connectTimeout` (or `cookies`) failed. The options object
+  went to `new WebSocket(url, options)`, which a browser reads as the subprotocol list and
+  refuses. A browser now gets only the URL, and `connectTimeout` is kept there by a timer.
+
 ## 1.0.1
 
 ### Fixed
