@@ -1,5 +1,6 @@
 let WebSocket;
-if (typeof window !== 'undefined' && typeof window.document !== 'undefined') {
+const inBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined';
+if (inBrowser) {
     WebSocket = require("../../../browser/ws");
 }
 else {
@@ -27,7 +28,7 @@ class WS extends AbstractTransport {
                 // frame size so raising maxPacketSize does not quietly start
                 // tripping the transport limit; doubled because a 0.4.x
                 // encrypted payload is hex.
-                maxPayload: this.options.maxPayload || this._maxPayload()
+                maxPayload: this._maxPayload()
             });
             this.ws.on("connection", socket => {
                 this._applyTcpKeepAlive(socket);
@@ -68,6 +69,11 @@ class WS extends AbstractTransport {
             if(this.options.connectTimeout) {
                 opts = Object.assign(opts || {}, { handshakeTimeout: this.options.connectTimeout });
             }
+            // The same limit as a listener's, and the one we announce. A browser sets
+            // its own and takes no options here.
+            if(!inBrowser) {
+                opts = Object.assign(opts || {}, { maxPayload: this._maxPayload() });
+            }
             let ws = new WebSocket((plain ? "ws" : "wss") + '://' + this.options.ip + ':' + this.options.port + '/', opts);
             ws.on('open', socket => {
                 connected = true;
@@ -92,6 +98,7 @@ class WS extends AbstractTransport {
     // to drain. Bounds memory on a large transfer without costing a round of
     // latency per chunk.
     _maxPayload() {
+        if (this.options.maxPayload) return this.options.maxPayload;
         const frame = this.options.maxPacketSize || 4 * 1024 * 1024;
         return Math.max(8 * 1024 * 1024, frame * 2 + 1024 * 1024);
     }
@@ -99,6 +106,8 @@ class WS extends AbstractTransport {
     _peer(socket) {
         const peer = new Peer(socket);
         peer.highWaterMark = this.options.sendHighWaterMark || 16 * 1024 * 1024;
+        // Announced in the handshake, so the other end chunks to fit it.
+        peer.maxPayload = this._maxPayload();
         return peer;
     }
 

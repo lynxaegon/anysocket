@@ -28,6 +28,18 @@ const lastReceived = Symbol("last received");
 const now = (typeof performance !== "undefined" && performance.now) ? () => performance.now() : () => Date.now();
 const authTimeout = Symbol("authTimeout");
 const e2eTimeout = Symbol("e2eTimeout");
+const probes = Symbol("liveness probes waiting");
+const held = Symbol("frames held while switching");
+const preAuthParked = Symbol("bytes parked before the handshake");
+
+// What a frame may carry beyond its payload: the header, the length hint, an e2e tag
+// and a relay's wrapping. A sender keeps this far under the limit the peer announced.
+const FRAME_HEADROOM = 64 * 1024;
+// Never chunk smaller than this, whatever a peer announces.
+const MIN_FRAME = 64 * 1024;
+// What a listener accepts per frame before it has answered the AUTH: the AUTH itself,
+// with room for its framing.
+const HANDSHAKE_HEADROOM = 4 * 1024;
 
 module.exports = class AnyProtocol extends EventEmitter {
     constructor(anysocket, peer, options) {
@@ -63,6 +75,12 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[lastReceived] = 0;
         this[authTimeout] = false;
         this[e2eTimeout] = false;
+        this[probes] = null;
+        this[held] = [];
+        this[preAuthParked] = 0;
+        // The largest frame the peer will take, from its AUTH. null when it did not
+        // say (a 0.4.x peer, or one relayed by a relay that could not tell).
+        this.remoteMaxFrame = null;
 
         this.peerID = peer.id;
         this.peer = peer;
@@ -136,7 +154,11 @@ module.exports = class AnyProtocol extends EventEmitter {
             // established — so an application never sees a peer it could talk
             // to in clear. The requirement travels in the handshake, so either
             // end asking for it is enough; both then wait.
-            requireE2E: false
+            requireE2E: false,
+            // A new instance of a peer we already hold a connection to: how long the
+            // connection we hold has to answer before it is taken for the dead
+            // process's leftover and replaced.
+            duplicateProbeTimeout: 2 * 1000
         }, options);
         this.connectionID = this.peer.connectionID;
         this.anysocket = anysocket;
@@ -163,6 +185,10 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (this.peer.isClient() && !this.peerID) {
             this.changeState(constants.PROTOCOL_STATES.AUTHING);
             this.send(this._authPacket());
+        } else if (!this.peerID && this.peer.limitReceive) {
+            // A listener: until it has answered, the only thing a dialler may send is
+            // its AUTH, so nothing larger is taken in. Lifted once we answer.
+            this.peer.limitReceive(this.options.maxHandshakeMessageSize + HANDSHAKE_HEADROOM);
         }
         if (this.peerID) {
             // A relayed link has no AUTH exchange of its own to negotiate
@@ -174,6 +200,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                 // There is no handshake to carry the requirement, so a relayed
                 // link takes it from the connection it is relayed over.
                 this.e2eRequired = !!this.options.requireE2E;
+                this.remoteMaxFrame = this.options.relayMaxFrame || null;
             }
             this.changeState(constants.PROTOCOL_STATES.CONNECTED);
         }
@@ -245,9 +272,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         debug(this.peerID, ">>>>", Packet.TYPE._string(packet.type), packet.seq);
 
         const window = Math.max(1, this.options.sendWindow);
-        const chunkSize = this.protocolVersion >= constants.PROTOCOL_VERSION
-            ? this.options.maxPacketSize
-            : constants.MAX_PACKET_SIZE;
+        const chunkSize = this._frameSize();
 
         if (this.protocolVersion >= constants.PROTOCOL_VERSION) {
             const frame = packet.singleFrame(chunkSize);
@@ -302,9 +327,30 @@ module.exports = class AnyProtocol extends EventEmitter {
         })().catch(reject);
     }
 
+    /**
+     * Bytes per frame we send: our own maxPacketSize, kept under the largest frame the
+     * peer said it takes. Before this was negotiated, a sender set larger than the
+     * receiver's transport allowed was disconnected with nothing delivered.
+     */
+    _frameSize() {
+        if (this.protocolVersion < constants.PROTOCOL_VERSION) return constants.MAX_PACKET_SIZE;
+        const ours = this.options.maxPacketSize;
+        if (!this.remoteMaxFrame) return ours;
+        return Math.max(MIN_FRAME, Math.min(ours, this.remoteMaxFrame - FRAME_HEADROOM));
+    }
+
+    /** The largest frame we take in, as announced to the peer; null when unbounded. */
+    _receiveLimit() {
+        const limit = this.peer.maxPayload;
+        return Number.isFinite(limit) && limit > 0 ? limit : null;
+    }
+
     forward(packet) {
-        // console.log("FORWARD", packet);
         return new Promise((resolve, reject) => {
+            if (!this.isConnected()) {
+                reject(errors.notConnected());
+                return;
+            }
             this._packetQueue.push({
                 packet: this._encodeForwardPacket(packet.to, packet.from, packet.msg),
                 resolve: resolve,
@@ -434,7 +480,14 @@ module.exports = class AnyProtocol extends EventEmitter {
      * where the peer is encrypting and we are not yet ready to decrypt.
      */
     async _acceptE2E(offer) {
+        // One exchange per connection. A second offer would reuse our ephemeral key
+        // with counters reset to 0: replaying the peer's old offer derives the same
+        // keys again, and AES-GCM nonces repeat.
+        if (this[E2E_SESSION]) {
+            throw new Error("e2e offer after e2e was established");
+        }
         await this._offerE2E();
+        if (!this.isConnected()) return;
 
         const mine = this[E2E_OFFER];
         const kex = E2E.chooseKex(mine.wire.kex, offer.kex);
@@ -462,6 +515,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             // peer has proved it holds the same secret.
             psk: this.authenticated ? this.anysocket.authSecret() : null
         });
+        if (!this.isConnected()) return;
 
         session.sendCounter = 0;
         session.recvCounter = 0;
@@ -519,7 +573,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                     // Reassembly used to be unbounded, so a peer could hold
                     // memory open with partial packets it never finished —
                     // before authenticating, where only AUTH is even legal.
-                    const limit = this.state == constants.PROTOCOL_STATES.CONNECTED
+                    const limit = this._pastHandshake()
                         ? this.options.maxPartialPackets
                         : 1;
                     if (Object.keys(this._packets).length >= limit) {
@@ -530,7 +584,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                 }
                 let packet = this._packets[seq];
 
-                const cap = this.state == constants.PROTOCOL_STATES.CONNECTED
+                const cap = this._pastHandshake()
                     ? this.options.maxMessageSize
                     : this.options.maxHandshakeMessageSize;
                 packet.bytes = (packet.bytes || 0) + recv.length;
@@ -696,7 +750,7 @@ module.exports = class AnyProtocol extends EventEmitter {
                             }
 
                             if (invalidPacket) {
-                                console.log("Invalid packet received! RECV:", packet);
+                                debug(this.peerID, "invalid packet received", packet.type, "in state", this.state);
                                 return this.disconnect("Invalid Packet!");
                             }
                         } else {
@@ -706,6 +760,12 @@ module.exports = class AnyProtocol extends EventEmitter {
                     });
             }
         });
+    }
+
+    /** Authenticated: live, or switching encryption on. */
+    _pastHandshake() {
+        return this.state == constants.PROTOCOL_STATES.CONNECTED ||
+            this.state == constants.PROTOCOL_STATES.SWITCHING_PROTOCOL;
     }
 
     _isE2EOffer(data) {
@@ -727,6 +787,8 @@ module.exports = class AnyProtocol extends EventEmitter {
             caps: this.options.capabilities,
             inst: this.anysocket.instanceID
         };
+        const limit = this._receiveLimit();
+        if (limit) data.mf = limit;
 
         if (this.anysocket.authSecret()) {
             if (!this[AUTH_CHALLENGE]) this[AUTH_CHALLENGE] = Auth.challenge();
@@ -758,14 +820,21 @@ module.exports = class AnyProtocol extends EventEmitter {
         return this._goLive();
     }
 
-    /** What both ends sign: the two challenges, the two ids, the version. */
+    /**
+     * What both ends sign: the two challenges, the two ids and instances, the version.
+     * The instance is how the duplicate rule tells a restarted peer, so it is covered
+     * too: otherwise anyone could pair an id with a new instance to pass for that peer
+     * restarting.
+     */
     _authParams(proofFor) {
         return {
             protocolVersion: this.protocolVersion,
             capabilities: this.capabilities,
             localID: this.anysocket.id,
+            localInstance: this.anysocket.instanceID,
             localChallenge: this[AUTH_CHALLENGE],
             remoteID: this.peerID,
+            remoteInstance: this.remoteInstanceID,
             remoteChallenge: this[AUTH_PEER_CHALLENGE],
             proofFor: proofFor
         };
@@ -811,6 +880,7 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         this.remoteProtocolVersion = remote;
         this.remoteInstanceID = typeof (data && data.inst) === "string" ? data.inst : null;
+        this.remoteMaxFrame = Number.isInteger(data && data.mf) && data.mf > 0 ? data.mf : null;
         this.protocolVersion = Math.min(constants.PROTOCOL_VERSION, Math.max(remote, constants.PROTOCOL_VERSION_LEGACY));
         this.capabilities = (this.options.capabilities || [])
             .filter((cap) => remoteCaps.indexOf(cap) != -1)
@@ -855,6 +925,8 @@ module.exports = class AnyProtocol extends EventEmitter {
         if (!ok) {
             return this.disconnect("Invalid Auth Packet!");
         }
+        // The link can go while onAuth runs; nothing may bring it back.
+        if (!this.isConnected()) return;
 
         // Dialled ourselves — an address list that includes our own. Nothing
         // useful can come of it, and left alone it would reach the duplicate
@@ -920,6 +992,7 @@ module.exports = class AnyProtocol extends EventEmitter {
             const custom = { value: this.anysocket.authPacket() };
             try {
                 const proof = await Auth.prove(secret, this._authParams(this.anysocket.id));
+                this._liftReceiveLimit();
                 await this.send(this._authPacket({ ap: proof }, custom));
             } catch (e) {
                 // send() already tore the connection down.
@@ -930,6 +1003,7 @@ module.exports = class AnyProtocol extends EventEmitter {
         // We are the listener: answer with our own AUTH, then go live. Note the
         // peer is validated before the state change, so the link queues never
         // resume for a connection that is about to be dropped.
+        this._liftReceiveLimit();
         try {
             await this.send(this._authPacket());
         } catch (e) {
@@ -946,7 +1020,15 @@ module.exports = class AnyProtocol extends EventEmitter {
      * fails, or does not finish within e2eTimeout, the connection is dropped
      * rather than quietly left in clear.
      */
+    /** Our answer is going out: from here the dialler may send what it likes. */
+    _liftReceiveLimit() {
+        if (this.peer.limitReceive) this.peer.limitReceive(null);
+    }
+
     _goLive() {
+        // Every step of the handshake awaits something, and the link can close in any
+        // of them. Going live then made a dead connection a peer for good.
+        if (!this.isConnected()) return;
         this.changeState(constants.PROTOCOL_STATES.CONNECTED);
 
         if (!this.e2eRequired) {
@@ -967,6 +1049,9 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     changeState(state) {
+        // DISCONNECTED is final. A handshake step finishing after the link closed used
+        // to move it back to CONNECTED.
+        if (this.state == constants.PROTOCOL_STATES.DISCONNECTED) return;
         this.state = state;
         switch (this.state) {
             case constants.PROTOCOL_STATES.ESTABLISHED:
@@ -999,6 +1084,10 @@ module.exports = class AnyProtocol extends EventEmitter {
                 this._linkPacketQueue.resume();
                 this._recvLinkPacketQueue.resume();
 
+                // What was held while switching goes first, ahead of anything queued
+                // since, and is sealed as it leaves.
+                if (this[held].length) this._packetQueue.unshift(this[held].splice(0));
+
                 // Probe from here on, whoever spoke last. Arming only on receipt left the
                 // timer off on a link that went quiet right after the handshake or the e2e
                 // switch — the switch clears it, below — so a silent peer was never timed out.
@@ -1016,9 +1105,16 @@ module.exports = class AnyProtocol extends EventEmitter {
                 this._recvLinkPacketQueue.pause();
                 break;
             case constants.PROTOCOL_STATES.DISCONNECTED: {
+                clearTimeout(this[authTimeout]);
+                this[authTimeout] = false;
+                clearTimeout(this[e2eTimeout]);
+                this[e2eTimeout] = false;
+                this._settleProbes(false);
+
                 // kill() drops queued sends without calling back, which left their send()
                 // waiting forever: fail them instead, once the queues are empty.
-                const unsent = this._packetQueue.getQueue().concat(this._linkPacketQueue.getQueue());
+                const unsent = this[held].splice(0)
+                    .concat(this._packetQueue.getQueue(), this._linkPacketQueue.getQueue());
 
                 this._packetQueue.pause();
                 this._packetQueue.kill();
@@ -1058,6 +1154,16 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processPacketQueue(item, cb) {
+        // From our offer until our keys are ready, only the exchange itself may go out.
+        // The peer turns encryption on as soon as it has our offer, so anything sent in
+        // clear after it is refused there; a large message in flight went that way.
+        if (this.state == constants.PROTOCOL_STATES.SWITCHING_PROTOCOL &&
+            this.protocolVersion >= constants.PROTOCOL_VERSION &&
+            !(Frame.isFrame(item.packet) && Frame.getType(item.packet) == Packet.TYPE.SWITCH)) {
+            this[held].push(item);
+            return cb(null, null);
+        }
+
         const fail = (e) => {
             item.reject(e);
             this._packetQueue.kill();
@@ -1089,7 +1195,8 @@ module.exports = class AnyProtocol extends EventEmitter {
         // Whether this frame came in encrypted, decided before it is opened —
         // after that it looks the same either way, and a frame queued during
         // the switch is only delivered once encryption is up.
-        if (this.e2eRequired && this.isLINKMessage(Packet.getType(item.recv)) && !this._arrivedEncrypted(item)) {
+        if (this.e2eRequired && !this._arrivedEncrypted(item) &&
+            (this.isLINKMessage(Packet.getType(item.recv)) || Packet.isForwardPacket(item.recv))) {
             this.disconnect("Plaintext message on a connection that requires e2e");
             return cb(null, null);
         }
@@ -1129,6 +1236,15 @@ module.exports = class AnyProtocol extends EventEmitter {
             cb(null, null);
         } else {
             if(this.isLINKMessage(Packet.getType(item.recv))) {
+                // Parked until the handshake is done. Before it, the sender has not
+                // authenticated, so what it may park is bounded.
+                if (!this._pastHandshake()) {
+                    this[preAuthParked] += item.recv.length;
+                    if (this[preAuthParked] > this.options.maxHandshakeMessageSize) {
+                        this.disconnect("Too much data before the handshake completed");
+                        return cb(null, null);
+                    }
+                }
                 item.state = this.ENCRYPTION_STATE;
                 this._recvLinkPacketQueue.push(item);
                 cb(null, null);
@@ -1217,7 +1333,7 @@ module.exports = class AnyProtocol extends EventEmitter {
      * @returns true when the frame was handed on.
      */
     _acceptForward(recv) {
-        if (this.state != constants.PROTOCOL_STATES.CONNECTED || !this.peerID) {
+        if (!this._pastHandshake() || !this.peerID) {
             this.disconnect("FORWARD before the handshake completed");
             return false;
         }
@@ -1364,6 +1480,33 @@ module.exports = class AnyProtocol extends EventEmitter {
         this[lastReceived] = now();
         this[heartbeatPonged] = true;
         this[heartbeatsMissed] = 0;
+        if (this[probes]) this._settleProbes(true);
+    }
+
+    /**
+     * Is the other end still there? Resolves true as soon as anything arrives from it,
+     * false if nothing does within `ms` or the link goes.
+     */
+    probe(ms) {
+        if (!this.isConnected()) return Promise.resolve(false);
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => this._settleProbes(false), ms);
+            (this[probes] = this[probes] || []).push((alive) => {
+                clearTimeout(timer);
+                resolve(alive);
+            });
+            // Nothing goes out in clear while encryption is being switched on; then
+            // whatever the switch brings in answers it.
+            if (this.state == constants.PROTOCOL_STATES.CONNECTED && !this.isProxy()) {
+                this.send(Packet.data(1).setType(Packet.TYPE.HEARTBEAT)).catch(() => {});
+            }
+        });
+    }
+
+    _settleProbes(alive) {
+        const waiting = this[probes];
+        this[probes] = null;
+        if (waiting) waiting.forEach((settle) => settle(alive));
     }
 
     _heartbeat(delay) {

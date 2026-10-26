@@ -9,7 +9,7 @@
  *
  * What this gives instead is symmetric: both ends send a challenge, both prove
  * themselves, and neither needs to know which end it is. A proof covers both
- * challenges, both ids and the negotiated version, so it is good only for the
+ * challenges, both ids and instances and the negotiated version, so it is good only for the
  * one exchange it was made in — a captured proof cannot be replayed, and
  * because each side's proof names itself, neither can be reflected back.
  *
@@ -61,10 +61,12 @@ function compareBytes(a, b) {
 function transcript(params) {
     const local = Frame.concat([
         lengthPrefixed(Frame.bytes(params.localID || "")),
+        lengthPrefixed(Frame.bytes(params.localInstance || "")),
         lengthPrefixed(params.localChallenge)
     ]);
     const remote = Frame.concat([
         lengthPrefixed(Frame.bytes(params.remoteID || "")),
+        lengthPrefixed(Frame.bytes(params.remoteInstance || "")),
         lengthPrefixed(params.remoteChallenge)
     ]);
     const localFirst = compareBytes(local, remote) <= 0;

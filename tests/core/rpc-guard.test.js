@@ -89,7 +89,8 @@ test("a refused call never runs, and rejects with 403", async (t) => {
 
     assert.equal(await link.clientPeer.rpc.ping(), "pong");
     await assert.rejects(link.clientPeer.rpc.admin.wipe(), (e) => {
-        assert.equal(e.code, 403);
+        assert.equal(e.code, AnySocket.ERRORS.RPC_FORBIDDEN);
+        assert.equal(e.status, 403);
         assert.equal(e.error, "Forbidden");
         return true;
     });
@@ -102,7 +103,7 @@ test("only true allows: a guard returning something else refuses", async (t) => 
         const link = await withRPC(t, { go: () => { ran++; } }, (server) => {
             server.rpcGuard = () => answer;
         });
-        await assert.rejects(link.clientPeer.rpc.go(), (e) => e.code === 403, JSON.stringify(answer));
+        await assert.rejects(link.clientPeer.rpc.go(), (e) => e.code === AnySocket.ERRORS.RPC_FORBIDDEN && e.status === 403, JSON.stringify(answer));
         await link.stop();
     }
     assert.equal(ran, 0);
@@ -122,7 +123,8 @@ test("a guard that throws refuses, with its reason", async (t) => {
     });
 
     await assert.rejects(link.clientPeer.rpc.go(), (e) => {
-        assert.equal(e.code, 403);
+        assert.equal(e.code, AnySocket.ERRORS.RPC_FORBIDDEN);
+        assert.equal(e.status, 403);
         assert.equal(e.error, "not authenticated");
         return true;
     });

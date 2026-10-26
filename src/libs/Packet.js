@@ -25,6 +25,8 @@ const isBinaryPayload = (data) =>
 const ATTACHMENTS = Symbol.for("anysocket.attachments");
 // Segments singleFrame() built for a message too big for one frame, handed on to chunks().
 const SEGMENTS = Symbol("segments");
+// How much of an announced total is allocated before any of it has arrived.
+const PREALLOCATE = 64 * 1024 * 1024;
 
 const BODY_KIND = {
     RAW: 0,
@@ -86,7 +88,7 @@ class Packet {
         this.assembled = null;
         this.assembledAt = 0;
 
-        if (data)
+        if (data !== undefined)
             this.data = data;
     }
 
@@ -330,22 +332,38 @@ class Packet {
                 return true;
             }
 
+            // Allocated up to a point, then grown as the bytes actually arrive: with no
+            // cap, a total alone would otherwise reserve up to 4GB.
             try {
-                this.assembled = new Uint8Array(total);
+                this.assembled = new Uint8Array(Math.min(total, PREALLOCATE));
             } catch (e) {
                 this.parseError = true;
                 return true;
             }
+            this.assembledTotal = total;
             this.assembledAt = 0;
         }
 
         let payload;
         if (this.assembled) {
-            if (this.assembledAt + body.length > this.assembled.length) {
+            const needed = this.assembledAt + body.length;
+            if (needed > this.assembledTotal) {
                 // More arrived than the sender promised.
                 this.parseError = true;
                 this.assembled = null;
                 return true;
+            }
+            if (needed > this.assembled.length) {
+                let grown;
+                try {
+                    grown = new Uint8Array(Math.min(this.assembledTotal, Math.max(needed, this.assembled.length * 2)));
+                } catch (e) {
+                    this.parseError = true;
+                    this.assembled = null;
+                    return true;
+                }
+                grown.set(this.assembled.subarray(0, this.assembledAt));
+                this.assembled = grown;
             }
 
             this.assembled.set(body, this.assembledAt);
@@ -381,8 +399,9 @@ class Packet {
 
 module.exports = {
     data: (data) => {
-        data = data || {};
-        return new Packet(data);
+        // Only a missing message becomes {}: send(0), send(false) and send("") used
+        // to arrive as {} too.
+        return new Packet(data === undefined ? {} : data);
     },
     buffer: () => {
         return new Packet();

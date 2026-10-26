@@ -86,11 +86,6 @@ See also [benchmarks](benchmarks) for the http/ws server comparisons.
 npm install --save anysocket
 ```
 
-Until 1.0.0 is on npm, from the `dev` branch:
-
-```
-npm install --save github:lynxaegon/anysocket#dev
-```
 or
 ```html
 <script src="/dist/anysocket.browser.js"></script>

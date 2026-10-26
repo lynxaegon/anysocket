@@ -99,7 +99,7 @@ test("a call pending when the peer goes away rejects with EDISCONNECTED", async 
 
 test("the codes are exported", (t) => {
     assert.deepEqual(Object.keys(AnySocket.ERRORS).sort(),
-        ["ABORTED", "DISCONNECTED", "NOT_CONNECTED", "REFUSED", "SUPERSEDED", "TIMEOUT"]);
+        ["ABORTED", "CONNECTION_FAILED", "DISCONNECTED", "NOT_CONNECTED", "REFUSED", "RPC_FAILED", "RPC_FORBIDDEN", "RPC_NOT_FOUND", "SUPERSEDED", "TIMEOUT"]);
 });
 
 // ---- self-connection ----------------------------------------------------------

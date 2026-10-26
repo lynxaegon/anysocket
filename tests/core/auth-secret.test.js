@@ -200,3 +200,19 @@ test("every challenge is different", async (t) => {
         seen.add(value);
     }
 });
+
+// The duplicate rule tells a restarted peer by its instance, so the proof covers it:
+// otherwise an id could be replayed with a new instance to pass for that peer restarting.
+test("the auth proof covers both instances", async () => {
+    const Auth = require("../../src/libs/Auth");
+    const params = {
+        protocolVersion: 1, capabilities: [],
+        localID: "a", localInstance: "a-1", localChallenge: new Uint8Array(32),
+        remoteID: "b", remoteInstance: "b-1", remoteChallenge: new Uint8Array(32).fill(1),
+        proofFor: "a"
+    };
+    const proof = await Auth.prove("secret", params);
+    assert.equal(await Auth.verify("secret", params, proof), true);
+    assert.equal(await Auth.verify("secret", Object.assign({}, params, { localInstance: "a-2" }), proof), false);
+    assert.equal(await Auth.verify("secret", Object.assign({}, params, { remoteInstance: "b-2" }), proof), false);
+});

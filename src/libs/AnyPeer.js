@@ -8,7 +8,7 @@ const _protocol = Symbol("private protocol");
 const _packets = Symbol("packets");
 const _links = Symbol("links");
 const BufferUtils = require("../wrappers/utils_buffer");
-const { errors } = require("./errors");
+const { errors, rpcError } = require("./errors");
 
 const isBoolean = function (obj) {
     return obj === true || obj === false || toString.call(obj) === '[object Boolean]';
@@ -80,7 +80,7 @@ module.exports = class AnyPeer extends EventEmitter {
                             this._send(packet, true, callOptions.timeout, callOptions.signal)
                                 .then((packet) => {
                                     if (packet.msg.error) {
-                                        reject(packet.msg);
+                                        reject(rpcError(packet.msg));
                                     } else {
                                         let result = packet.msg.result;
                                         if (packet.msg.bin) {
@@ -237,6 +237,26 @@ module.exports = class AnyPeer extends EventEmitter {
         return this[_protocol].remoteInstanceID;
     }
 
+    /** The largest frame the peer said it takes; null when it did not say. */
+    remoteMaxFrame() {
+        return this[_protocol].remoteMaxFrame;
+    }
+
+    /** Is the other end still answering? See AnyProtocol.probe. */
+    _probe(ms) {
+        return this[_protocol].probe(ms);
+    }
+
+    /** Answer message `seq`. What AnyPacket.reply() sends with. */
+    _reply(seq, message, type) {
+        const packet = Packet
+            .data(message)
+            .setType(type)
+            .setReplyTo(seq);
+
+        return this._send(packet, false);
+    }
+
     /**
      * Retire this peer in favour of another connection to the same id. Detached
      * from its protocol first, so the resulting disconnect cannot be mistaken
@@ -305,7 +325,7 @@ module.exports = class AnyPeer extends EventEmitter {
     }
 
     forward(packet) {
-        this[_protocol].forward(packet);
+        return this[_protocol].forward(packet);
     }
 
     sendInternal(message, awaitReply, timeout) {
@@ -325,7 +345,7 @@ module.exports = class AnyPeer extends EventEmitter {
             return;
         }
 
-        this.emit("message", new AnyPacket(this, message, this.send.bind(this)));
+        this.emit("message", new AnyPacket(this, message, (reply) => this._reply(message.seq, reply, constants.PACKET_TYPE.LINK)));
     }
 
     onE2E() {
@@ -341,7 +361,7 @@ module.exports = class AnyPeer extends EventEmitter {
         }
 
         if (message.type == constants.PACKET_TYPE.INTERNAL) {
-            this.emit("internal", new AnyPacket(this, message, this.sendInternal.bind(this)));
+            this.emit("internal", new AnyPacket(this, message, (reply) => this._reply(message.seq, reply, constants.PACKET_TYPE.INTERNAL)));
         } else {
             debug("Dropped internal packet!", message);
         }
@@ -371,8 +391,12 @@ module.exports = class AnyPeer extends EventEmitter {
                 return;
             }
 
-            if (!isBoolean(awaitReply) && awaitReply && awaitReply > 0) {
-                packet.setReplyTo(awaitReply);
+            // A number here used to make the message a reply to that seq, so
+            // send(msg, 5000) meant as a timeout went out as a reply instead.
+            // Replies go through packet.reply() now.
+            if (awaitReply != null && !isBoolean(awaitReply)) {
+                reject(new TypeError("awaitReply must be a boolean; answer a message with packet.reply()"));
+                return;
             }
 
             // Assigns packet.seq synchronously, so it is safe to key on below.
@@ -446,6 +470,7 @@ module.exports = class AnyPeer extends EventEmitter {
             clearTimeout(tmp.timeout);
             tmp.resolve(new AnyPacket(this, message, () => {
                 debug("Cannot reply to a reply packet!");
+                return Promise.resolve();
             }));
             return true;
         }

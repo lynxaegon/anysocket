@@ -108,3 +108,18 @@ test("a message too big for one frame is left to the chunk path, unchanged", asy
     assert.ok(a.length > 1);
     assert.deepEqual(a, b);
 });
+
+// With maxMessageSize unset there is no cap to hold an announced total to, and the whole
+// total was allocated from the first frame: 11 bytes could reserve 4GB. Now only a part is
+// allocated up front, and the rest as the bytes actually arrive.
+test("an announced total is not allocated before the bytes arrive", async (t) => {
+    const Frame = require("../../src/libs/Frame");
+    const payload = new Uint8Array(Frame.LENGTH_HINT + 16);
+    new DataView(payload.buffer).setUint32(0, 0xFFFFFFF0, false);
+    const first = Frame.encode({ flags: Frame.FLAGS.FIRST | Frame.FLAGS.BINARY, type: Packet.TYPE.LINK, seq: 5, payload });
+
+    const back = Packet.buffer();
+    back.maxTotal = Infinity;
+    assert.equal(await back.deserialize(first, constants.PROTOCOL_ENCRYPTION.PLAIN, (s, p) => Promise.resolve(p)), false);
+    assert.ok(back.assembled.length <= 64 * 1024 * 1024, "allocated " + back.assembled.length);
+});

@@ -26,7 +26,15 @@ const CODES = {
     // The caller gave up on a call through its AbortSignal.
     ABORTED: "EABORTED",
     // Refused by local policy, e.g. the old e2e exchange when it is disabled.
-    REFUSED: "EREFUSED"
+    REFUSED: "EREFUSED",
+    // A connection that closed before it was established; `reason` says why.
+    CONNECTION_FAILED: "ECONNFAILED",
+    // An RPC the peer has no method for.
+    RPC_NOT_FOUND: "ENOMETHOD",
+    // An RPC the peer's rpcGuard refused.
+    RPC_FORBIDDEN: "EFORBIDDEN",
+    // An RPC whose method threw on the peer.
+    RPC_FAILED: "ERPC"
 };
 
 const errors = {
@@ -35,7 +43,31 @@ const errors = {
     disconnected: () => new AnySocketError(CODES.DISCONNECTED, "Peer disconnected!"),
     superseded: () => new AnySocketError(CODES.SUPERSEDED, "Superseded by the agreed connection"),
     aborted: (reason) => new AnySocketError(CODES.ABORTED, "Aborted", { reason: reason }),
-    refused: (message) => new AnySocketError(CODES.REFUSED, message)
+    refused: (message) => new AnySocketError(CODES.REFUSED, message),
+    connectionFailed: (reason) => new AnySocketError(CODES.CONNECTION_FAILED,
+        "Connection failed: " + reasonText(reason), { reason: reasonText(reason) })
 };
 
-module.exports = { AnySocketError, CODES, errors };
+/** A disconnect reason as the text it is documented to be. */
+function reasonText(reason) {
+    if (reason instanceof Error) return reason.message;
+    return reason == null ? "" : String(reason);
+}
+
+/**
+ * An RPC failure as the peer reported it: { error, details, code } on the wire, with
+ * an HTTP-style code, which is what a 0.4.x peer sends too. Raised as an
+ * AnySocketError, keeping `error` and `details`, with the wire code as `status`.
+ */
+function rpcError(msg) {
+    const code = msg.code == 404 ? CODES.RPC_NOT_FOUND
+        : msg.code == 403 ? CODES.RPC_FORBIDDEN
+        : CODES.RPC_FAILED;
+    return new AnySocketError(code, String(msg.error), {
+        error: msg.error,
+        details: msg.details,
+        status: msg.code
+    });
+}
+
+module.exports = { AnySocketError, CODES, errors, reasonText, rpcError };

@@ -22,6 +22,9 @@ module.exports = class StreamPeer extends AbstractPeer {
         // prefix before allocating, so a peer cannot make us reserve gigabytes
         // by announcing them.
         this.maxPayload = options.maxPayload || 64 * 1024 * 1024;
+        // A tighter limit for now, set by the protocol while the other end has not
+        // authenticated. null for none.
+        this._limit = null;
 
         this._chunks = [];
         this._buffered = 0;
@@ -50,7 +53,7 @@ module.exports = class StreamPeer extends AbstractPeer {
                 if (this._buffered < LENGTH_BYTES) return;
                 this._expected = this._take(LENGTH_BYTES).readUInt32BE(0);
 
-                if (this._expected > this.maxPayload) {
+                if (this._expected > (this._limit ? Math.min(this._limit, this.maxPayload) : this.maxPayload)) {
                     this.disconnect("Message too large");
                     return;
                 }
@@ -64,6 +67,10 @@ module.exports = class StreamPeer extends AbstractPeer {
 
             if (!this.connected) return;
         }
+    }
+
+    limitReceive(bytes) {
+        this._limit = bytes || null;
     }
 
     /** The next `length` buffered bytes, copying only when they span chunks. */
@@ -125,7 +132,19 @@ module.exports = class StreamPeer extends AbstractPeer {
                 if (flushed || this.socket.writableLength <= this.highWaterMark) {
                     resolve();
                 } else {
-                    this.socket.once("drain", resolve);
+                    // A socket that closes before it drains never emits 'drain', and
+                    // this send never settled.
+                    const socket = this.socket;
+                    const settle = (err) => {
+                        socket.off("drain", onDrain);
+                        socket.off("close", onClose);
+                        if (err) reject(err);
+                        else resolve();
+                    };
+                    const onDrain = () => settle();
+                    const onClose = () => settle(new Error("socket closed"));
+                    socket.once("drain", onDrain);
+                    socket.once("close", onClose);
                 }
             } catch (e) {
                 reject(e);

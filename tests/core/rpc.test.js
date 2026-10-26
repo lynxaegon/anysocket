@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { pair } = require("../helpers/loopback");
+const { pair, AnySocket } = require("../helpers/loopback");
 
 const withRPC = (t, rpc) => pair(t, { configure: (server) => server.setRPC(rpc) });
 
@@ -24,7 +24,9 @@ test("a missing method rejects with 404", async (t) => {
     const link = await withRPC(t, {});
 
     await assert.rejects(link.clientPeer.rpc.nope.missing(), (e) => {
-        assert.equal(e.code, 404);
+        assert.equal(e.code, AnySocket.ERRORS.RPC_NOT_FOUND);
+        assert.equal(e.status, 404);
+        assert.ok(e instanceof AnySocket.Error);
         return true;
     });
     await link.stop();
@@ -39,7 +41,8 @@ test("an async RPC that throws reports a readable message", async (t) => {
 
     await assert.rejects(link.clientPeer.rpc.boom(), (e) => {
         assert.equal(e.error, "kaboom", "expected the thrown message, got " + JSON.stringify(e.error));
-        assert.equal(e.code, 500);
+        assert.equal(e.code, AnySocket.ERRORS.RPC_FAILED);
+        assert.equal(e.status, 500);
         return true;
     });
     await link.stop();

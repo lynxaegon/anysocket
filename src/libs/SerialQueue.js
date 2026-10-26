@@ -24,6 +24,12 @@ class SerialQueue {
         if (!this.running && !this.paused) this._run();
     }
 
+    /** Put items ahead of everything still waiting, in their own order. */
+    unshift(items) {
+        this.items.splice(this.head, 0, ...items);
+        if (!this.running && !this.paused) this._run();
+    }
+
     pause() {
         this.paused = true;
     }

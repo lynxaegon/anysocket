@@ -169,6 +169,11 @@ after `sniffTimeout` (30s).
     maxMessageSize: Infinity, // ceiling after it does
     maxPartialPackets: 64, // messages mid-reassembly at once
     capabilities: [], // narrow to opt out of a feature
+    requireE2E: false, // not up until encrypted; either end asking is enough
+    e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
+    allowLegacyE2E: true, // allow the old exchange with a 0.4.x peer
+    maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
+    duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
     tcpKeepAlive: false, // SO_KEEPALIVE on the socket
     tcpKeepAliveInitialDelay: 30000
 }
@@ -207,6 +212,11 @@ Connects to AnySocket Server
     maxMessageSize: Infinity, // ceiling after it does
     maxPartialPackets: 64, // messages mid-reassembly at once
     capabilities: [], // narrow to opt out of a feature
+    requireE2E: false, // not up until encrypted; either end asking is enough
+    e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
+    allowLegacyE2E: true, // allow the old exchange with a 0.4.x peer
+    maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
+    duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
     tcpKeepAlive: false, // SO_KEEPALIVE on the socket
     tcpKeepAliveInitialDelay: 30000
 }
@@ -352,12 +362,16 @@ an exposed array's `push` and the like answer 404. Every exposed method is
 callable by every connected peer unless an
 <a href="#AnySocket.rpcGuard">rpcGuard</a> says otherwise.
 
-Any  throwed error / reject will be sent back to the client in the form: 
+A method that throws or rejects makes the call reject with an
+`AnySocket.Error`:
 ```javascript
 {
+    code: AnySocket.ERRORS.RPC_FAILED, // "ERPC"; RPC_NOT_FOUND ("ENOMETHOD") for no such
+                                       // method, RPC_FORBIDDEN ("EFORBIDDEN") when rpcGuard refused
+    message: "error message",
     error: "error message",
     details: "details",
-    code: 500
+    status: 500 // the code on the wire: 404, 403 or 500, as a 0.4.x peer also sends
 }
 ```
 
@@ -584,9 +598,12 @@ An object that contains data sent/received from a peer
 Sends a reply to the current packet
 
 **Arguments:**
-* `message` - a JSON stringifiable object
+* `message` - a JSON stringifiable value
 
-_note: you can only reply to a normal message, you **cannot** reply to a **reply packet**. It fails silently_ 
+**Returns** a Promise that resolves once the reply is written, and rejects if it
+could not be sent (the peer has gone, say)
+
+_note: you can only reply to a normal message, you **cannot** reply to a **reply packet**. That resolves and sends nothing_ 
 
 [back to top](#api)
 
@@ -705,10 +722,13 @@ Enables E2E encryption: an x25519 key exchange, then AES-256-GCM (or ChaCha20-Po
 Sends a message to the peer
 
 **Arguments:**
-* `message` - a JSON stringifiable object, or a `Uint8Array`/`Buffer`, which
-  travels as those bytes between 1.0 peers (no base64). For a 0.4.x peer use
+* `message` - a JSON stringifiable value (`0`, `false` and `""` arrive as
+  themselves), or a `Uint8Array`/`Buffer`, which travels as those bytes
+  between 1.0 peers (no base64). For a 0.4.x peer use
   <a href="#AnySocket.Packer.pack"><code>AnySocket.Packer</code></a>.
-* `awaitReply` - set to true if a reply is expected (optional) - default: false
+* `awaitReply` - set to true if a reply is expected (optional) - default: false.
+  Anything other than a boolean rejects with a `TypeError`; answer a message
+  with <a href="#AnyPacket.reply">reply()</a>
 * `timeout` - set a custom reply packet timeout in milliseconds (optional)
 
 **Returns** a Promise that resolves with a <a href="#AnyPacket.constructor">AnyPacket</a> if waiting for a reply or rejects on error

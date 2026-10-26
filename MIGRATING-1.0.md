@@ -81,7 +81,21 @@ try { await peer.rpc.slow(); }
 catch (e) { if (e.code === AnySocket.ERRORS.TIMEOUT) { /* ... */ } }
 ```
 
-`ENOTCONNECTED`, `ETIMEOUT`, `EDISCONNECTED`, `ESUPERSEDED`, `EABORTED`, `EREFUSED`.
+`ENOTCONNECTED`, `ETIMEOUT`, `EDISCONNECTED`, `ESUPERSEDED`, `EABORTED`, `EREFUSED`,
+`ECONNFAILED`, `ENOMETHOD`, `EFORBIDDEN`, `ERPC`.
+
+- `connect()` rejects with `ECONNFAILED` when the connection closes before it
+  is up, with the disconnect reason as `reason`. A socket error (`ECONNREFUSED`
+  and the like) is still node's own error.
+- `proxy()` rejects with `EREFUSED`, the reason in the message.
+- **A failed RPC rejects with an `AnySocket.Error` too.** It used to reject with
+  the reply object itself, `{ error, details, code }` with `code` an HTTP-style
+  number. `error` and `details` are still there; the number moved to
+  `status`, and `code` is `ENOMETHOD` (404), `EFORBIDDEN` (403) or `ERPC` (500).
+  **Code testing `e.code === 404` has to test `e.status === 404`**, or better
+  `e.code === AnySocket.ERRORS.RPC_NOT_FOUND`. The wire is unchanged, so this
+  holds against a 0.4.x peer as well.
+- A `disconnected` reason is always text.
 
 ### Two peers that dial each other keep one connection
 
@@ -96,15 +110,36 @@ loop.
 
 A peer that restarts keeping its id is not a duplicate: its new connection
 replaces the one its previous instance left, which may not have closed yet.
-Each instance sends its own `instanceID` in the handshake, so the two cases are
-told apart. (Two live instances sharing an id will now take turns, which they
-should not do anyway.)
+Each instance sends its own `instanceID` in the handshake (covered by the
+built-in auth's proof), so the two cases are told apart. The connection held is
+probed first: if it still answers within `duplicateProbeTimeout` (2s), it is
+a live process, and the new connection is refused as a duplicate. So two live
+instances sharing an id do not evict each other, and nobody can take a live
+peer's place by claiming its id.
 
 ## Smaller changes
 
 - **A rejected RPC reports a readable message.** A thrown `Error` has no
   enumerable fields, so it used to serialize to `{}`. `error` is now the
-  message, with `code` and `details` alongside.
+  message, with `details` and `status` alongside.
+- **`send(message, awaitReply)` takes a boolean.** A number made the message a
+  reply to that seq, so `send(msg, 5000)` meant as a timeout went out as a
+  reply; it now rejects with a `TypeError`. Answer with `packet.reply()`, which
+  now returns a Promise.
+- **`send(0)`, `send(false)` and `send("")` arrive as themselves**, not as `{}`.
+- **`filter()` is gone.** It did nothing.
+- **The frame size is negotiated.** Each end announces the largest frame it takes,
+  and a sender cuts its frames to fit, through a relay too. A sender with a larger
+  `maxPacketSize` than the receiver's transport allowed used to be disconnected
+  with nothing delivered.
+- **Before it has answered the AUTH, a listener takes nothing large**: tcp frames
+  are held to the handshake ceiling, and data sent ahead of the handshake is
+  bounded by it. An unauthenticated client could pin hundreds of MB.
+- **`e2e()` while a large message is in flight** holds the rest of the message
+  until the keys are ready, and sends it encrypted. Chunks used to go out in
+  clear, which the other end refused, dropping the connection.
+- **One e2e exchange per connection.** A second offer once encryption is up drops
+  the connection: it would have reused the ephemeral key with the counters at 0.
 - **An undecodable packet drops the connection** instead of being delivered with
   `data = null`.
 - **`AnySocket.mesh()` and `AnyMesh` are gone.** The class was an empty stub. A
@@ -301,7 +336,8 @@ anysocket.getPeer(id);    // the connected peer with this id, or null
 | `maxMessageSize` | `Infinity` | Ceiling after it has. Set it to bound an authenticated peer. |
 | `maxPartialPackets` | `64` | Messages that may be mid-reassembly at once. |
 | `capabilities` | all | Narrow it to opt out of a feature. |
-| `maxPayload` | derived | Transport frame limit; follows `maxPacketSize`. |
+| `maxPayload` | derived | Transport frame limit, announced in the handshake. ws derives it from `maxPacketSize`; tcp takes 64MB. |
+| `duplicateProbeTimeout` | `2s` | How long a held connection has to answer when a new instance of its peer arrives. |
 | `requireE2E` | `false` | Not up until encrypted. |
 | `e2eCiphers` | measured | Ciphers to offer, most preferred first. |
 | `allowLegacyE2E` | `true` | Allow the old exchange with a 0.4.x peer. |

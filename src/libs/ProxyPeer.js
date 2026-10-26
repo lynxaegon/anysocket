@@ -16,19 +16,21 @@ module.exports = class ProxyPeer extends AbstractPeer {
 
     }
 
+    /**
+     * Settles when the relay connection has the frame, so a relayed send waits on it
+     * and fails with it. It used to resolve at once, leaving the relay connection's
+     * own promise to reject with no one handling it.
+     */
     send(message) {
-        return new Promise((resolve, reject) => {
-            try {
-               this.socket.forward({
-                    to: this.id,
-                    from: this.anysocketID,
-                    msg: message
-                });
-                resolve();
-            } catch (e) {
-                reject(e);
-            }
-        });
+        try {
+            return this.socket.forward({
+                to: this.id,
+                from: this.anysocketID,
+                msg: message
+            });
+        } catch (e) {
+            return Promise.reject(e);
+        }
     }
 
     onDisconnect() {

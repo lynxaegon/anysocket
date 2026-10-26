@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "A custom protocol over any transport: client/server agnostic, binary framed, with authenticated end-to-end encryption",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "node --test --test-timeout=30000 \"tests/unit/*.test.js\" \"tests/core/*.test.js\" \"tests/wire/*.test.js\" \"tests/crypto/*.test.js\" \"tests/security/*.test.js\" \"tests/browser/*.test.js\" \"tests/interop/*.test.js\"",
     "test:unit": "node --test --test-timeout=10000 \"tests/unit/*.test.js\"",
@@ -32,7 +35,6 @@
     "tcp",
     "http",
     "https",
-    "udp",
     "binary",
     "end-to-end",
     "encrypted",

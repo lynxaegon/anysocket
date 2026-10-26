@@ -8,7 +8,8 @@ module.exports = class AnyPacket {
         this[_send] = sendFnc;
     }
 
+    /** Resolves once the reply is sent, and rejects if it could not be. */
     reply(message) {
-        this[_send](message, this.seq);
+        return this[_send](message, this.seq);
     }
 };
