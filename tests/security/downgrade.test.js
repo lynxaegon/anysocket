@@ -152,9 +152,11 @@ async function tcpServer(t, options = {}) {
 const id = () => crypto.randomBytes(16).toString("hex");
 
 test("over a socket, a text frame after a 1.0.x AUTH drops the connection", async (t) => {
-    const { server, port } = await tcpServer(t);
+    const { server, port } = await tcpServer(t, { acceptLegacyHandshake: true });
     let delivered = false;
+    let connected = false;
     server.on("message", () => { delivered = true; });
+    server.on("connected", () => { connected = true; });
 
     const raw = rawSocket(t, port);
     await raw.ready;
@@ -163,6 +165,7 @@ test("over a socket, a text frame after a 1.0.x AUTH drops the connection", asyn
     raw.write(Buffer.from(legacyFrame(constants.PACKET_TYPE.LINK, { marker: "forged" })));
 
     await raw.closed;
+    assert.equal(connected, true, "the 1.0.x AUTH was read");
     assert.equal(delivered, false);
 });
 

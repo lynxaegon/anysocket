@@ -91,7 +91,7 @@ test("e2e is bound to the secret on an authenticated connection", async (t) => {
 
 // --- the reason it exists: moving a live fleet ----------------------------
 
-test("an optional peer still talks to a 1.0.1 peer without a secret during a migration", async (t) => {
+test("an optional peer still talks to a 1.0.4 peer without a secret during a migration", async (t) => {
     const server = new AnySocket(optional);
     const previous = new PreviousAnySocket();
     t.after(() => stop(server, previous));
@@ -99,7 +99,7 @@ test("an optional peer still talks to a 1.0.1 peer without a secret during a mig
     let serverPeer = null;
     server.on("connected", (p) => { serverPeer = p; });
 
-    const port = await listen(server);
+    const port = await listen(server, { acceptLegacyHandshake: true });
     const peer = await previous.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(150);
 

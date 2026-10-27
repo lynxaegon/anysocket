@@ -37,6 +37,8 @@ const MIN_FRAME = 64 * 1024;
 const HANDSHAKE_HEADROOM = 4 * 1024;
 // Why a peer that sends something other than a frame is dropped.
 const NOT_A_FRAME = "Not an anysocket frame";
+// Text where a handshake belongs, on a listener that does not read 1.0.x's.
+const LEGACY_HANDSHAKE_REFUSED = "Not an anysocket frame: a 1.0.x dialler needs acceptLegacyHandshake on the listener, and 0.4.x is not supported";
 // Why a peer announcing no protocol version, or one below 1, is refused.
 const VERSION_REFUSED = "Protocol version 1 required (0.4.x peers are not supported since anysocket 1.1)";
 
@@ -144,6 +146,11 @@ module.exports = class AnyProtocol extends EventEmitter {
             // to in clear. The requirement travels in the handshake, so either
             // end asking for it is enough; both then wait.
             requireE2E: false,
+            // Read a 1.0.x dialler's first AUTH, which it writes in the old
+            // text format (see LegacyAuth). Off, a 1.0.x peer can still be
+            // dialled but cannot dial us. A bridge for a listener whose clients
+            // upgrade on their own schedule; it goes in a later release.
+            acceptLegacyHandshake: false,
             // A new instance of a peer we already hold a connection to: how long the
             // connection we hold has to answer before it is taken for the dead
             // process's leftover and replaced.
@@ -1086,14 +1093,20 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     /**
-     * Something that is not a frame. The one thing read that way is a 1.0.x
-     * dialler's first AUTH, before ours has been received (see LegacyAuth);
-     * anything else drops the connection.
+     * Something that is not a frame. With acceptLegacyHandshake, the one thing
+     * read that way is a 1.0.x dialler's first AUTH, before ours has been
+     * received (see LegacyAuth); anything else drops the connection.
      */
     _notAFrame(item, cb) {
         const expecting = !this[AUTH_RECEIVED] &&
             (this.state == constants.PROTOCOL_STATES.ESTABLISHED ||
              this.state == constants.PROTOCOL_STATES.AUTHING);
+        // Off, the old format is never read at all: the text is dropped unparsed.
+        if (expecting && !this.options.acceptLegacyHandshake) {
+            debug("text where a handshake belongs, in state", this.state);
+            this.disconnect(LEGACY_HANDSHAKE_REFUSED);
+            return cb(null, null);
+        }
         const packet = expecting ? LegacyAuth.read(item.recv, this.options.maxHandshakeMessageSize) : null;
 
         if (!packet) {

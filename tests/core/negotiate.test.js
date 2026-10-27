@@ -85,7 +85,8 @@ test("nonsense capabilities are ignored rather than trusted", async (t) => {
 });
 
 // A handshake that carries no version is exactly what 0.4.x sends. It used to put the
-// connection on the old text format; since 1.1 it is refused, and says why.
+// connection on the old text format; since 1.1 it is refused, and says why — when the
+// listener reads text handshakes at all (acceptLegacyHandshake), and otherwise unread.
 for (const [name, data] of [
     ["no version", { id: "0123456789abcdef0123456789abcdef" }],
     ["version 0", { id: "0123456789abcdef0123456789abcdef", pv: 0 }]
@@ -100,7 +101,7 @@ for (const [name, data] of [
         server.on("connected", (peer) => { serverPeer = peer; });
         server.onAuth = () => { asked = true; return true; };
 
-        const port = await listen(server);
+        const port = await listen(server, { acceptLegacyHandshake: true });
         const socket = new WebSocket("ws://127.0.0.1:" + port + "/");
         await new Promise((resolve) => socket.on("open", resolve));
         const closed = new Promise((resolve) => socket.on("close", resolve));

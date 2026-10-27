@@ -1,9 +1,10 @@
 /**
  * The old text format, as far as 1.1 still reads it: the first AUTH of a 1.0.x
  * dialler, which writes it as text because it does not yet know what the other
- * end speaks. Nothing else in the library knows this format, and 1.1 never
- * writes it. This module goes once no 1.0.x dialler is left;
- * AnyPeer.legacyHandshake() shows which connections still came in through it.
+ * end speaks. Read only when the listener sets acceptLegacyHandshake. Nothing
+ * else in the library knows this format, and 1.1 never writes it. This module
+ * goes once no 1.0.x dialler is left; AnyPeer.legacyHandshake() shows which
+ * connections still came in through it.
  *
  * The format: a 1-char end-of-message flag ("1" whole, "2" partial), a 1-char
  * type, a 4-char big-endian seq written one character per byte, then JSON.

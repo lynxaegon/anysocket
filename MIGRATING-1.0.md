@@ -1,16 +1,30 @@
 # Migrating to anysocket 1.1
 
-1.1 talks to every 1.0.x peer, in both directions of the dial, and not to 0.4.x.
-Code that ran on 1.0.x runs unchanged; `allowLegacyE2E` is ignored and
-`AnySocket.Packer` is deprecated but still works.
-
 **Every peer must be on 1.0.x first.** A 0.4.x peer is refused, whichever end
 dials.
 
-A 1.0.x dialler still sends its first handshake packet in the old text format,
-and 1.1 still accepts that one packet. A future release will stop accepting it,
-so move every peer to 1.1 or later before then.
-`peer.legacyHandshake()` is true on each connection that still came in that way.
+### Who can dial whom
+
+A 1.1 peer dials a 1.0.x peer with nothing to set. The other way round does not
+work by default: a 1.0.x dialler sends its first handshake packet in the old
+text format, which 1.1 drops unread ("Not an anysocket frame: a 1.0.x dialler
+needs acceptLegacyHandshake on the listener, and 0.4.x is not supported").
+
+- **You control the order:** upgrade the diallers first, then the listeners.
+- **You do not** (clients that update on their own, say): set
+  `acceptLegacyHandshake: true` on the 1.1 listener. It reads that one packet;
+  everything after it is a 1.1 frame. `peer.legacyHandshake()` is true on each
+  connection that came in that way — when none do any more, turn the option off.
+  A later release removes it.
+
+### What else changed
+
+- **A ws dial no longer falls back to plain ws.** `connect("ws", ...)` tries wss;
+  in 1.0.x a failure was retried as ws, which anyone on the path can force. Now
+  it rejects. A plain-ws server needs `allowInsecureWSFallback: true` on the
+  dialler.
+- `AnySocket.Packer` is gone; bytes travel as bytes.
+- `allowLegacyE2E` and `allowLegacyProtocol` are ignored.
 
 # Migrating to anysocket 1.0
 

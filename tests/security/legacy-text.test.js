@@ -67,8 +67,12 @@ async function raw(t, scheme, port) {
     };
 }
 
-/** A listener, watched for crashes, that must still serve a well-behaved peer afterwards. */
-async function victim(t, scheme, options) {
+/**
+ * A listener, watched for crashes, that must still serve a well-behaved peer afterwards.
+ * It reads 1.0.x handshakes (acceptLegacyHandshake), so what is refused here is refused
+ * by LegacyAuth itself.
+ */
+async function victim(t, scheme, options = { acceptLegacyHandshake: true }) {
     const reasons = disconnectReasons(t);
     const unhandled = [];
     const onUnhandled = (e) => unhandled.push(e);
@@ -153,6 +157,17 @@ for (const scheme of ["ws", "tcp"]) {
             await v.stillServes();
         });
     }
+
+    test(name("without acceptLegacyHandshake, a 1.0.x AUTH is refused with the reason"), async (t) => {
+        const v = await victim(t, scheme, {});
+        const attacker = await raw(t, scheme, v.port);
+        attacker.send(text(FULL, AUTH, authBody()));
+
+        assert.equal(await attacker.outcome(), "closed");
+        assert.equal(v.arrived(), 0);
+        assert.ok(v.reasons.some((r) => /needs acceptLegacyHandshake/.test(r)), "dropped for: " + v.reasons);
+        await v.stillServes();
+    });
 
     test(name("a text AUTH with no version is refused with the reason"), async (t) => {
         const v = await victim(t, scheme);

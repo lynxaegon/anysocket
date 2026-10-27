@@ -98,7 +98,7 @@ test("with the heartbeat off, a silent link is left to the transport", async (t)
 // A 1.0.x peer answers probes even with its own heartbeat off, so a peer that
 // probes it does not drop it — in either direction of the dial.
 for (const previousListens of [true, false]) {
-    test(`a peer probing an idle 1.0.1 ${previousListens ? "server" : "client"} with its heartbeat off keeps the link`, async (t) => {
+    test(`a peer probing an idle 1.0.4 ${previousListens ? "server" : "client"} with its heartbeat off keeps the link`, async (t) => {
         const modern = new AnySocket();
         const previous = new PreviousAnySocket();
         t.after(() => stop(modern, previous));
@@ -109,7 +109,7 @@ for (const previousListens of [true, false]) {
             const port = await previous.listen("ws", { port: 0, heartbeatEnabled: false });
             await modern.connect("ws", "127.0.0.1", port, Object.assign({ allowInsecureWSFallback: true }, HB));
         } else {
-            const port = await listen(modern, HB);
+            const port = await listen(modern, Object.assign({ acceptLegacyHandshake: true }, HB));
             await previous.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true, heartbeatEnabled: false });
         }
         await wait(BUDGET * 3);

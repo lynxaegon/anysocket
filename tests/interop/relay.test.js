@@ -5,14 +5,14 @@ const PreviousAnySocket = require("anysocket-1-0");
 const { stop, wait } = require("../helpers/loopback");
 
 /**
- * Relayed links where one hop is the published 1.0.1. A relay re-wraps each frame
+ * Relayed links where one hop is the published 1.0.4. A relay re-wraps each frame
  * for the next hop, so a relayed frame written by one version has to be one the
  * other reads, whichever end is which.
  */
 const layouts = [
-    { name: "a 1.1 relay between a 1.1 dialler and a 1.0.1 target", Relay: AnySocket, A: AnySocket, B: PreviousAnySocket },
-    { name: "a 1.1 relay between a 1.0.1 dialler and a 1.1 target", Relay: AnySocket, A: PreviousAnySocket, B: AnySocket },
-    { name: "a 1.0.1 relay between two 1.1 peers", Relay: PreviousAnySocket, A: AnySocket, B: AnySocket }
+    { name: "a 1.1 relay between a 1.1 dialler and a 1.0.4 target", Relay: AnySocket, A: AnySocket, B: PreviousAnySocket },
+    { name: "a 1.1 relay between a 1.0.4 dialler and a 1.1 target", Relay: AnySocket, A: PreviousAnySocket, B: AnySocket },
+    { name: "a 1.0.4 relay between two 1.1 peers", Relay: PreviousAnySocket, A: AnySocket, B: AnySocket }
 ];
 
 async function trio(t, layout, scheme, options = {}) {
@@ -23,7 +23,7 @@ async function trio(t, layout, scheme, options = {}) {
     relay.canProxy = () => true;
     b.canAcceptProxy = () => true;
 
-    const port = await relay.listen(scheme, Object.assign({ port: 0 }, options.relay));
+    const port = await relay.listen(scheme, Object.assign({ port: 0, acceptLegacyHandshake: true }, options.relay));
     await a.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true });
     await b.connect(scheme, "127.0.0.1", port, Object.assign({ allowInsecureWSFallback: true }, options.b));
     await wait(50);

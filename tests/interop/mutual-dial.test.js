@@ -5,10 +5,10 @@ const PreviousAnySocket = require("anysocket-1-0");
 const { stop, wait } = require("../helpers/loopback");
 
 /**
- * A 1.1 and a 1.0.1 peer that dial each other at once.
+ * A 1.1 and a 1.0.4 peer that dial each other at once.
  *
  * Both keep the connection dialled by the lower id, so both have to settle on
- * the same one of the two — whether that is 1.1's frame-AUTH dial or 1.0.1's
+ * the same one of the two — whether that is 1.1's frame-AUTH dial or 1.0.4's
  * text-AUTH one. If they chose differently, each would close the other's keeper
  * and both connections would die, every time the two dialled each other.
  */
@@ -18,7 +18,7 @@ async function round(t, scheme, ids) {
     [modern.id, previous.id] = ids;
     t.after(() => stop(modern, previous));
 
-    const modernPort = await modern.listen(scheme, { port: 0 });
+    const modernPort = await modern.listen(scheme, { port: 0, acceptLegacyHandshake: true });
     const previousPort = await previous.listen(scheme, { port: 0 });
 
     const drops = [];
@@ -35,7 +35,7 @@ async function round(t, scheme, ids) {
 }
 
 for (const scheme of ["ws", "tcp"]) {
-    test("a 1.1 and a 1.0.1 peer dialling each other keep one connection, over " + scheme, async (t) => {
+    test("a 1.1 and a 1.0.4 peer dialling each other keep one connection, over " + scheme, async (t) => {
         const low = "0".repeat(32);
         const high = "f".repeat(32);
         // Alternate which end has the lower id, so each end is the designated dialler.
@@ -46,15 +46,15 @@ for (const scheme of ["ws", "tcp"]) {
 
             // A dial that lost the race still resolves, with the connection that was kept.
             assert.equal(toPrevious.status, "fulfilled", at + "1.1's dial: " + (toPrevious.reason && toPrevious.reason.message));
-            assert.equal(toModern.status, "fulfilled", at + "1.0.1's dial: " + (toModern.reason && toModern.reason.message));
-            assert.ok(modern.hasPeer(previous.id), at + "1.1 lost the 1.0.1 peer");
-            assert.ok(previous.hasPeer(modern.id), at + "1.0.1 lost the 1.1 peer");
+            assert.equal(toModern.status, "fulfilled", at + "1.0.4's dial: " + (toModern.reason && toModern.reason.message));
+            assert.ok(modern.hasPeer(previous.id), at + "1.1 lost the 1.0.4 peer");
+            assert.ok(previous.hasPeer(modern.id), at + "1.0.4 lost the 1.1 peer");
 
             // Both ends kept the same one: the one the lower id dialled.
             const lowerIsModern = modern.id < previous.id;
             const kept = modern.getPeer(previous.id);
             assert.equal(kept.isOutbound(), lowerIsModern, at + "1.1 kept the wrong one");
-            assert.equal(previous.getPeer(modern.id).isOutbound(), !lowerIsModern, at + "1.0.1 kept the wrong one");
+            assert.equal(previous.getPeer(modern.id).isOutbound(), !lowerIsModern, at + "1.0.4 kept the wrong one");
             assert.equal(kept.legacyHandshake(), !lowerIsModern, at + "legacyHandshake() names the wrong connection");
 
             // The only peer either end may have dropped is a duplicate it retired for the
@@ -67,9 +67,9 @@ for (const scheme of ["ws", "tcp"]) {
             const toP = new Promise((resolve) => previous.once("message", (p) => resolve(p.msg)));
             const toM = new Promise((resolve) => modern.once("message", (p) => resolve(p.msg)));
             modern.broadcast({ round: i, from: "1.1" });
-            previous.broadcast({ round: i, from: "1.0.1" });
+            previous.broadcast({ round: i, from: "1.0.4" });
             assert.deepEqual(await Promise.race([toP, wait(2000).then(() => "nothing")]), { round: i, from: "1.1" });
-            assert.deepEqual(await Promise.race([toM, wait(2000).then(() => "nothing")]), { round: i, from: "1.0.1" });
+            assert.deepEqual(await Promise.race([toM, wait(2000).then(() => "nothing")]), { round: i, from: "1.0.4" });
 
             await stop(modern, previous);
         }

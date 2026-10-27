@@ -39,9 +39,6 @@ Unencrypted by default; <a href="#AnyPeer.e2e">peer.e2e()</a> opts in.
     * <a href="#AnyPacket.peer"><code><b>peer</b></code></a>
     * <a href="#AnyPacket.msg"><code><b>msg</b></code></a>
     * <a href="#AnyPacket.reply"><code><b>reply()</b></code></a>
-* <a href="#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a> (deprecated)
-    * <a href="#AnySocket.Packer.pack"><code><b>pack()</b></code></a>
-    * <a href="#AnySocket.Packer.unpack"><code><b>unpack()</b></code></a>
 * <a href="#AnyPeer.constructor"><code><b>AnyPeer()</b></code></a>
     * <a href="#AnyPeer.id"><code><b>id</b></code></a>
     * <a href="#AnyPeer.connectionID"><code><b>connectionID</b></code></a>
@@ -172,6 +169,7 @@ after `sniffTimeout` (30s).
     maxPartialPackets: 64, // messages mid-reassembly at once
     capabilities: [], // narrow to opt out of a feature
     requireE2E: false, // not up until encrypted; either end asking is enough
+    acceptLegacyHandshake: false, // read a 1.0.x dialler's first AUTH (listen only)
     e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
     maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
     duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
@@ -621,37 +619,6 @@ _note: you can only reply to a normal message, you **cannot** reply to a **reply
 [back to top](#api)
 
 -------------------------------------------------------
-<a name="AnySocket.Packer.pack"></a>
-### AnySocket.Packer.pack(bytes)
-
-_Deprecated._ Bytes travel as bytes in messages and RPC; this base64 packing was
-only ever needed for a 0.4.x peer. Kept so existing code keeps working.
-
-Packs the bytes
-
-**Arguments:**
-* `bytes` - Buffer/TypedArray
-
-**Returns** a string representation of the bytes
-
-[back to top](#api)
-
--------------------------------------------------------
-<a name="AnySocket.Packer.unpack"></a>
-### AnySocket.Packer.unpack(bytes)
-
-_Deprecated_, as <a href="#AnySocket.Packer.pack">pack()</a> is.
-
-Unpacks the bytes
-
-**Arguments:**
-* `bytes` - String representation of a Buffer/TypedArray
-
-**Returns** a Buffer/TypedArray
-
-[back to top](#api)
-
--------------------------------------------------------
 <a name="AnyPeer.constructor"></a>
 ### AnyPeer()
 
@@ -885,8 +852,9 @@ every connection is on the frame format a relay re-wraps.
 ### AnyPeer.legacyHandshake()
 
 `true` when this peer is a 1.0.x dialler whose first handshake packet came in the
-old text format. 1.1 still accepts that packet; a future release will not, so a
-peer for which this is true has to move to 1.1 or later before then.
+old text format, which is read only when the listener sets
+`acceptLegacyHandshake: true`. A later release removes that option, so a peer for
+which this is true has to move to 1.1 or later before then.
 
 [back to top](#api)
 

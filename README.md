@@ -14,17 +14,18 @@ A custom protocol over any transport — client/server agnostic, binary framed, 
 
 #### Important
 
-1.1 talks to every 1.0.x peer, in both directions of the dial. It does not talk
-to 0.4.x: a 0.4.x peer is refused, with a reason that says so.
+1.1 speaks binary frames only. It does not talk to 0.4.x: a 0.4.x peer is
+refused, with a reason that says so.
 
 | | talks to 1.0.x | talks to 0.4.x | |
 |---|---|---|---|
 | **1.0.x** | yes | yes | the bridge: upgrade a running fleet one process at a time |
-| **1.1** | yes | no | drops the 0.4.x wire format and its legacy e2e exchange |
+| **1.1** | dials them; is dialled with `acceptLegacyHandshake` | no | drops the 0.4.x wire format and its legacy e2e exchange |
 
-A 1.0.x dialler's first handshake packet is still in the old text format, and 1.1
-still accepts it; a future release will not. Move every peer to 1.1 before then:
-`peer.legacyHandshake()` shows which connections still rely on it.
+A 1.0.x dialler's first handshake packet is in the old text format, which a 1.1
+listener reads only with `acceptLegacyHandshake: true` — for a server whose
+clients upgrade on their own. `peer.legacyHandshake()` shows which connections
+still rely on it; a later release removes the option.
 
 Upgrading from 0.4.x? Move every peer to 1.0.x first, then to 1.1 — see
 [MIGRATING-1.0.md](MIGRATING-1.0.md). Of the 1.0 changes, one (`onAuth` is now
@@ -49,14 +50,12 @@ actually awaited) can start refusing peers that used to connect.
   bundle
 * Transports: **ws/wss**, **tcp**, **ipc** (unix socket / named pipe), **http/https** —
   and tcp can share one port with ws/http
-* Talks to 1.0.x peers on the wire, so a fleet moves to 1.1 one peer at a time
+* Dials 1.0.x peers, and can accept their dials, so a fleet moves to 1.1 one peer at a time
 * All peers have a UUIDv4 associated
 * Disconnect detection using a heartbeat
 * Tested: `npm test`, split into groups so iterating is quick
 
 ** _http_ transport is experimental
-
-_Info: Binary RPC arguments and responses are sent as bytes. <a href="docs/#AnySocket.Packer.pack"><code><b>AnySocket.Packer</b></code></a> is deprecated._
 
 ## Benchmarks
 
@@ -173,6 +172,38 @@ const client = new AnySocket({ auth: { secret: process.env.SHARED_SECRET } });
 const peer = await client.connect("tcp", "10.0.0.2", 3000);
 peer.e2eInfo();  // { protocolVersion: 1, kex: "x25519", cipher: "aes-256-gcm", authenticated: true }
 ```
+
+### A strict configuration
+
+Nothing is required by default: an instance with no secret accepts anyone, and
+a connection is encrypted only once `e2e()` is called. For a link that must be
+both authenticated and private:
+
+```javascript
+const server = new AnySocket({
+    // required, not optional; a high-entropy secret (32 random bytes, say),
+    // never a password, and the same on every peer
+    auth: { secret: process.env.ANYSOCKET_SECRET }
+});
+server.rpcGuard = (peer, path) => peer.isAuthenticated() && path[0] !== "admin";
+await server.listen("tcp", {
+    port: 3000,
+    requireE2E: true,                    // no peer is handed over in clear
+    maxMessageSize: 16 * 1024 * 1024,    // the default is unlimited once authenticated
+});
+
+const client = new AnySocket({ auth: { secret: process.env.ANYSOCKET_SECRET } });
+const peer = await client.connect("tcp", "10.0.0.2", 3000, { requireE2E: true });
+peer.e2eInfo().authenticated;            // true: the keys are bound to the secret
+```
+
+- Over ws, use wss and leave `allowInsecureWSFallback` off (the default), so a
+  failed wss dial is not retried in clear.
+- Leave `acceptLegacyHandshake` off unless 1.0.x clients still dial you.
+- A relayed link (`proxy()`) is encrypted end to end, but the built-in auth does
+  not run across it, and every peer in the group holds the same secret — the
+  relay included. If a relay must not be able to read, authenticate the far end
+  yourself over `peer.getChannelBinding()` with something only the two ends hold.
 
 ### RPC, with one place to authorize it
 

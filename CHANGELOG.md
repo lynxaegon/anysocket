@@ -2,8 +2,9 @@
 
 ## 1.1.0
 
-Drops what 1.0.x carried only to talk to 0.4.x. Every 1.0.x peer is fully
-supported, in both directions of the dial; a 0.4.x peer is refused. Read
+Drops what 1.0.x carried only to talk to 0.4.x: 1.1 sends and reads binary frames
+only. It dials any 1.0.x peer; a 1.0.x peer can dial it only where the listener
+turns on `acceptLegacyHandshake`. A 0.4.x peer is refused. Read
 [MIGRATING-1.0.md](MIGRATING-1.0.md) before upgrading.
 
 ### Removed
@@ -12,21 +13,24 @@ supported, in both directions of the dial; a 0.4.x peer is refused. Read
   `allowLegacyProtocol` (1.0.4): a 0.4.x peer is always refused.
 - Base64 RPC bytes, 1MB chunking and hex relay addresses for a 0.4.x peer, and
   the standby that let a 0.4.x peer choose between two connections.
+- `AnySocket.Packer`. Bytes travel as bytes; there is nothing left to pack them for.
 
 ### Changed
+- A 1.0.x dialler writes its first AUTH in the old text format, and 1.1 does not
+  read it unless the listener sets `acceptLegacyHandshake: true`: off, the text is
+  dropped unread, with "Not an anysocket frame: a 1.0.x dialler needs
+  acceptLegacyHandshake on the listener, and 0.4.x is not supported". 1.1 dialling a
+  1.0.x listener needs nothing.
 - `allowInsecureWSFallback` now defaults to `false`: a ws connect whose wss dial fails
   rejects instead of retrying as plain ws. Set it to `true` to keep the 1.0.x behaviour.
-- A 1.0.x dialler writes its first AUTH in the 0.4.x text format, and 1.1 still
-  reads that one packet so 1.0.x peers can dial it. Any other text drops the
-  connection. A future release stops reading it; `AnyPeer.legacyHandshake()`
-  shows which connections still rely on it.
 - A peer whose AUTH announces no protocol version, or one below 1, is refused
   with "Protocol version 1 required (0.4.x peers are not supported since
   anysocket 1.1)". A dialler's `connect()` rejects with it.
+- A 0.4.x dialler is refused either way: unread, or by its missing version where
+  `acceptLegacyHandshake` is on.
 - ws `maxPayload` defaults to `maxPacketSize` + 1MB, at least 8MB. It was
   twice `maxPacketSize`.
 - `protocolVersion()` is always 1 and `supportsRelay()` always true.
-- `AnySocket.Packer` is deprecated. It still packs and unpacks.
 - An RPC that lists a binary argument without attaching it fails.
 
 ### Fixed
@@ -35,7 +39,14 @@ supported, in both directions of the dial; a 0.4.x peer is refused. Read
   URL goes to it now, and `connectTimeout` is enforced with a timer.
 
 ### New
-- `AnyPeer.legacyHandshake()`.
+- `acceptLegacyHandshake` (default `false`), a listen option: read a 1.0.x
+  dialler's first AUTH, for a server whose clients upgrade on their own schedule.
+  It goes in a later release.
+- `AnyPeer.legacyHandshake()`: true on a connection that came in that way, so a
+  server can tell when no client needs the option any more.
+
+### Documented
+- A strict configuration, in the README.
 
 Also carries everything in 1.0.3 and 1.0.4.
 

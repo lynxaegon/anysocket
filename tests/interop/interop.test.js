@@ -5,12 +5,13 @@ const PreviousAnySocket = require("anysocket-1-0");
 const { stop, wait } = require("../helpers/loopback");
 
 /**
- * Interop with the published 1.0.1, tested against the real package rather than
+ * Interop with the published 1.0.4, tested against the real package rather than
  * a mock of it.
  *
- * 1.1 sends everything as frames, its first AUTH included; a 1.0.1 dialler still
+ * 1.1 sends everything as frames, its first AUTH included; a 1.0.4 dialler still
  * writes that first AUTH in its old text format, which 1.1 reads for that one
- * packet. Every feature is run in both directions of the dial and over both
+ * packet when the listener sets acceptLegacyHandshake — every 1.1 listener here
+ * does, but the one test that shows the refusal without it. Every feature is run in both directions of the dial and over both
  * transports that carry it, because the two directions take different paths
  * through the handshake.
  */
@@ -18,8 +19,8 @@ const { stop, wait } = require("../helpers/loopback");
 const SECRET = "shared-secret";
 
 const directions = [
-    { name: "1.1 dials 1.0.1", Dialler: AnySocket, Listener: PreviousAnySocket },
-    { name: "1.0.1 dials 1.1", Dialler: PreviousAnySocket, Listener: AnySocket }
+    { name: "1.1 dials 1.0.4", Dialler: AnySocket, Listener: PreviousAnySocket },
+    { name: "1.0.4 dials 1.1", Dialler: PreviousAnySocket, Listener: AnySocket }
 ];
 
 /**
@@ -36,7 +37,7 @@ async function link(t, scheme, direction, options = {}) {
     const listenerSide = new Promise((resolve) => {
         listener.on("connected", (peer) => { if (peer.id === dialler.id) resolve(peer); });
     });
-    const port = await listener.listen(scheme, Object.assign({}, options.listen, { port: 0 }));
+    const port = await listener.listen(scheme, Object.assign({ acceptLegacyHandshake: true }, options.listen, { port: 0 }));
     const diallerPeer = await dialler.connect(scheme, "127.0.0.1", port, Object.assign({ allowInsecureWSFallback: true }, Object.assign({}, options.connect)));
     const listenerPeer = await listenerSide;
     return { listener, dialler, listenerPeer, diallerPeer, port };
@@ -63,8 +64,8 @@ const sameBytes = (got, want) => {
     assert.ok(Buffer.from(got.buffer, got.byteOffset, got.byteLength).equals(Buffer.from(want)), "bytes differ");
 };
 
-test("the 1.0.1 package loads", () => {
-    assert.equal(require("anysocket-1-0/package.json").version, "1.0.1");
+test("the 1.0.4 package loads", () => {
+    assert.equal(require("anysocket-1-0/package.json").version, "1.0.4");
 });
 
 for (const scheme of ["ws", "tcp"]) {
@@ -78,7 +79,7 @@ for (const scheme of ["ws", "tcp"]) {
             assert.equal(l.diallerPeer.id, l.listener.id);
             assert.equal(l.listenerPeer.id, l.dialler.id);
 
-            // Only a 1.0.1 dialler's AUTH arrives in the text format, and only the
+            // Only a 1.0.4 dialler's AUTH arrives in the text format, and only the
             // 1.1 end can say so.
             const modernEnd = direction.Listener === AnySocket ? l.listenerPeer : l.diallerPeer;
             assert.equal(modernEnd.legacyHandshake(), direction.Dialler === PreviousAnySocket);
@@ -191,11 +192,26 @@ for (const scheme of ["ws", "tcp"]) {
             let arrived = false;
             listener.on("connected", () => { arrived = true; });
 
-            const port = await listener.listen(scheme, { port: 0 });
+            const port = await listener.listen(scheme, { port: 0, acceptLegacyHandshake: true });
             await assert.rejects(dialler.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true }));
             await wait(50);
             assert.equal(arrived, false);
         });
+
+        if (direction.Dialler === PreviousAnySocket) {
+            test(name("refused without acceptLegacyHandshake"), async (t) => {
+                const listener = new direction.Listener();
+                const dialler = new direction.Dialler();
+                t.after(() => stop(dialler, listener));
+                let arrived = false;
+                listener.on("connected", () => { arrived = true; });
+
+                const port = await listener.listen(scheme, { port: 0 });
+                await assert.rejects(dialler.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true }));
+                await wait(50);
+                assert.equal(arrived, false);
+            });
+        }
 
         for (const asker of ["dialler", "listener"]) {
             test(name("requireE2E asked for by the " + asker + " only"), async (t) => {
