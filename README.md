@@ -60,28 +60,25 @@ actually awaited) can start refusing peers that used to connect.
 ## Benchmarks
 
 `npm run bench` measures 1.1 against the published 1.0.1, both ends of each link
-on the same version, plain and encrypted, on loopback, interleaving the two and
-reporting the median of several runs (`BENCH_RUNS`). Between two peers of the same
-version 1.1 puts the same frames on the wire as 1.0.1, so the two measure the same
-within the noise of a loopback run. Median of 5 (node 24, x64, ws):
+on the same version, plain and encrypted, on loopback, interleaving them and
+reporting the median of several runs (`BENCH_RUNS`). The table adds the published
+0.4.32, measured the same way alongside them. 0.4.32 has no way to send bytes in
+a message, so its byte rows go through base64. Median of 7 (node 24, x64, ws):
 
-| | 1.0.1 | 1.1 |
-|---|---|---|
-| connect + authenticate | 13.4 ms | 14.2 ms |
-| e2e handshake | 1.7 ms | 1.6 ms |
-| 2KB messages, plain | 55.5k msg/s | 58.8k msg/s |
-| 2KB messages, encrypted | 32.9k msg/s | 24.7k msg/s * |
-| 32MB of text, plain | 198 MB/s | 191 MB/s |
-| 32MB of text, encrypted | 156 MB/s | 159 MB/s |
-| 32MB of bytes, plain | 323 MB/s | 448 MB/s * |
-| 32MB of bytes, encrypted | 257 MB/s | 247 MB/s |
+| | 0.4.32 | 1.0.1 | 1.1 | 1.1 vs 0.4.32 |
+|---|---|---|---|---|
+| connect + authenticate | 14.2 ms | 13.9 ms | 14.9 ms | about the same |
+| e2e handshake | 7.4 ms | 1.7 ms | **1.6 ms** | 4.6x faster |
+| 2KB messages, plain | 42.1k msg/s | 55.1k msg/s | **55.3k msg/s** | 1.3x faster |
+| 2KB messages, encrypted | 17.0k msg/s | 31.9k msg/s | **33.0k msg/s** | 1.9x faster |
+| 32MB of text, plain | 184 MB/s | 194 MB/s | **197 MB/s** | 1.1x faster |
+| 32MB of text, encrypted | 67.0 MB/s | 145 MB/s | **166 MB/s** | 2.5x faster |
+| 32MB of bytes, plain | 117 MB/s | 396 MB/s | **354 MB/s** | 3.0x faster |
+| 32MB of bytes, encrypted | 52.8 MB/s | 250 MB/s | **258 MB/s** | 4.9x faster |
 
-\* noisy: the samples ranged over 59–97% of the median. Measured alone, over 11
-samples, encrypted 2KB messages ran at 31.9k msg/s on 1.0.1 and 33.0k on 1.1.
-
-Turning e2e on costs about a third of throughput (128MB of bytes: 376 MB/s plain,
-243 MB/s encrypted). tcp is faster still than ws. For 1.0 against 0.4.32, see
-the 1.0.0 entry in [CHANGELOG.md](CHANGELOG.md).
+1.1 puts the same frames on the wire as 1.0.1. Turning e2e on costs about a third
+of throughput (128MB of bytes: 376 MB/s plain, 243 MB/s encrypted). tcp is faster
+still than ws.
 
 See also [benchmarks](benchmarks) for the http/ws server comparisons.
 
