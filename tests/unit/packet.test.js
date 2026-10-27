@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const Packet = require("../../src/libs/Packet");
 const AnyPacker = require("../../src/libs/AnyPacker");
+const Frame = require("../../src/libs/Frame");
 const constants = require("../../src/libs/_constants");
 const { pair, rawSocket, wait } = require("../helpers/loopback");
 
@@ -52,9 +53,9 @@ test("an undecodable payload drops the connection", async (t) => {
     const link = await pair(t);
     const gone = new Promise((resolve) => link.server.on("disconnected", (_peer, reason) => resolve(reason)));
 
-    rawSocket(link.clientPeer).send(
-        frame(constants.PACKET_LENGTH.FULL, Packet.TYPE.LINK, 11, "{ not json")
-    );
+    rawSocket(link.clientPeer).send(Frame.encode({
+        flags: Frame.FLAGS.FINAL | Frame.FLAGS.FIRST, type: Packet.TYPE.LINK, seq: 11, payload: Frame.bytes("{ not json")
+    }));
 
     assert.match(String(await gone), /Invalid Packet/i);
     await wait(50);
@@ -66,9 +67,9 @@ test("a packet type the state does not expect drops the connection", async (t) =
     const gone = new Promise((resolve) => link.server.on("disconnected", (_peer, reason) => resolve(reason)));
 
     // AUTH is only valid during the handshake, never on a live connection.
-    rawSocket(link.clientPeer).send(
-        frame(constants.PACKET_LENGTH.FULL, Packet.TYPE.AUTH, 12, JSON.stringify({ id: "intruder" }))
-    );
+    rawSocket(link.clientPeer).send(Frame.encode({
+        flags: Frame.FLAGS.FINAL | Frame.FLAGS.FIRST, type: Packet.TYPE.AUTH, seq: 12, payload: Frame.bytes(JSON.stringify({ id: "intruder" }))
+    }));
 
     assert.match(String(await gone), /Invalid Packet/i);
     await wait(50);
@@ -113,7 +114,6 @@ test("a message too big for one frame is left to the chunk path, unchanged", asy
 // total was allocated from the first frame: 11 bytes could reserve 4GB. Now only a part is
 // allocated up front, and the rest as the bytes actually arrive.
 test("an announced total is not allocated before the bytes arrive", async (t) => {
-    const Frame = require("../../src/libs/Frame");
     const payload = new Uint8Array(Frame.LENGTH_HINT + 16);
     new DataView(payload.buffer).setUint32(0, 0xFFFFFFF0, false);
     const first = Frame.encode({ flags: Frame.FLAGS.FIRST | Frame.FLAGS.BINARY, type: Packet.TYPE.LINK, seq: 5, payload });

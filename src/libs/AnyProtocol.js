@@ -144,6 +144,11 @@ module.exports = class AnyProtocol extends EventEmitter {
             // 0.4.x peer can no longer be encrypted with it — in either
             // direction.
             allowLegacyE2E: true,
+            // Talk to a 0.4.x peer at all. Allowed by default, like the old
+            // exchange above; turn it off once every peer runs 1.0, and a
+            // connection that would settle on the old protocol is dropped
+            // instead.
+            allowLegacyProtocol: true,
             // Ciphers to offer for e2e, most preferred first. Left unset, this
             // machine ranks them by measuring which it runs faster. Setting it
             // pins a choice — the negotiation still only ever picks one both
@@ -937,6 +942,20 @@ module.exports = class AnyProtocol extends EventEmitter {
 
         this.peerID = packet.data.id;
         this._negotiate(packet.data);
+        if (this.protocolVersion < constants.PROTOCOL_VERSION) {
+            // A peer that sends what only 1.0 sends — its instance id, the
+            // built-in auth's challenge — but no protocol version had the
+            // version removed on the way: someone is forcing the connection
+            // down to the old protocol and its unauthenticated exchange. The
+            // auth would not catch it, since both ends sign the same
+            // downgraded outcome.
+            if (packet.data.inst !== undefined || packet.data.ac !== undefined) {
+                return this.disconnect("Protocol downgrade refused");
+            }
+            if (!this.options.allowLegacyProtocol) {
+                return this.disconnect("Legacy protocol refused");
+            }
+        }
         this.e2eRequired = !!this.options.requireE2E || !!(packet.data && packet.data.e2e === "required");
 
         // Run the built-in auth on this connection when we hold a secret and
@@ -1192,6 +1211,16 @@ module.exports = class AnyProtocol extends EventEmitter {
     }
 
     processRecvPacketQueue(item, cb) {
+        // Once a connection has settled on 1.0, everything on it is a 1.0
+        // frame — the old format only ever carries the opening AUTH. An old
+        // frame after that was not sent by the peer: it bypasses the e2e
+        // session (the legacy codec has no tag to check) and is dropped with
+        // the connection rather than delivered.
+        if (this.protocolVersion >= constants.PROTOCOL_VERSION && !Frame.isFrame(item.recv)) {
+            this.disconnect("Legacy frame on a 1.0 connection");
+            return cb(null, null);
+        }
+
         // Whether this frame came in encrypted, decided before it is opened —
         // after that it looks the same either way, and a frame queued during
         // the switch is only delivered once encryption is up.

@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.0.4
+
+### Security
+- An old-format (0.4.x) frame was accepted on a 1.0 connection after the handshake, and
+  delivered: messages and RPCs alike, in plaintext, past the e2e session and its
+  authentication. Anyone able to inject into the connection could forge them without the key.
+  A 1.0 connection now takes only 1.0 frames once it is settled, and drops the connection on
+  any other.
+- The protocol version could be removed from both handshakes on the way, which put two 1.0
+  peers on the old protocol and its unauthenticated e2e exchange; the built-in auth did not
+  catch it, since both ends signed the same downgraded outcome. A peer that announces no
+  version but sends what only 1.0 sends (its instance id, the built-in auth's challenge) is now
+  refused.
+- `ws` is now `^7.5.13`, out of the range of two denial-of-service advisories
+  (GHSA-3h5v-q93c-6h6q, GHSA-96hv-2xvq-fx4p).
+
+### Added
+- `allowLegacyProtocol` (default `true`): `false` refuses a 0.4.x peer outright, for a fleet
+  where every peer runs 1.0.
+- `allowInsecureWSFallback` (default `true`), on a ws connect: a wss dial that fails is retried
+  as plain ws, which anyone on the path can force by making the wss attempt fail. `false` makes
+  the wss failure final.
+
+### Documented
+- The e2e on a relayed link is not covered by the built-in auth, so a relay could place itself
+  in the middle of it; authenticate the far end over `getChannelBinding()` if the relay is not
+  trusted.
+
+
 ## 1.0.3
 
 ### Fixed

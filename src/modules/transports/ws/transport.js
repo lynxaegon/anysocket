@@ -97,7 +97,10 @@ class WS extends AbstractTransport {
 
             ws.on('error', err => {
                 clearTimeout(timer);
-                if (!plain && !connected) {
+                // A failed wss dial is retried as plain ws. Anyone on the path can
+                // make the wss attempt fail, so this is a downgrade they can force;
+                // allowInsecureWSFallback: false makes the wss failure final.
+                if (!plain && !connected && this.options.allowInsecureWSFallback !== false) {
                     this.onConnect(true).then(resolve).catch(reject)
                 } else {
                     reject(err);

@@ -172,6 +172,7 @@ after `sniffTimeout` (30s).
     requireE2E: false, // not up until encrypted; either end asking is enough
     e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
     allowLegacyE2E: true, // allow the old exchange with a 0.4.x peer
+    allowLegacyProtocol: true, // talk to a 0.4.x peer at all; off refuses one
     maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
     duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
     tcpKeepAlive: false, // SO_KEEPALIVE on the socket
@@ -215,6 +216,8 @@ Connects to AnySocket Server
     requireE2E: false, // not up until encrypted; either end asking is enough
     e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
     allowLegacyE2E: true, // allow the old exchange with a 0.4.x peer
+    allowLegacyProtocol: true, // talk to a 0.4.x peer at all; off refuses one
+    allowInsecureWSFallback: true, // ws only: retry a failed wss dial as plain ws
     maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
     duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
     tcpKeepAlive: false, // SO_KEEPALIVE on the socket
@@ -509,6 +512,13 @@ instance stops every handle first.
 Send a proxy request for peerID via throughPeerID as relay
 
 _note: A proxied peer uses the same flow as a new connection_
+
+_note: the e2e on a relayed link is not covered by the built-in auth — there is
+no AUTH exchange on it, and the relay holds the same secret anyway — so
+`e2eInfo().authenticated` is `false` and a relay could place itself in the
+middle of the exchange. If you do not trust the relay, authenticate the far end
+yourself over <a href="#AnyPeer.getChannelBinding">getChannelBinding()</a>, with
+something only the two ends hold._
 
 **Returns** a Promise that resolves with a <a href="#AnyPeer.constructor">AnyPeer</a> or rejects if proxy fails
 
@@ -843,6 +853,11 @@ What the connection settled on, or `null` if it is not encrypted.
 `1` when both ends speak 1.0, `0` against a 0.4.x peer. Both ends announce a
 version in the handshake and the lower one wins, so an old peer is never sent a
 frame it cannot read.
+
+A peer that announces no version but sends what only 1.0 sends (its instance
+id, the built-in auth's challenge) had its version removed on the way, and is
+refused. Once every peer runs 1.0, `allowLegacyProtocol: false` refuses 0.4.x
+peers outright.
 
 [back to top](#api)
 

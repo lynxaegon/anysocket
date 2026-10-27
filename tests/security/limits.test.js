@@ -2,8 +2,19 @@ const test = require("node:test");
 const assert = require("node:assert");
 const WebSocket = require("ws");
 const AnyPacker = require("../../src/libs/AnyPacker");
+const Frame = require("../../src/libs/Frame");
 const constants = require("../../src/libs/_constants");
 const { pair, listen, stop, rawSocket, wait, AnySocket } = require("../helpers/loopback");
+
+// A 1.0 connection takes only 1.0 frames: the first chunk of a message that
+// never finishes, announcing `total` bytes, or a chunk that continues it.
+const firstChunk = (seq, total, payload) => {
+    const hint = new Uint8Array(4);
+    new DataView(hint.buffer).setUint32(0, total, false);
+    return Frame.encode({ flags: Frame.FLAGS.FIRST, type: constants.PACKET_TYPE.LINK, seq, payload: Frame.concat([hint, Frame.bytes(payload)]) });
+};
+const nextChunk = (seq, payload) =>
+    Frame.encode({ flags: 0, type: constants.PACKET_TYPE.LINK, seq, payload: Frame.bytes(payload) });
 
 const partial = (seq, payload) =>
     String(constants.PACKET_LENGTH.PARTIAL) + String(constants.PACKET_TYPE.AUTH) +
@@ -62,11 +73,10 @@ test("a live peer exceeding maxMessageSize is dropped", async (t) => {
     const gone = new Promise((resolve) => link.server.on("disconnected", (_peer, reason) => resolve(reason)));
 
     const socket = rawSocket(link.clientPeer);
-    for (let i = 0; i < 4; i++) {
-        socket.send(
-            String(constants.PACKET_LENGTH.PARTIAL) + String(constants.PACKET_TYPE.LINK) +
-            AnyPacker.packInt32(77) + "y".repeat(2048)
-        );
+    // Announced as small enough, so it is what arrives that crosses the cap.
+    socket.send(firstChunk(77, 4000, "y".repeat(2048)));
+    for (let i = 0; i < 3; i++) {
+        socket.send(nextChunk(77, "y".repeat(2048)));
     }
 
     assert.match(String(await gone), /too large/i);
@@ -78,10 +88,7 @@ test("maxPartialPackets bounds concurrent reassembly on a live peer", async (t) 
 
     const socket = rawSocket(link.clientPeer);
     for (let seq = 10; seq < 20; seq++) {
-        socket.send(
-            String(constants.PACKET_LENGTH.PARTIAL) + String(constants.PACKET_TYPE.LINK) +
-            AnyPacker.packInt32(seq) + "partial"
-        );
+        socket.send(firstChunk(seq, 100, "partial"));
     }
 
     assert.match(String(await gone), /too many partial packets/i);
@@ -90,7 +97,6 @@ test("maxPartialPackets bounds concurrent reassembly on a live peer", async (t) 
 // Data frames sent before any AUTH were parked, unbounded, for after a handshake that
 // never came: one socket held about 900MB in 3s without authenticating.
 test("an unauthenticated peer cannot park data before the handshake", async (t) => {
-    const Frame = require("../../src/libs/Frame");
     const server = new AnySocket();
     t.after(() => stop(server));
 
