@@ -1,6 +1,9 @@
 # Changelog
 
-## 1.1.0
+## 1.1.1
+
+The first 1.1 release. 1.1.0 was published to npm by mistake and withdrawn, and npm
+never reuses a version, so the release is 1.1.1.
 
 Drops what 1.0.x carried only to talk to 0.4.x: 1.1 sends and reads binary frames
 only. It dials any 1.0.x peer; a 1.0.x peer can dial it only where the listener
