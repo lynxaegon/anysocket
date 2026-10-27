@@ -37,7 +37,7 @@ async function link(t, scheme, direction, options = {}) {
         listener.on("connected", (peer) => { if (peer.id === dialler.id) resolve(peer); });
     });
     const port = await listener.listen(scheme, Object.assign({}, options.listen, { port: 0 }));
-    const diallerPeer = await dialler.connect(scheme, "127.0.0.1", port, Object.assign({}, options.connect));
+    const diallerPeer = await dialler.connect(scheme, "127.0.0.1", port, Object.assign({ allowInsecureWSFallback: true }, Object.assign({}, options.connect)));
     const listenerPeer = await listenerSide;
     return { listener, dialler, listenerPeer, diallerPeer, port };
 }
@@ -192,7 +192,7 @@ for (const scheme of ["ws", "tcp"]) {
             listener.on("connected", () => { arrived = true; });
 
             const port = await listener.listen(scheme, { port: 0 });
-            await assert.rejects(dialler.connect(scheme, "127.0.0.1", port));
+            await assert.rejects(dialler.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true }));
             await wait(50);
             assert.equal(arrived, false);
         });

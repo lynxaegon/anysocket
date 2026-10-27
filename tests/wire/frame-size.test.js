@@ -22,7 +22,7 @@ for (const { scheme, sender } of cases) {
         client.on("disconnected", (_p, reason) => dropped.push(reason));
         const received = new Promise((resolve) => server.on("message", (packet) => resolve(packet.msg)));
 
-        const peer = await client.connect(scheme, "127.0.0.1", port, { maxPacketSize: sender });
+        const peer = await client.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true, maxPacketSize: sender });
         await peer.send(new Uint8Array(sender + 4 * 1024 * 1024));
 
         assert.equal((await received).length, sender + 4 * 1024 * 1024);
@@ -40,9 +40,9 @@ test("a relayed link fits its frames to the far hop", async (t) => {
     relay.canProxy = () => true;
     a.canAcceptProxy = b.canAcceptProxy = () => true;
     const port = await relay.listen("ws", { port: 0 });
-    await a.connect("ws", "127.0.0.1", port);
+    await a.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     // b takes frames of 2MB at most; a would cut 4MB ones by default.
-    await b.connect("ws", "127.0.0.1", port, { maxPayload: 2 * 1024 * 1024 });
+    await b.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true, maxPayload: 2 * 1024 * 1024 });
     await wait(150);
     const received = new Promise((resolve) => b.on("message", (packet) => resolve(packet.msg)));
 

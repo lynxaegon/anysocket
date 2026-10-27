@@ -186,7 +186,7 @@ test("a binary ws message too short for a header ends the connection, not the pr
     // and it still serves
     const client = new AnySocket();
     t.after(() => stop(client));
-    await client.connect("ws", "127.0.0.1", port);
+    await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
 });
 
 // ---- relay announcements ------------------------------------------------------

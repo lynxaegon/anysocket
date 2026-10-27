@@ -137,7 +137,8 @@ The following example connects to a websocket on port 3000
 const AnySocket = require("anysocket");
 const client = new AnySocket();
 const PORT = 3000;
-client.connect("ws", "127.0.0.1", PORT)
+// a ws dial tries wss; this server is plain ws, so allow the fallback
+client.connect("ws", "127.0.0.1", PORT, { allowInsecureWSFallback: true })
     .then(() => {
         console.log("Connected to server");
     })

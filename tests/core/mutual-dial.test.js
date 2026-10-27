@@ -25,8 +25,8 @@ async function crossDial(t) {
     const portB = await listen(b);
 
     await Promise.allSettled([
-        a.connect("ws", "127.0.0.1", portB),
-        b.connect("ws", "127.0.0.1", portA)
+        a.connect("ws", "127.0.0.1", portB, { allowInsecureWSFallback: true }),
+        b.connect("ws", "127.0.0.1", portA, { allowInsecureWSFallback: true })
     ]);
     await wait(250);
 
@@ -76,8 +76,8 @@ test("it survives being done repeatedly", async (t) => {
         const portA = await listen(a);
         const portB = await listen(b);
         await Promise.allSettled([
-            a.connect("ws", "127.0.0.1", portB),
-            b.connect("ws", "127.0.0.1", portA)
+            a.connect("ws", "127.0.0.1", portB, { allowInsecureWSFallback: true }),
+            b.connect("ws", "127.0.0.1", portA, { allowInsecureWSFallback: true })
         ]);
         await wait(200);
 
@@ -101,8 +101,8 @@ test("the survivor can be encrypted like any other connection", async (t) => {
     const portA = await listen(a);
     const portB = await listen(b);
     await Promise.allSettled([
-        a.connect("ws", "127.0.0.1", portB),
-        b.connect("ws", "127.0.0.1", portA)
+        a.connect("ws", "127.0.0.1", portB, { allowInsecureWSFallback: true }),
+        b.connect("ws", "127.0.0.1", portA, { allowInsecureWSFallback: true })
     ]);
     await wait(250);
 
@@ -132,7 +132,7 @@ test("a single dial is unaffected by the rule", async (t) => {
         const client = new AnySocket();
 
         const port = await listen(server);
-        const peer = await client.connect("ws", "127.0.0.1", port);
+        const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
         await wait(80);
 
         const held = client.hasPeer(server.id) && server.hasPeer(client.id);

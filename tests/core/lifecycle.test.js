@@ -49,7 +49,7 @@ for (const scheme of ["ws", "tcp"]) {
         const client = new AnySocket();
         t.after(() => stop(server, client));
         const port = scheme == "ws" ? await listen(server) : await server.listen("tcp", { port: 0 });
-        const dial = client.connect(scheme, "127.0.0.1", port);
+        const dial = client.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true });
         dial.catch(() => {});
         await client.stop();
         assert.match(await settled(dial, 1000), /^rejected/);
@@ -108,8 +108,8 @@ test("a relayed peer goes down with its relay", async (t) => {
     relay.canProxy = () => true;
     b.canAcceptProxy = () => true;
     const port = await listen(relay);
-    await a.connect("ws", "127.0.0.1", port);
-    await b.connect("ws", "127.0.0.1", port);
+    await a.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
+    await b.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(150);
     const proxied = await a.proxy(b.id, relay.id);
     const gone = [];

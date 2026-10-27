@@ -107,10 +107,10 @@ for (const previousListens of [true, false]) {
         previous.on("disconnected", () => { dropped = true; });
         if (previousListens) {
             const port = await previous.listen("ws", { port: 0, heartbeatEnabled: false });
-            await modern.connect("ws", "127.0.0.1", port, HB);
+            await modern.connect("ws", "127.0.0.1", port, Object.assign({ allowInsecureWSFallback: true }, HB));
         } else {
             const port = await listen(modern, HB);
-            await previous.connect("ws", "127.0.0.1", port, { heartbeatEnabled: false });
+            await previous.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true, heartbeatEnabled: false });
         }
         await wait(BUDGET * 3);
         assert.equal(dropped, false);

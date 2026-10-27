@@ -24,8 +24,8 @@ async function trio(t, layout, scheme, options = {}) {
     b.canAcceptProxy = () => true;
 
     const port = await relay.listen(scheme, Object.assign({ port: 0 }, options.relay));
-    await a.connect(scheme, "127.0.0.1", port);
-    await b.connect(scheme, "127.0.0.1", port, options.b);
+    await a.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true });
+    await b.connect(scheme, "127.0.0.1", port, Object.assign({ allowInsecureWSFallback: true }, options.b));
     await wait(50);
     return { relay, a, b };
 }

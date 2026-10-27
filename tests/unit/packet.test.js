@@ -125,7 +125,6 @@ test("a message too big for one frame is left to the chunk path, unchanged", asy
 // total was allocated from the first frame: 11 bytes could reserve 4GB. Now only a part is
 // allocated up front, and the rest as the bytes actually arrive.
 test("an announced total is not allocated before the bytes arrive", async (t) => {
-    const Frame = require("../../src/libs/Frame");
     const payload = new Uint8Array(Frame.LENGTH_HINT + 16);
     new DataView(payload.buffer).setUint32(0, 0xFFFFFFF0, false);
     const first = Frame.encode({ flags: Frame.FLAGS.FIRST | Frame.FLAGS.BINARY, type: Packet.TYPE.LINK, seq: 5, payload });

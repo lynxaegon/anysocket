@@ -26,8 +26,8 @@ async function round(t, scheme, ids) {
     previous.on("disconnected", (_p, reason) => drops.push(reason));
 
     const [toPrevious, toModern] = await Promise.allSettled([
-        modern.connect(scheme, "127.0.0.1", previousPort),
-        previous.connect(scheme, "127.0.0.1", modernPort)
+        modern.connect(scheme, "127.0.0.1", previousPort, { allowInsecureWSFallback: true }),
+        previous.connect(scheme, "127.0.0.1", modernPort, { allowInsecureWSFallback: true })
     ]);
     await wait(300);
 

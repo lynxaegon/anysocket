@@ -24,7 +24,7 @@ test("a superseded connection rejects pending calls and announces itself", async
     const portB = await listen(b);
 
     // The higher id dials first: that connection is the one the rule retires.
-    const first = await b.connect("ws", "127.0.0.1", portA);
+    const first = await b.connect("ws", "127.0.0.1", portA, { allowInsecureWSFallback: true });
     await wait(80);
 
     const gone = new Promise((resolve) => b.on("disconnected", (peer, reason) => {
@@ -35,7 +35,7 @@ test("a superseded connection rejects pending calls and announces itself", async
     const pending = first.rpc.never().then(() => "resolved", (e) => e);
 
     // Now the lower id dials — the connection both ends will keep.
-    await a.connect("ws", "127.0.0.1", portB);
+    await a.connect("ws", "127.0.0.1", portB, { allowInsecureWSFallback: true });
 
     const outcome = await Promise.race([pending, wait(5000).then(() => "STILL PENDING")]);
     assert.notEqual(outcome, "STILL PENDING", "the retired connection's call must not wait out the reply timeout");
@@ -69,7 +69,7 @@ test("authPacket() pairs with its own onAuth even while signing", async (t) => {
     t.after(() => stop(...dialers.map((d) => d.c)));
 
     // All at once, so their handshakes overlap.
-    await Promise.all(dialers.map((d) => d.c.connect("ws", "127.0.0.1", port)));
+    await Promise.all(dialers.map((d) => d.c.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true })));
 
     for (const d of dialers) {
         assert.equal(d.echoed, d.c.id, "a dialer was handed another connection's authPacket()");
@@ -102,7 +102,7 @@ test("an un-awaited send() that fails does not crash the process", async (t) => 
             const server = new AnySocket();
             const client = new AnySocket();
             const port = await server.listen("ws", { port: 0 });
-            const peer = await client.connect("ws", "127.0.0.1", port);
+            const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
             await client.stop();
             // fired and forgotten, on a peer that is gone
             peer.send({ into: "the void" });

@@ -18,7 +18,7 @@ async function dial(t, serverOptions, clientOptions) {
 
     const port = await listen(server);
     try {
-        const clientPeer = await client.connect("ws", "127.0.0.1", port);
+        const clientPeer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
         await wait(80);
         return { clientPeer, serverPeer: serverPeer };
     } catch (e) {
@@ -100,7 +100,7 @@ test("an optional peer still talks to a 1.0.1 peer without a secret during a mig
     server.on("connected", (p) => { serverPeer = p; });
 
     const port = await listen(server);
-    const peer = await previous.connect("ws", "127.0.0.1", port);
+    const peer = await previous.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(150);
 
     assert.ok(serverPeer, "the peer that has not moved must still get in");
@@ -122,8 +122,8 @@ test("a custom onAuth can gate on isAuthenticated() through the migration", asyn
     server.onAuth = (packet) => packet.auth === "old-style-token" || packet.ac !== undefined;
 
     const port = await listen(server);
-    const freshPeer = await fresh.connect("ws", "127.0.0.1", port);
-    const oldPeer = await old.connect("ws", "127.0.0.1", port);
+    const freshPeer = await fresh.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
+    const oldPeer = await old.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(80);
 
     assert.equal(freshPeer.isAuthenticated(), true, "the moved peer used the built-in auth");

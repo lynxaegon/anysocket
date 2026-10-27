@@ -112,7 +112,7 @@ test("a connection to ourselves is refused", async (t) => {
     t.after(() => stop(node));
 
     const port = await listen(node);
-    await assert.rejects(node.connect("ws", "127.0.0.1", port));
+    await assert.rejects(node.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true }));
 
     await wait(100);
     assert.equal(node.hasPeer(node.id), false, "we must not end up as our own peer");

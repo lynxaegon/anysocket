@@ -110,7 +110,7 @@ test("connect() and proxy() reject with AnySocket.Error", async (t) => {
     server.onAuth = () => false;
     const port = await listen(server);
 
-    await assert.rejects(client.connect("ws", "127.0.0.1", port), (e) =>
+    await assert.rejects(client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true }), (e) =>
         e instanceof AnySocket.Error && e.code === AnySocket.ERRORS.CONNECTION_FAILED && typeof e.reason === "string");
     await assert.rejects(client.proxy("x", client.id), (e) => e instanceof AnySocket.Error);
 });

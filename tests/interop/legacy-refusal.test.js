@@ -51,7 +51,7 @@ for (const [name, options] of [
         server.on("connected", () => { arrived = true; });
 
         const port = await listen(server);
-        await assert.rejects(legacy.connect("ws", "127.0.0.1", port));
+        await assert.rejects(legacy.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true }));
         await wait(50);
 
         assert.equal(arrived, false, "a 0.4.32 peer must never be handed over");
@@ -63,7 +63,7 @@ for (const [name, options] of [
         // and the listener still serves a peer that speaks version 1
         const client = new AnySocket(options);
         t.after(() => stop(client));
-        const peer = await client.connect("ws", "127.0.0.1", port);
+        const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
         assert.equal(peer.protocolVersion(), constants.PROTOCOL_VERSION);
     });
 }
@@ -94,7 +94,7 @@ test("a 1.1 dialler fails cleanly against a 0.4.32 listener", async (t) => {
 
     const client = new AnySocket();
     t.after(() => stop(client));
-    const failure = await client.connect("ws", "127.0.0.1", port).then(() => null, (e) => e);
+    const failure = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true }).then(() => null, (e) => e);
 
     assert.ok(failure, "the dial must not succeed");
     assert.equal(failure.code, AnySocket.ERRORS.CONNECTION_FAILED);
@@ -123,7 +123,7 @@ test("a 1.1 dialler refuses a 0.4.x AUTH reply with the reason", async (t) => {
     let asked = false;
     client.onAuth = () => { asked = true; return true; };
 
-    const failure = await client.connect("ws", "127.0.0.1", server.address().port).then(() => null, (e) => e);
+    const failure = await client.connect("ws", "127.0.0.1", server.address().port, { allowInsecureWSFallback: true }).then(() => null, (e) => e);
     assert.ok(failure, "the dial must not succeed");
     assert.equal(failure.code, AnySocket.ERRORS.CONNECTION_FAILED);
     assert.match(failure.reason, REFUSED);

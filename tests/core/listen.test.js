@@ -24,7 +24,7 @@ test("listen(port 0) binds a free port and reports it", async (t) => {
 
     const client = new AnySocket();
     t.after(() => stop(client));
-    const peer = await client.connect("ws", "127.0.0.1", port);
+    const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     assert.equal(peer.id, server.id);
 });
 
@@ -93,7 +93,7 @@ test("listen() can be retried on the same instance after a failure", async (t) =
 
     const client = new AnySocket();
     t.after(() => stop(client));
-    const peer = await client.connect("ws", "127.0.0.1", port);
+    const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     assert.equal(peer.id, server.id, "something must actually be answering on the retried port");
 });
 
@@ -108,7 +108,7 @@ test("one instance can listen on two ports at once", async (t) => {
     for (const port of [first, second]) {
         const client = new AnySocket();
         t.after(() => stop(client));
-        const peer = await client.connect("ws", "127.0.0.1", port);
+        const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
         assert.equal(peer.id, server.id, "port " + port + " is not being served");
     }
 });
@@ -140,6 +140,6 @@ test("http and ws on the same port still share it", async (t) => {
 
     const client = new AnySocket();
     t.after(() => stop(client));
-    const peer = await client.connect("ws", "127.0.0.1", port);
+    const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     assert.equal(peer.id, server.id);
 });

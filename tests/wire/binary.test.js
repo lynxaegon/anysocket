@@ -43,7 +43,7 @@ test("a dialler's first AUTH is a binary frame, over ws", async (t) => {
 
     const client = new AnySocket();
     t.after(() => stop(client));
-    client.connect("ws", "127.0.0.1", server.address().port, { authTimeout: 500 }).catch(() => {});
+    client.connect("ws", "127.0.0.1", server.address().port, { allowInsecureWSFallback: true, authTimeout: 500 }).catch(() => {});
 
     const { data, isBinary } = await first;
     assert.notEqual(typeof data, "string", "sent as a text message");
@@ -188,8 +188,8 @@ async function trio(t) {
     b.canAcceptProxy = () => true;
 
     const port = await listen(relay);
-    await a.connect("ws", "127.0.0.1", port);
-    await b.connect("ws", "127.0.0.1", port);
+    await a.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
+    await b.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(150);
 
     return { relay, a, b, port };

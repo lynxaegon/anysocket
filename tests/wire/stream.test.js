@@ -161,6 +161,6 @@ test("ws: connectTimeout bounds a dial that never answers, as on tcp", async (t)
     t.after(() => stop(client));
 
     const started = Date.now();
-    await assert.rejects(client.connect("ws", "10.255.255.1", 9, { connectTimeout: 300 }));
+    await assert.rejects(client.connect("ws", "10.255.255.1", 9, { allowInsecureWSFallback: true, connectTimeout: 300 }));
     assert.ok(Date.now() - started < 5000, "the dial should have been abandoned near the timeout");
 });

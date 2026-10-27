@@ -13,7 +13,7 @@ async function link(t, serverOptions, clientOptions, ctor = {}) {
     server.on("connected", (p) => { if (p.id === client.id) serverPeer = p; });
 
     const port = await listen(server, serverOptions);
-    const clientPeer = await client.connect("ws", "127.0.0.1", port, clientOptions);
+    const clientPeer = await client.connect("ws", "127.0.0.1", port, Object.assign({ allowInsecureWSFallback: true }, clientOptions));
     await wait(50);
     return { server, client, clientPeer, serverPeer: () => serverPeer };
 }
@@ -29,7 +29,7 @@ test("with requireE2E, a peer is already encrypted when it is handed over", asyn
     server.on("connected", (p) => { encryptedOnArrival = p.isE2EEnabled(); });
 
     const port = await listen(server, { requireE2E: true });
-    const peer = await client.connect("ws", "127.0.0.1", port, { requireE2E: true });
+    const peer = await client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true, requireE2E: true });
 
     assert.equal(peer.isE2EEnabled(), true, "connect() should resolve only once encrypted");
     await wait(30);
@@ -85,7 +85,7 @@ test("e2e that cannot be agreed fails the connection rather than leaving it in c
 
     const port = await listen(server, { requireE2E: true, e2eCiphers: ["aes-256-gcm"] });
     await assert.rejects(
-        client.connect("ws", "127.0.0.1", port, { requireE2E: true, e2eCiphers: ["chacha20-poly1305"] }),
+        client.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true, requireE2E: true, e2eCiphers: ["chacha20-poly1305"] }),
         "a connection that required e2e and could not get it must not come up"
     );
 });

@@ -106,7 +106,7 @@ test("a browser peer connects to a node server and exchanges messages", async (t
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
-    const peer = await browser.connect("ws", "127.0.0.1", port);
+    const peer = await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     assert.equal(peer.id, server.id);
 
     // browser -> node
@@ -137,7 +137,7 @@ test("a browser peer negotiates 1.0 and encrypts with the modern suite", async (
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
-    const peer = await browser.connect("ws", "127.0.0.1", port);
+    const peer = await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     assert.equal(peer.protocolVersion(), constants.PROTOCOL_VERSION,
         "the browser build must speak the 1.0 protocol");
 
@@ -170,7 +170,7 @@ test("binary round-trips from the browser build", async (t) => {
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
-    const peer = await browser.connect("ws", "127.0.0.1", port);
+    const peer = await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await peer.e2e();
 
     const payload = new Uint8Array([0, 1, 2, 250, 251, 255]);
@@ -197,8 +197,51 @@ test("RPC works from the browser build", async (t) => {
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
-    const peer = await browser.connect("ws", "127.0.0.1", port);
+    const peer = await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     assert.equal(await peer.rpc.greet("world"), "hello world");
+});
+
+// The browser's isBuffer read `.buffer` of whatever it was given, so a null or undefined
+// RPC argument threw before the call went out (and a null result, when the browser answers).
+test("RPC from the browser build takes null and undefined arguments", async (t) => {
+    const NodeAnySocket = require("../../src/index.js");
+    const server = new NodeAnySocket();
+    server.setRPC({ echo: (a, b, c, d, peer) => [a, b === undefined ? "undefined" : b, c, d], nothing: () => null });
+
+    const loaded = loadBundle();
+    t.after(async () => {
+        loaded.restore();
+        try { await server.stop(); } catch (_) {}
+    });
+
+    const port = await server.listen("ws", { port: 0 });
+    const browser = new loaded.AnySocket();
+    t.after(async () => { try { await browser.stop(); } catch (_) {} });
+
+    const peer = await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
+    assert.deepEqual(await peer.rpc.echo(null, undefined, 0, false), [null, null, 0, false]);
+    assert.equal(await peer.rpc.nothing(), null);
+});
+
+test("a browser answering an RPC with null", async (t) => {
+    const NodeAnySocket = require("../../src/index.js");
+    const server = new NodeAnySocket();
+    const loaded = loadBundle();
+    t.after(async () => {
+        loaded.restore();
+        try { await server.stop(); } catch (_) {}
+    });
+
+    const port = await server.listen("ws", { port: 0 });
+    const browser = new loaded.AnySocket();
+    browser.setRPC({ nothing: () => null, maybe: (value) => value });
+    t.after(async () => { try { await browser.stop(); } catch (_) {} });
+
+    const connected = new Promise((resolve) => server.once("connected", resolve));
+    await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
+    const browserPeer = await connected;
+    assert.equal(await browserPeer.rpc.nothing(), null);
+    assert.equal(await browserPeer.rpc.maybe(null), null);
 });
 
 // The bug the browser client of a real consumer was relying on: an async onAuth
@@ -220,7 +263,7 @@ test("an async onAuth is enforced in the browser build too", async (t) => {
 
     let refused = null;
     try {
-        await browser.connect("ws", "127.0.0.1", port);
+        await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
         // the dial may resolve before the reply is judged; give it a moment
         await new Promise((r) => setTimeout(r, 300));
         if (browser.hasPeer(server.id)) refused = null;
@@ -269,7 +312,7 @@ test("a browser peer dials with connectTimeout and cookies set", async (t) => {
     const browser = new loaded.AnySocket();
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
-    const peer = await browser.connect("ws", "127.0.0.1", port, { connectTimeout: 3000, cookies: { session: "abc" } });
+    const peer = await browser.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true, connectTimeout: 3000, cookies: { session: "abc" } });
     assert.equal(peer.id, server.id);
     assert.ok(seen.length >= 1);
     assert.deepEqual(seen.filter((p) => p !== undefined), [], "only the URL reaches a browser WebSocket");
@@ -294,7 +337,7 @@ test("connectTimeout bounds a browser dial to a server that never upgrades", asy
     t.after(async () => { try { await browser.stop(); } catch (_) {} });
 
     const started = Date.now();
-    await assert.rejects(browser.connect("ws", "127.0.0.1", silent.address().port, { connectTimeout: 300 }));
+    await assert.rejects(browser.connect("ws", "127.0.0.1", silent.address().port, { allowInsecureWSFallback: true, connectTimeout: 300 }));
     const took = Date.now() - started;
     // The secure attempt and the plain one each get the timeout, as on node.
     assert.ok(took < 3000, "took " + took + "ms");

@@ -46,7 +46,7 @@ test("a socket that never authenticated cannot have a relayed RPC run", async (t
     server.setRPC({ privileged: (arg, peer) => { ranAs = peer.id; return "ok"; } });
 
     const port = await listen(server);
-    await trusted.connect("ws", "127.0.0.1", port);
+    await trusted.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(100);
 
     // An attacker with no credentials, naming the trusted peer as the origin.
@@ -105,8 +105,8 @@ test("proxying still works end to end and the proxied peer is usable", async (t)
     b.canAcceptProxy = () => true;
 
     const port = await listen(relay);
-    await a.connect("ws", "127.0.0.1", port);
-    await b.connect("ws", "127.0.0.1", port);
+    await a.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
+    await b.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(150);
 
     const bSeesA = new Promise((resolve) => b.on("connected", resolve));
@@ -132,8 +132,8 @@ test("a proxied peer can be end-to-end encrypted through the relay", async (t) =
     b.canAcceptProxy = () => true;
 
     const port = await listen(relay);
-    await a.connect("ws", "127.0.0.1", port);
-    await b.connect("ws", "127.0.0.1", port);
+    await a.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
+    await b.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     await wait(150);
 
     const proxied = await a.proxy(b.id, relay.id);

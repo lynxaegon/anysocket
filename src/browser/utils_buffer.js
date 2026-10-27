@@ -19,7 +19,8 @@ module.exports = window._x = {
         }
         return window.btoa(array.join(''));
     },
+    // null and undefined are values like any other (an RPC argument or result), not bytes
     isBuffer(buf) {
-        return !!(buf.buffer instanceof ArrayBuffer && buf.BYTES_PER_ELEMENT);
+        return !!(buf && buf.buffer instanceof ArrayBuffer && buf.BYTES_PER_ELEMENT);
     }
 };

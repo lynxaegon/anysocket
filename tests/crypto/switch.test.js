@@ -20,7 +20,7 @@ for (const scheme of ["tcp", "ws"]) {
         client.on("disconnected", (_p, reason) => dropped.push("client: " + reason));
         const received = new Promise((resolve) => server.on("message", (packet) => resolve(packet.msg)));
 
-        const peer = await client.connect(scheme, "127.0.0.1", port);
+        const peer = await client.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true });
         const big = new Uint8Array(64 * 1024 * 1024).fill(7);
         const sending = peer.send(big);
         await peer.e2e();

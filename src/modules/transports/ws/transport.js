@@ -67,14 +67,15 @@ class WS extends AbstractTransport {
                 // cookies. It has no handshake timeout of its own either, so
                 // connectTimeout is a timer here: a dial that has not opened in
                 // time is closed and treated as failed, as node treats its own
-                // handshake timeout: the secure attempt falls back to plain ws.
+                // handshake timeout: final, or retried as plain ws when
+                // allowInsecureWSFallback is set.
                 ws = new WebSocket(url);
                 if(this.options.connectTimeout) {
                     timer = setTimeout(() => {
                         if (connected) return;
                         timedOut = true;
                         try { ws.close(); } catch (_) {}
-                        if (!plain) this.onConnect(true).then(resolve).catch(reject);
+                        if (!plain && this.options.allowInsecureWSFallback === true) this.onConnect(true).then(resolve).catch(reject);
                         else reject(new Error("Opening handshake has timed out"));
                     }, this.options.connectTimeout);
                 }
@@ -105,7 +106,10 @@ class WS extends AbstractTransport {
                 // Closing a dial that timed out can raise an error of its own; that
                 // must not start the plain-ws retry.
                 if (timedOut) return;
-                if (!plain && !connected) {
+                // A failed wss dial is final: anyone on the path can make it fail, so
+                // retrying as plain ws is a downgrade they could force. Opt back in
+                // with allowInsecureWSFallback: true.
+                if (!plain && !connected && this.options.allowInsecureWSFallback === true) {
                     this.onConnect(true).then(resolve).catch(reject)
                 } else {
                     reject(err);

@@ -41,7 +41,7 @@ async function pair(t, options = {}) {
     });
 
     const p = await listen(server, options.listen);
-    const clientPeer = await client.connect("ws", "127.0.0.1", p, options.connect);
+    const clientPeer = await client.connect("ws", "127.0.0.1", p, Object.assign({ allowInsecureWSFallback: true }, options.connect));
     const serverPeer = await serverSide;
 
     return {
@@ -67,7 +67,7 @@ async function expectRefused(t, options = {}) {
     const p = await listen(server, options.listen);
 
     try {
-        await client.connect("ws", "127.0.0.1", p, options.connect);
+        await client.connect("ws", "127.0.0.1", p, Object.assign({ allowInsecureWSFallback: true }, options.connect));
     } catch (e) {
         return e || new Error("refused");
     }

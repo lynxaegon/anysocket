@@ -191,7 +191,7 @@ test("it works over ws as well", async (t) => {
     t.after(() => stop(client, server));
 
     const port = await server.listen("ws", { port: 0 });
-    const link = client.maintain("ws", "127.0.0.1", port, {}, FAST);
+    const link = client.maintain("ws", "127.0.0.1", port, { allowInsecureWSFallback: true }, FAST);
     const [peer] = await once(link, "connected");
     assert.equal(peer.id, server.id);
 });

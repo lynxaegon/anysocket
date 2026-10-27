@@ -32,7 +32,7 @@ async function link(Lib, opts = {}) {
     // port 0: a guessed port can be one another process holds on 127.0.0.1 while
     // the 0.0.0.0 bind still succeeds, and the dial then reaches that process
     const p = await server.listen("ws", Object.assign({ port: 0 }, wire));
-    const peer = await client.connect("ws", "127.0.0.1", p, wire);
+    const peer = await client.connect("ws", "127.0.0.1", p, Object.assign({ allowInsecureWSFallback: true }, wire));
     await wait(80);
 
     return {
@@ -77,7 +77,7 @@ async function connectHandshake(Lib, rounds) {
         const ready = new Promise((r) => server.once("connected", r));
 
         const t0 = process.hrtime.bigint();
-        await client.connect("ws", "127.0.0.1", p, { maxPayload: 64 * MB });
+        await client.connect("ws", "127.0.0.1", p, { allowInsecureWSFallback: true, maxPayload: 64 * MB });
         await ready;
         total += ms(t0);
 

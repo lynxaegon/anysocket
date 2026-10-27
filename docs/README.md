@@ -215,6 +215,7 @@ Connects to AnySocket Server
     capabilities: [], // narrow to opt out of a feature
     requireE2E: false, // not up until encrypted; either end asking is enough
     e2eCiphers: null, // ciphers to offer, most preferred first; measured when unset
+    allowInsecureWSFallback: false, // ws only: retry a failed wss dial as plain ws
     maxPayload: undefined, // largest frame the transport takes; announced, so senders fit it
     duplicateProbeTimeout: 2 * 1000, // how long a held connection has to answer a new instance of its peer
     tcpKeepAlive: false, // SO_KEEPALIVE on the socket
@@ -223,8 +224,12 @@ Connects to AnySocket Server
 ```
 
 **Returns** a Promise that resolves/rejects when a connection has been established
+
+A ws dial tries wss and, by default, fails if that fails. To reach a plain ws
+server, opt in to the fallback — knowing that anyone on the path can force it by
+making the wss attempt fail:
 ```
-client.connect("ws", "127.0.0.1", 3000).then(peer => {
+client.connect("ws", "127.0.0.1", 3000, { allowInsecureWSFallback: true }).then(peer => {
     console.log("Connection established to peer", peer.id);
     peer.send("Hello World");
 }).catch(reason => {
@@ -235,6 +240,7 @@ client.connect("ws", "127.0.0.1", 3000).then(peer => {
 With cookies support: _(WebSocket only)_
 ```
 client.connect("ws", "127.0.0.1", 3000, {
+    allowInsecureWSFallback: true,
     cookies: {
         "hello": "world"
     }
@@ -509,6 +515,13 @@ instance stops every handle first.
 Send a proxy request for peerID via throughPeerID as relay
 
 _note: A proxied peer uses the same flow as a new connection_
+
+_note: the e2e on a relayed link is not covered by the built-in auth — there is
+no AUTH exchange on it, and the relay holds the same secret anyway — so
+`e2eInfo().authenticated` is `false` and a relay could place itself in the
+middle of the exchange. If you do not trust the relay, authenticate the far end
+yourself over <a href="#AnyPeer.getChannelBinding">getChannelBinding()</a>, with
+something only the two ends hold._
 
 **Returns** a Promise that resolves with a <a href="#AnyPeer.constructor">AnyPeer</a> or rejects if proxy fails
 

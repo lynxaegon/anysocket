@@ -113,7 +113,7 @@ test("a failed connect() does not crash the process", async (t) => {
         const AnySocket = require(${JSON.stringify(path.resolve(__dirname, "../../src/index.js"))});
         (async () => {
             const c = new AnySocket();
-            try { await c.connect("ws", "127.0.0.1", ${port}); } catch (e) { console.log("caught " + (e.code || e)); }
+            try { await c.connect("ws", "127.0.0.1", ${port}, { allowInsecureWSFallback: true }); } catch (e) { console.log("caught " + (e.code || e)); }
             await new Promise((r) => setTimeout(r, 500));
             console.log("alive");
             process.exit(0);

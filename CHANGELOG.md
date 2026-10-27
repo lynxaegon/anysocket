@@ -8,11 +8,14 @@ supported, in both directions of the dial; a 0.4.x peer is refused. Read
 
 ### Removed
 - The 0.4.x wire format. 1.1 sends only binary frames, its first AUTH included.
-- The 0.4.x e2e exchange and the `allowLegacyE2E` option, which is now ignored.
+- The 0.4.x e2e exchange and the `allowLegacyE2E` option, which is now ignored, as is
+  `allowLegacyProtocol` (1.0.4): a 0.4.x peer is always refused.
 - Base64 RPC bytes, 1MB chunking and hex relay addresses for a 0.4.x peer, and
   the standby that let a 0.4.x peer choose between two connections.
 
 ### Changed
+- `allowInsecureWSFallback` now defaults to `false`: a ws connect whose wss dial fails
+  rejects instead of retrying as plain ws. Set it to `true` to keep the 1.0.x behaviour.
 - A 1.0.x dialler writes its first AUTH in the 0.4.x text format, and 1.1 still
   reads that one packet so 1.0.x peers can dial it. Any other text drops the
   connection. A future release stops reading it; `AnyPeer.legacyHandshake()`
@@ -33,6 +36,44 @@ supported, in both directions of the dial; a 0.4.x peer is refused. Read
 
 ### New
 - `AnyPeer.legacyHandshake()`.
+
+Also carries everything in 1.0.3 and 1.0.4.
+
+## 1.0.4
+
+### Security
+- An old-format (0.4.x) frame was accepted on a 1.0 connection after the handshake, and
+  delivered: messages and RPCs alike, in plaintext, past the e2e session and its
+  authentication. Anyone able to inject into the connection could forge them without the key.
+  A 1.0 connection now takes only 1.0 frames once it is settled, and drops the connection on
+  any other.
+- The protocol version could be removed from both handshakes on the way, which put two 1.0
+  peers on the old protocol and its unauthenticated e2e exchange; the built-in auth did not
+  catch it, since both ends signed the same downgraded outcome. A peer that announces no
+  version but sends what only 1.0 sends (its instance id, the built-in auth's challenge) is now
+  refused.
+- `ws` is now `^7.5.13`, out of the range of two denial-of-service advisories
+  (GHSA-3h5v-q93c-6h6q, GHSA-96hv-2xvq-fx4p).
+
+### Added
+- `allowLegacyProtocol` (default `true`): `false` refuses a 0.4.x peer outright, for a fleet
+  where every peer runs 1.0.
+- `allowInsecureWSFallback` (default `true`), on a ws connect: a wss dial that fails is retried
+  as plain ws, which anyone on the path can force by making the wss attempt fail. `false` makes
+  the wss failure final.
+
+### Documented
+- The e2e on a relayed link is not covered by the built-in auth, so a relay could place itself
+  in the middle of it; authenticate the far end over `getChannelBinding()` if the relay is not
+  trusted.
+
+
+## 1.0.3
+
+### Fixed
+- In the browser, an RPC with a `null` or `undefined` argument threw before it was sent, and so
+  did a browser answering an RPC with `null`: the browser build's buffer check read `.buffer` of
+  whatever it was given.
 
 ## 1.0.2
 

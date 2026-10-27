@@ -36,7 +36,7 @@ test("ws, tcp and http share one port", async (t) => {
     const viaTcp = new AnySocket();
     t.after(() => stop(viaWs, viaTcp));
 
-    const ws = await viaWs.connect("ws", "127.0.0.1", port);
+    const ws = await viaWs.connect("ws", "127.0.0.1", port, { allowInsecureWSFallback: true });
     const tcp = await viaTcp.connect("tcp", "127.0.0.1", port);
     assert.equal(await ws.rpc.who(), viaWs.id);
     assert.equal(await tcp.rpc.who(), viaTcp.id);

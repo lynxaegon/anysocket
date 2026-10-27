@@ -92,7 +92,7 @@ async function victim(t, scheme, options) {
             assert.deepEqual(unhandled, []);
             const client = new AnySocket();
             t.after(() => stop(client));
-            await client.connect(scheme, "127.0.0.1", port);
+            await client.connect(scheme, "127.0.0.1", port, { allowInsecureWSFallback: true });
         }
     };
 }
